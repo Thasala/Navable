@@ -19,7 +19,7 @@ test('content script announces via fallback hotkey', async () => {
   page.on('console', (msg) => console.log('[page console]', msg.type(), msg.text()));
 
   await page.goto('https://example.com');
-  await page.waitForSelector('#navable-marker[data-injected="true"]', { timeout: 30000 });
+  await page.waitForSelector('#navable-marker[data-injected="true"]', { timeout: 30000, state: "attached" });
   await page.click('body');
 
   await page.keyboard.down('Alt');
