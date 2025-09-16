@@ -12,8 +12,5 @@ jobs:
         with: { node-version: '18' }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      # Run tests under a virtual display, so Chromium-with-extensions works
-      - name: Test (xvfb)
-        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm test
-      - name: Lint
-        run: npm run lint
+      - name: Run tests under xvfb
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run ci
