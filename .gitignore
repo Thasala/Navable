@@ -1,12 +1,8 @@
-# dependencies
+
 node_modules/
 
-# playwright
 playwright-report/
 test-results/
-
-# OS junk
 .DS_Store
 
-# misc
 *.log
