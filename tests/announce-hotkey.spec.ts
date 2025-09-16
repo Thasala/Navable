@@ -5,8 +5,6 @@ test.setTimeout(60_000);
 
 test('content script announces via fallback hotkey', async () => {
   const extensionPath = path.resolve(process.cwd());
-
-  // run headless in CI, headed locally
   const headless = !!process.env.CI;
 
   const context = await chromium.launchPersistentContext('', {
@@ -18,28 +16,27 @@ test('content script announces via fallback hotkey', async () => {
   });
 
   const page = await context.newPage();
-
-  page.on('console', (msg) =>
-    console.log('[page console]', msg.type(), msg.text())
-  );
+  page.on('console', (m) => console.log('[page console]', m.type(), m.text()));
 
   await page.goto('https://example.com', { waitUntil: 'domcontentloaded' });
 
-  // Wait for our marker (meta is hidden, so use waitForFunction)
-  await page.waitForFunction(() => {
-    return !!document.querySelector('#navable-marker[data-injected="true"]');
-  }, null, { timeout: 30_000 });
+  // meta is hidden; just wait until it exists
+  await page.waitForFunction(
+    () => !!document.querySelector('#navable-marker[data-injected="true"]'),
+    null,
+    { timeout: 30_000 }
+  );
 
   await page.click('body');
 
-  // Trigger Alt+Shift+;
+  // Alt+Shift+;
   await page.keyboard.down('Alt');
   await page.keyboard.down('Shift');
   await page.keyboard.press(';');
   await page.keyboard.up('Shift');
   await page.keyboard.up('Alt');
 
-  // Wait for live region update
+  // live region text appears
   await page.waitForFunction(() => {
     const r = document.getElementById('navable-live-region-polite');
     return !!r && (r.textContent || '').includes('Navable: test announcement (fallback hotkey).');
