@@ -1,6 +1,7 @@
+
 name: CI
 on:
-  push: { branches: [ main ] }
+  push: { branches: [ main, develop ] }
   pull_request:
 
 jobs:
@@ -12,4 +13,5 @@ jobs:
         with: { node-version: '18' }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run ci
+      - name: Run tests under xvfb (headed in CI is OK)
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run ci
