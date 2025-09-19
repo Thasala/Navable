@@ -1,18 +1,21 @@
-register().catch(e=>console.error('[Navable] top-level register error',e));
-chrome.runtime.onInstalled.addListener(()=>register().catch(e=>console.error('[Navable] onInstalled error',e)));
-chrome.runtime.onStartup.addListener(()=>register().catch(e=>console.error('[Navable] onStartup error',e)));
-
-async function register() {
-  const existing = await chrome.scripting.getRegisteredContentScripts().catch(()=>[]);
-  if (existing.find(s => s.id === 'navable-auto')) {
-    await chrome.scripting.unregisterContentScripts({ ids: ['navable-auto'] });
-  }
-  await chrome.scripting.registerContentScripts([{
-    id: 'navable-auto',
-    matches: ['http://*/*','https://*/*'],
-    js: ['src/common/announce.js','src/content.js'],
-    runAt: 'document_idle',
-    world: 'ISOLATED'
-  }]);
-  console.log('[Navable] content scripts registered');
+// Send message to the active tab
+async function sendToActiveTab(payload) {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab?.id) throw new Error('No active tab');
+  return chrome.tabs.sendMessage(tab.id, payload);
 }
+
+// Keyboard command → announce
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === 'announce-test') {
+    try {
+      await sendToActiveTab({
+        type: 'announce',
+        text: 'Navable is ready. Press H for help in later phases.',
+        mode: 'polite'
+      });
+    } catch (err) {
+      console.warn('[Navable] announce-test failed', err);
+    }
+  }
+});
