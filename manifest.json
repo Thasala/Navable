@@ -11,14 +11,17 @@
   "content_scripts": [
     {
       "matches": ["https://*/*", "http://*/*"],
-      "js": ["src/common/announce.js", "src/content.js"],
+      "js": ["src/common/announce.js", "src/content.js","src/palette/palette.js"],
+      "css":["src/palette/palette.css"],
       "run_at": "document_idle"
     }
   ],
   "commands": {
-    "announce-test": {
-      "suggested_key": { "default": "Alt+Shift+K" },
-      "description": "Speak a Navable test announcement"
+    "toggle-palette":{
+      "suggested_key": { "default": "Ctrl+Shift+P" ,
+      "mac": "Command+Shift+p"
+    },
+      "description": "Toggle the Navable Command Palette"
     }
   }
 }
