@@ -1,0 +1,18 @@
+<div id="navable-palette" class="palette-container palette-hidden" role="dialog" aria-modal="true" aria-labelledby="palette-title">
+    <h2 id="palette-title" class="sr-only">Navable Command Palette</h2>
+    
+    <input 
+        type="text" 
+        id="palette-search" 
+        placeholder="ابحث عن عناوين، معالم، أو إجراءات..." 
+        aria-label="Palette Search Input"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls="palette-list"
+    />
+    
+    <ul id="palette-list" role="listbox" tabindex="-1">
+        </ul>
+    
+    <div id="palette-announcer" aria-live="polite" class="sr-only"></div>
+</div>
