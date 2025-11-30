@@ -421,8 +421,8 @@
       var value = step.value != null ? String(step.value) : '';
       if (isInput) {
         elin.value = value;
-        try { elin.dispatchEvent(new Event('input', { bubbles: true })); } catch(_err){}
-        try { elin.dispatchEvent(new Event('change', { bubbles: true })); } catch(_err){}
+        try { elin.dispatchEvent(new Event('input', { bubbles: true })); } catch(_err){ /* dispatch failed */ }
+        try { elin.dispatchEvent(new Event('change', { bubbles: true })); } catch(_err){ /* dispatch failed */ }
       } else if (isContentEditable) {
         elin.textContent = value;
       }

@@ -53,12 +53,15 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        MutationObserver: 'readonly',
+        Event: 'readonly'
       }
     },
     rules: {
       // Allow escapes in RegExp strings used for dynamic parsing
-      'no-useless-escape': 'off'
+      'no-useless-escape': 'off',
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }]
     }
   },
 
