@@ -8,6 +8,29 @@
   </head>
   <body>
     <h1>Navable – Options</h1>
-    <p>No settings yet.</p>
+    <section>
+      <label>
+        <input type="checkbox" id="opt-autostart" />
+        Auto-start listening on page load
+      </label>
+    </section>
+    <section style="margin-top:10px;">
+      <label>
+        <input type="checkbox" id="opt-overlay" />
+        Show developer overlay markers
+      </label>
+    </section>
+    <section style="margin-top:10px;">
+      <label for="opt-lang">Recognition/Speech language</label>
+      <select id="opt-lang">
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+        <option value="es-ES">Español (ES)</option>
+        <option value="fr-FR">Français</option>
+        <option value="de-DE">Deutsch</option>
+      </select>
+    </section>
+    <p style="color:#666;margin-top:12px;">Settings sync via Chrome storage; changes apply to new and existing tabs.</p>
+    <script src="index.js"></script>
   </body>
 </html>

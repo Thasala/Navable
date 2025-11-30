@@ -18,11 +18,12 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        MutationObserver: 'readonly'
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }]
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }]
     }
   },
 
@@ -42,7 +43,7 @@ export default [
 
   // Content script + popup + shared utilities
   {
-    files: ['src/content.js', 'src/popup/**/*.js', 'src/common/**/*.js'],
+    files: ['src/content.js', 'src/popup/**/*.js', 'src/common/**/*.js', 'src/options/**/*.js'],
     languageOptions: {
       globals: {
         chrome: 'readonly',
@@ -54,6 +55,10 @@ export default [
         crypto: 'readonly',
         location: 'readonly'
       }
+    },
+    rules: {
+      // Allow escapes in RegExp strings used for dynamic parsing
+      'no-useless-escape': 'off'
     }
   },
 
