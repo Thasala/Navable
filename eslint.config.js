@@ -18,11 +18,14 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        MutationObserver: 'readonly',
+        Event: 'readonly'
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }]
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-empty': ['error', { allowEmptyCatch: true }]
     }
   },
 
@@ -52,7 +55,9 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        MutationObserver: 'readonly',
+        Event: 'readonly'
       }
     }
   },

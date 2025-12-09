@@ -841,4 +841,32 @@
   document.addEventListener('keydown', function(e){
     if (e.altKey && e.shiftKey && (e.key === 'h' || e.key === 'H')) { speakHelp(); }
   }, { capture: true });
+
+  // Keyboard shortcuts for scrolling and heading navigation
+  // Alt+Shift+ArrowDown  → scroll down
+  // Alt+Shift+ArrowUp    → scroll up
+  // Alt+Shift+PageDown   → next heading
+  // Alt+Shift+PageUp     → previous heading
+  document.addEventListener('keydown', function (e) {
+    if (!e.altKey || !e.shiftKey) return;
+    if (e.key === 'ArrowDown') {
+      execCommand({ type: 'scroll', dir: 'down' });
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      execCommand({ type: 'scroll', dir: 'up' });
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'PageDown') {
+      execCommand({ type: 'move', target: 'heading', dir: 'next' });
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'PageUp') {
+      execCommand({ type: 'move', target: 'heading', dir: 'prev' });
+      e.preventDefault();
+    }
+  }, { capture: true });
 })();
