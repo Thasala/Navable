@@ -4,14 +4,31 @@
     <meta charset="utf-8" />
     <title>Navable</title>
     <style>
-      body { font: 14px/1.4 system-ui, sans-serif; margin: 12px; width: 260px; }
-      button { padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; }
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 12px; width: 280px; }
+      button { padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; cursor: pointer; }
+      input[type="text"] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; }
+      label { display: block; font-weight: 600; margin-bottom: 4px; }
       .hint { color: #666; font-size: 12px; margin-top: 8px; }
+      .section { margin-top: 10px; }
+      .status { font-size: 12px; color: #0b5; min-height: 16px; margin-top: 6px; }
     </style>
   </head>
   <body>
     <h1 style="font-size:16px;margin:0 0 8px;">Navable</h1>
-    <button id="btnAnnounce">Speak test announcement</button>
+    <div class="section">
+      <label for="txtCommand">Ask Navable</label>
+      <input id="txtCommand" type="text" placeholder="Describe this page, scroll down…" />
+      <div style="height:6px"></div>
+      <button id="btnSendAI">Send to AI (stub)</button>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="description" class="hint" role="status" aria-live="polite"></div>
+    </div>
+    <div class="section">
+      <button id="btnMicToggle">Toggle mic (prototype)</button>
+    </div>
+    <div class="section">
+      <button id="btnAnnounce">Speak test announcement</button>
+    </div>
     <div class="hint">Tip: Try Alt+Shift+K or Alt+Shift+; (fallback) on any page.</div>
     <script src="popup.js"></script>
   </body>
