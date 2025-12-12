@@ -24,7 +24,7 @@ export default [
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
       'no-empty': ['error', { allowEmptyCatch: true }]
     }
   },
@@ -35,6 +35,7 @@ export default [
     languageOptions: {
       globals: {
         chrome: 'readonly',
+        fetch: 'readonly',
         self: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
@@ -43,9 +44,9 @@ export default [
     }
   },
 
-  // Content script + popup + shared utilities
+  // Content script + popup + options + shared utilities
   {
-    files: ['src/content.js', 'src/popup/**/*.js', 'src/common/**/*.js'],
+    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/common/**/*.js'],
     languageOptions: {
       globals: {
         chrome: 'readonly',
