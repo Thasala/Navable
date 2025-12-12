@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "description": "Baseline MV3 with announce helper + messaging + CI.",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
-  "options_page": "src/options/index.html",
   "icons": { "16": "assets/icon16.png", "48": "assets/icon48.png", "128": "assets/icon128.png" },
   "permissions": ["tabs", "scripting", "storage"],
   "host_permissions": ["https://*/*", "http://*/*"],
@@ -12,26 +11,14 @@
   "content_scripts": [
     {
       "matches": ["https://*/*", "http://*/*"],
-      "js": ["src/common/announce.js", "src/common/speech.js", "src/content.js"],
+      "js": ["src/common/announce.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],
   "commands": {
-    "scroll-down": {
-      "suggested_key": { "default": "Alt+Shift+J" },
-      "description": "Scroll down the page"
-    },
-    "scroll-up": {
-      "suggested_key": { "default": "Alt+Shift+L" },
-      "description": "Scroll up the page"
-    },
-    "next-heading": {
-      "suggested_key": { "default": "Alt+Shift+N" },
-      "description": "Move to the next heading"
-    },
-    "prev-heading": {
-      "suggested_key": { "default": "Alt+Shift+P" },
-      "description": "Move to the previous heading"
+    "announce-test": {
+      "suggested_key": { "default": "Alt+Shift+K" },
+      "description": "Speak a Navable test announcement"
     }
   }
 }
