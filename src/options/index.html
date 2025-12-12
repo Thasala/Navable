@@ -4,10 +4,94 @@
     <meta charset="utf-8" />
     <title>Navable Options</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>body{font:14px/1.4 system-ui,sans-serif;padding:16px}</style>
+    <style>
+      body{font:14px/1.4 system-ui,sans-serif;padding:16px;max-width:720px;}
+      h1{font-size:20px;margin-top:0;}
+      h2{font-size:16px;margin-top:16px;margin-bottom:8px;}
+      label{display:block;margin-top:8px;}
+      select,input[type="text"]{padding:4px 6px;font:inherit;}
+      .row{margin-bottom:8px;}
+      .hint{font-size:12px;color:#555;}
+      .group{margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:12px;}
+      .kbd{font-family:monospace;background:#f5f5f5;padding:2px 4px;border-radius:3px;}
+    </style>
   </head>
   <body>
     <h1>Navable – Options</h1>
-    <p>No settings yet.</p>
+    <div class="group">
+      <h2>Voice settings</h2>
+      <div class="row">
+        <label for="language">Language</label>
+        <select id="language">
+          <option value="en-US">English (United States)</option>
+          <option value="en-GB">English (United Kingdom)</option>
+          <option value="ar-JO">Arabic (Jordan)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>
+          <input type="checkbox" id="continuous" />
+          Continuous listening (auto-start on pages)
+        </label>
+      </div>
+      <p class="hint">Navable uses the browser\u2019s built-in Web Speech API. Continuous listening may not be available on all sites.</p>
+    </div>
+
+    <div class="group">
+      <h2>Keyboard shortcuts</h2>
+      <p>These are configured in Chrome\u2019s Extensions shortcuts page:</p>
+      <ul>
+        <li><span class="kbd">Scroll down</span> / <span class="kbd">Scroll up</span></li>
+        <li><span class="kbd">Next heading</span> / <span class="kbd">Previous heading</span></li>
+        <li><span class="kbd">Toggle mic</span></li>
+      </ul>
+      <button id="openShortcuts">Open Chrome keyboard shortcuts</button>
+      <p class="hint">Chrome \u2192 Extensions \u2192 Keyboard shortcuts.</p>
+    </div>
+
+    <div class="group">
+      <h2>AI / OpenAI</h2>
+      <div class="row">
+        <label>
+          <input type="checkbox" id="aiEnabled" />
+          Enable AI summarization
+        </label>
+      </div>
+      <div class="row">
+        <label for="aiMode">AI mode</label>
+        <select id="aiMode">
+          <option value="off">Off</option>
+          <option value="summary">Summarize only</option>
+          <option value="summary_plan">Summarize + plan execution</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>
+          <input type="checkbox" id="noFormFields" checked />
+          Do not send form fields
+        </label>
+      </div>
+      <div class="row">
+        <label>
+          <input type="checkbox" id="noSensitiveSites" />
+          Do not summarize on sensitive sites
+        </label>
+      </div>
+      <p class="hint">AI is only called when you explicitly run a \u201cSummarize\u201d command from the popup.</p>
+    </div>
+
+    <div class="group">
+      <h2>Privacy</h2>
+      <p class="hint">
+        Navable collects a structured snapshot of the current page (titles, headings, links, buttons, and non-sensitive form field labels).
+        It does <strong>not</strong> collect passwords, credit card fields, or raw audio.
+        When AI summarization is enabled, this snapshot may be sent to your configured backend for summarization,
+        and only when you ask Navable to summarize the page.
+      </p>
+    </div>
+
+    <p id="saveStatus" class="hint" aria-live="polite"></p>
+
+    <script src="options.js"></script>
   </body>
 </html>
