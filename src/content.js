@@ -63,46 +63,6 @@
         });
         return true;
       }
-      if (msg && msg.type === 'navable:listHeadings') {
-        try {
-          var structH = buildPageStructure();
-          var textH = listHeadingsText(structH);
-          speak(textH);
-          sendResponse && sendResponse({ ok: true, text: textH });
-        } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'list headings failed') });
-        }
-        return true;
-      }
-      if (msg && msg.type === 'navable:listLinks') {
-        try {
-          var structL = buildPageStructure();
-          var textL = listLinksText(structL);
-          speak(textL);
-          sendResponse && sendResponse({ ok: true, text: textL });
-        } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'list links failed') });
-        }
-        return true;
-      }
-      if (msg && msg.type === 'navable:readFocused') {
-        try {
-          execCommand({ type: 'read', what: 'focused' });
-          sendResponse && sendResponse({ ok: true });
-        } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'read focused failed') });
-        }
-        return true;
-      }
-      if (msg && msg.type === 'navable:getSpeechStatus') {
-        try {
-          var supports = !!(speech && speech.supportsRecognition && speech.supportsRecognition());
-          sendResponse && sendResponse({ ok: true, supports: supports, listening: !!listening });
-        } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'status failed') });
-        }
-        return true;
-      }
     });
   }
 
@@ -322,28 +282,6 @@
     return landmarks;
   }
 
-  function extractExcerpt(doc) {
-    var root = (doc && doc.querySelector && (doc.querySelector('main') || doc.querySelector('article'))) || (doc && doc.body);
-    if (!root) return '';
-    var nodes = Array.prototype.slice.call(root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li'));
-    var maxChars = 1200;
-    var total = 0;
-    var parts = [];
-    for (var i = 0; i < nodes.length; i++) {
-      if (parts.length >= 24) break;
-      var el = nodes[i];
-      if (isHidden(el)) continue;
-      var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!text || text.length < 12) continue;
-      var remaining = maxChars - total;
-      if (remaining <= 0) break;
-      if (text.length > remaining) text = text.slice(0, remaining);
-      parts.push(text);
-      total += text.length;
-    }
-    return parts.join(' ');
-  }
-
   function buildPageStructure() {
     rescan();
     var active = document.activeElement;
@@ -352,41 +290,31 @@
     if (active) activeLabel = textOf(active);
     var headings = [];
     var links = [];
-      var buttons = [];
-      var inputs = [];
-      index.items.forEach(function (it) {
-        var entry = {
-          id: it.id,
-          label: it.label,
-          tag: it.tag,
-          type: it.type
-        };
-        if (it.type === 'heading') {
-          var m = (it.tag || '').match(/^h([1-6])$/);
-          if (m) entry.level = parseInt(m[1], 10);
-          headings.push(entry);
-        } else if (it.type === 'link') {
-          var linkEl = document.querySelector('[data-navable-id="' + it.id + '"]');
-          if (linkEl && linkEl.getAttribute) {
-            entry.href = linkEl.getAttribute('href') || '';
-          } else {
-            entry.href = '';
-          }
-          links.push(entry);
-        } else if (it.type === 'button') {
-          buttons.push(entry);
-        } else if (it.type === 'input') {
-          var el = document.querySelector('[data-navable-id="' + it.id + '"]');
-          if (el) {
-            if (isSensitiveInput(el)) {
-              // Exclude sensitive fields (e.g., passwords, card numbers) from the snapshot.
-              return;
-            }
-            entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
-            entry.name = (el.getAttribute && el.getAttribute('name')) || '';
-            entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
-            entry.placeholder = (el.getAttribute && el.getAttribute('placeholder')) || '';
-          }
+    var buttons = [];
+    var inputs = [];
+    index.items.forEach(function (it) {
+      var entry = {
+        id: it.id,
+        label: it.label,
+        tag: it.tag,
+        type: it.type
+      };
+      if (it.type === 'heading') {
+        var m = (it.tag || '').match(/^h([1-6])$/);
+        if (m) entry.level = parseInt(m[1], 10);
+        headings.push(entry);
+      } else if (it.type === 'link') {
+        links.push(entry);
+      } else if (it.type === 'button') {
+        buttons.push(entry);
+      } else if (it.type === 'input') {
+        var el = document.querySelector('[data-navable-id="' + it.id + '"]');
+        if (el) {
+          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
+          entry.name = (el.getAttribute && el.getAttribute('name')) || '';
+          entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
+          entry.placeholder = (el.getAttribute && el.getAttribute('placeholder')) || '';
+        }
         inputs.push(entry);
       }
     });
@@ -394,7 +322,6 @@
     return {
       title: document.title || '',
       url: location.href,
-      lang: (document.documentElement && document.documentElement.lang) || '',
       activeId: activeId,
       activeLabel: activeLabel || '',
       landmarks: landmarks,
@@ -408,8 +335,7 @@
       headings: headings,
       links: links,
       buttons: buttons,
-      inputs: inputs,
-      excerpt: extractExcerpt(document)
+      inputs: inputs
     };
   }
 
@@ -422,31 +348,6 @@
       parts.push('Top heading: ' + structure.headings[0].label + '.');
     }
     return parts.join(' ');
-  }
-
-  function listHeadingsText(structure) {
-    if (!structure || !structure.headings || !structure.headings.length) {
-      return 'No headings on this page.';
-    }
-    var items = structure.headings.slice(0, 10).map(function (h, idx) {
-      var label = h.label || 'Unnamed heading';
-      var level = h.level != null ? ' (level ' + h.level + ')' : '';
-      return (idx + 1) + '. ' + label + level + '.';
-    });
-    var more = structure.headings.length > 10 ? ' And more headings not listed.' : '';
-    return 'Headings: ' + items.join(' ') + more;
-  }
-
-  function listLinksText(structure) {
-    if (!structure || !structure.links || !structure.links.length) {
-      return 'No links on this page.';
-    }
-    var items = structure.links.slice(0, 10).map(function (l, idx) {
-      var label = l.label || l.href || 'Unnamed link';
-      return (idx + 1) + '. ' + label + '.';
-    });
-    var more = structure.links.length > 10 ? ' And more links not listed.' : '';
-    return 'Links: ' + items.join(' ') + more;
   }
 
   function getElementByRef(type, label, n) {
@@ -533,11 +434,6 @@
       speak(desc);
       return { ok: true, message: desc };
     }
-    if (action === 'move_heading') {
-      var dir = step.direction || step.dir || 'next';
-      execCommand({ type: 'move', target: 'heading', dir: dir === 'prev' ? 'prev' : 'next' });
-      return { ok: true, message: 'Moved heading ' + (dir === 'prev' ? 'previous' : 'next') };
-    }
     if (action === 'wait_for_user_input') {
       speak(step.prompt || 'Please provide input, then tell me to continue.');
       return { ok: true, message: 'Waiting for user input' };
@@ -574,33 +470,13 @@
   var lastSpoken = '';
   var recogLang = 'en-US';
 
-  function speak(text){
-    lastSpoken = String(text || '');
-    // Rely on the ARIA live region + screen reader; do not use browser text-to-speech.
-    announce(lastSpoken, { mode: 'polite' });
-  }
+  function speak(text){ lastSpoken = String(text||''); announce(lastSpoken, { mode: 'polite' }); if (speech.speak) speech.speak(lastSpoken).catch(()=>{}); }
 
   function ensureRecognizer(){
     if (recognizer || !(speech && speech.supportsRecognition && speech.supportsRecognition())) return recognizer;
     recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
     recognizer.on('result', function(ev){ if (!ev || !ev.transcript) return; handleTranscript(ev.transcript); });
-    recognizer.on('error', function(e){
-      console.warn('[Navable] speech error', e && e.error);
-      try {
-        var code = e && e.error ? String(e.error) : 'unknown';
-        if (code === 'no-speech') {
-          speak('I did not hear anything.');
-        } else if (code === 'audio-capture') {
-          speak('I could not access the microphone.');
-        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
-          speak('Speech recognition is not allowed in this browser.');
-        } else {
-          speak('Speech recognition had a problem. Please try again.');
-        }
-      } catch (_err) {
-        // ignore secondary failures
-      }
-    });
+    recognizer.on('error', function(e){ console.warn('[Navable] speech error', e && e.error); });
     recognizer.on('start', function(){ console.log('[Navable] listening'); });
     recognizer.on('end', function(){ console.log('[Navable] stopped listening'); listening = false; });
     return recognizer;
@@ -620,23 +496,6 @@
     var num = extractNumber(t);
     var label;
 
-    // English summary triggers + common Arabic phrasing.
-    if (
-      t.includes('summarize') ||
-      t.includes('summary') ||
-      t.includes('describe this page') ||
-      t.includes('what is this page') ||
-      t.includes("what's on this page") ||
-      t.includes('what is on this page') ||
-      t.includes("what's this page") ||
-      /ما هذه الصفحه/.test(t) ||
-      /ما هذه الصفحة/.test(t) ||
-      /ما هو محتوى الصفحة/.test(t) ||
-      /ملخص/.test(t) ||
-      /وصف الصفحة/.test(t)
-    ) {
-      return { type: 'summarize', command: original || 'Summarize this page' };
-    }
     if (/(scroll )?down/.test(t) || /scroll down/.test(t)) return { type:'scroll', dir:'down' };
     if (/(scroll )?up/.test(t) || /scroll up/.test(t)) return { type:'scroll', dir:'up' };
     if (/top/.test(t) || /scroll (to )?top/.test(t)) return { type:'scroll', dir:'top' };
@@ -792,22 +651,10 @@
     if (!cmd) { speak("I didn't catch that."); return; }
     if (cmd.type === 'scroll'){
       var amount = Math.floor(window.innerHeight * 0.8);
-      if (cmd.dir === 'down') {
-        window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
-      } else if (cmd.dir === 'up') {
-        window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak('Scrolled up.');
-      } else if (cmd.dir === 'top') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak('Scrolled to top.');
-      } else if (cmd.dir === 'bottom') {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak('Scrolled to bottom.');
-      } else {
-        window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
-      }
+      if (cmd.dir === 'down') window.scrollBy({ top: amount, behavior: 'smooth' });
+      if (cmd.dir === 'up') window.scrollBy({ top: -amount, behavior: 'smooth' });
+      if (cmd.dir === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (cmd.dir === 'bottom') window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
       console.log('[Navable] Action: scroll', cmd.dir);
       return;
     }
@@ -933,10 +780,6 @@
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
       if (!elmh) { speak('I did not find a heading.'); return; }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
-      if (!elmh.hasAttribute('tabindex')) {
-        try { elmh.setAttribute('tabindex', '-1'); } catch(_err){ /* ignore */ }
-      }
-      try { elmh.focus(); } catch(_err){ /* focus failed */ }
       speak('Heading: ' + (lblmh.trim() || 'unnamed'));
       console.log('[Navable] Action: move heading', cmd.dir);
       return;
@@ -945,32 +788,9 @@
     if (cmd.type === 'stop'){ try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch(_err){ /* cancel failed */ } return; }
   }
 
-  async function runSummaryRequest(commandText) {
-    var cmdText = (commandText && String(commandText).trim()) || 'Summarize this page';
-    speak('Summarizing this page.');
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak('Planner is unavailable.');
-      return;
-    }
-    try {
-      var res = await chrome.runtime.sendMessage({ type: 'planner:run', command: cmdText });
-      if (!res || res.ok !== true) {
-        speak('Could not summarize this page.');
-      }
-      // On success, the background will announce the summary via the live region.
-    } catch (err) {
-      console.warn('[Navable] summarize via planner failed', err);
-      speak('Summarization failed.');
-    }
-  }
-
   function handleTranscript(text){
     console.log('[Navable] Recognized:', text);
     var cmd = parseCommand(text);
-    if (cmd && cmd.type === 'summarize') {
-      runSummaryRequest(cmd.command);
-      return;
-    }
     execCommand(cmd);
   }
 
