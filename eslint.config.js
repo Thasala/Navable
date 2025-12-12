@@ -35,6 +35,7 @@ export default [
     languageOptions: {
       globals: {
         chrome: 'readonly',
+        fetch: 'readonly',
         self: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
