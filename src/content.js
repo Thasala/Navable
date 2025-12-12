@@ -933,6 +933,10 @@
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
       if (!elmh) { speak('I did not find a heading.'); return; }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
+      if (!elmh.hasAttribute('tabindex')) {
+        try { elmh.setAttribute('tabindex', '-1'); } catch(_err){ /* ignore */ }
+      }
+      try { elmh.focus(); } catch(_err){ /* focus failed */ }
       speak('Heading: ' + (lblmh.trim() || 'unnamed'));
       console.log('[Navable] Action: move heading', cmd.dir);
       return;

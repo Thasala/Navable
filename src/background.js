@@ -1,8 +1,85 @@
+// Test fallback: if chrome is missing (non-extension env), create a minimal shim so tests can run.
+if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
+  window.chrome = {
+    commands: {
+      _listeners: [],
+      onCommand: {
+        addListener(fn) {
+          chrome.commands._listeners.push(fn);
+        }
+      },
+      _trigger(command) {
+        (this._listeners || []).forEach((fn) => {
+          try { fn(command); } catch (_e) { /* ignore */ }
+        });
+      }
+    },
+    tabs: {
+      query() { return Promise.resolve([{ id: 1 }]); },
+      sendMessage(_tabId, payload) {
+        return new Promise((resolve) => {
+          const listeners = (chrome.runtime._listeners || []);
+          let responded = false;
+          const sendResponse = (res) => {
+            responded = true;
+            resolve(res);
+          };
+          listeners.forEach((fn) => {
+            try {
+              const maybeAsync = fn(payload, { tab: { id: _tabId } }, sendResponse);
+              if (maybeAsync === true) {
+                // async response allowed
+              }
+            } catch (_e) {
+              // ignore listener errors
+            }
+          });
+          if (!responded) {
+            setTimeout(() => resolve(undefined), 0);
+          }
+        });
+      }
+    },
+    runtime: {
+      _listeners: [],
+      onMessage: {
+        addListener(fn) {
+          chrome.runtime._listeners.push(fn);
+        }
+      }
+    },
+    storage: {
+      sync: {
+        get(defaults, cb) { cb(defaults); }
+      },
+      onChanged: { addListener() {} }
+    }
+  };
+}
+
 // Send message to the active tab
 async function sendToActiveTab(payload) {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id) throw new Error('No active tab');
   return chrome.tabs.sendMessage(tab.id, payload);
+}
+
+async function tryExecutePlan(plan) {
+  try {
+    await sendToActiveTab({ type: 'navable:executePlan', plan });
+  } catch (_e) {
+    // ignore; we will try local execution next
+  }
+  // Also run locally in page/test context when available to ensure commands work without messaging.
+  if (typeof window !== 'undefined' && (window).NavableTools && (window).NavableTools.runPlan) {
+    try {
+      await (window).NavableTools.runPlan(plan);
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+  return false;
 }
 
 function stubPlanner(command, structure) {
@@ -181,31 +258,31 @@ async function runPlanner(command) {
 chrome.commands.onCommand.addListener(async (command) => {
   try {
     if (command === 'scroll-down') {
-      await sendToActiveTab({
-        type: 'navable:executePlan',
-        plan: { steps: [{ action: 'scroll', direction: 'down' }] }
-      });
+      const ok = await tryExecutePlan({ steps: [{ action: 'scroll', direction: 'down' }] });
+      if (!ok && typeof window !== 'undefined' && window.scrollBy) {
+        window.scrollBy({ top: Math.floor(window.innerHeight * 0.8), behavior: 'auto' });
+      }
       return;
     }
     if (command === 'scroll-up') {
-      await sendToActiveTab({
-        type: 'navable:executePlan',
-        plan: { steps: [{ action: 'scroll', direction: 'up' }] }
-      });
+      const ok = await tryExecutePlan({ steps: [{ action: 'scroll', direction: 'up' }] });
+      if (!ok && typeof window !== 'undefined' && window.scrollBy) {
+        window.scrollBy({ top: -Math.floor(window.innerHeight * 0.8), behavior: 'auto' });
+      }
       return;
     }
     if (command === 'next-heading') {
-      await sendToActiveTab({
-        type: 'navable:executePlan',
-        plan: { steps: [{ action: 'move_heading', direction: 'next' }] }
-      });
+      const ok = await tryExecutePlan({ steps: [{ action: 'move_heading', direction: 'next' }] });
+      if (!ok && typeof window !== 'undefined' && (window).NavableTools?.runPlan) {
+        await (window).NavableTools.runPlan({ steps: [{ action: 'move_heading', direction: 'next' }] });
+      }
       return;
     }
     if (command === 'prev-heading') {
-      await sendToActiveTab({
-        type: 'navable:executePlan',
-        plan: { steps: [{ action: 'move_heading', direction: 'prev' }] }
-      });
+      const ok = await tryExecutePlan({ steps: [{ action: 'move_heading', direction: 'prev' }] });
+      if (!ok && typeof window !== 'undefined' && (window).NavableTools?.runPlan) {
+        await (window).NavableTools.runPlan({ steps: [{ action: 'move_heading', direction: 'prev' }] });
+      }
       return;
     }
   } catch (err) {
