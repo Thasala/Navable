@@ -15,7 +15,22 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
       }
     },
     tabs: {
+      _created: [],
       query() { return Promise.resolve([{ id: 1 }]); },
+      create(createProperties) {
+        const url = createProperties && createProperties.url ? String(createProperties.url) : 'about:blank';
+        chrome.tabs._created.push(url);
+        return Promise.resolve({ id: chrome.tabs._created.length + 1, url });
+      },
+      update(tabId, updateProperties) {
+        // Support both update(tabId, props) and update(props) signatures in tests.
+        let props = updateProperties;
+        if (typeof tabId === 'object' && tabId) {
+          props = tabId;
+        }
+        const url = props && props.url ? String(props.url) : undefined;
+        return Promise.resolve({ id: typeof tabId === 'number' ? tabId : 1, url });
+      },
       sendMessage(_tabId, payload) {
         return new Promise((resolve) => {
           const listeners = (chrome.runtime._listeners || []);
@@ -254,6 +269,125 @@ async function runPlanner(command) {
   return { ok: true, plan, structure };
 }
 
+function normalizeSpokenUrl(query) {
+  let s = String(query || '').trim();
+  if (!s) return '';
+  s = s.replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, '').trim();
+  s = s.replace(/\s+/g, ' ');
+  const lower = s.toLowerCase();
+
+  // If the user speaks a URL: "example dot com slash login"
+  let out = lower;
+  out = out.replace(/\s+dot\s+/g, '.');
+  out = out.replace(/\s+point\s+/g, '.');
+  out = out.replace(/\s+slash\s+/g, '/');
+  out = out.replace(/\s+colon\s+/g, ':');
+  out = out.replace(/\s*\/\s*/g, '/');
+  out = out.replace(/\s*\.\s*/g, '.');
+  out = out.replace(/\s*:\s*/g, ':');
+  return out.trim();
+}
+
+function tryParseHttpUrl(candidate) {
+  try {
+    const u = new URL(candidate);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
+  } catch (_e) {
+    // ignore
+  }
+  return null;
+}
+
+function looksLikeHostWithOptionalPath(candidate) {
+  if (!candidate) return false;
+  if (/\s/.test(candidate)) return false;
+  const host = candidate.split(/[/?#]/)[0] || '';
+  if (!host || host.length > 255) return false;
+  const parts = host.split('.');
+  if (parts.length < 2) return false;
+  const tld = parts[parts.length - 1] || '';
+  if (tld.length < 2) return false;
+  for (const part of parts) {
+    if (!part || part.length > 63) return false;
+    if (!/^[a-z0-9-]+$/i.test(part)) return false;
+    if (part.startsWith('-') || part.endsWith('-')) return false;
+  }
+  return true;
+}
+
+function resolveOpenQueryToUrl(query) {
+  const raw = String(query || '').trim();
+  if (!raw) return null;
+
+  const normalized = normalizeSpokenUrl(raw);
+
+  // Explicit search intent: "search for <x>"
+  const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
+  if (searchMatch && searchMatch[3]) {
+    return `https://www.google.com/search?q=${encodeURIComponent(searchMatch[3])}`;
+  }
+
+  // Full URL
+  const direct = tryParseHttpUrl(normalized);
+  if (direct) return direct;
+
+  // Domain (with optional path), missing scheme
+  if (looksLikeHostWithOptionalPath(normalized)) {
+    return tryParseHttpUrl(`https://${normalized}`);
+  }
+
+  // Single token like "facebook" -> assume .com
+  if (!/\s/.test(normalized) && /^[a-z0-9-]{2,}$/i.test(normalized) && !normalized.includes('.')) {
+    return `https://www.${normalized}.com/`;
+  }
+
+  // Fallback to search (works for any phrase)
+  return `https://www.google.com/search?q=${encodeURIComponent(raw)}`;
+}
+
+function friendlyUrlForSpeech(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname || url;
+    const path = u.pathname && u.pathname !== '/' ? u.pathname : '';
+    return (host + path).replace(/^www\./i, '');
+  } catch (_e) {
+    return String(url || '');
+  }
+}
+
+async function openSiteInBrowser(query, newTab) {
+  const url = resolveOpenQueryToUrl(query);
+  if (!url) return { ok: false, error: 'Missing website name or URL.' };
+
+  try {
+    await sendToActiveTab({
+      type: 'navable:announce',
+      text: `Opening ${friendlyUrlForSpeech(url)}.`,
+      mode: 'assertive'
+    });
+  } catch (_e) {
+    // ignore announce failures (e.g., unsupported active tab)
+  }
+
+  try {
+    if (newTab === false) {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tab && tab.id) {
+        await chrome.tabs.update(tab.id, { url });
+      } else {
+        await chrome.tabs.create({ url });
+      }
+    } else {
+      await chrome.tabs.create({ url });
+    }
+    return { ok: true, url };
+  } catch (err) {
+    console.warn('[Navable] openSite failed', err);
+    return { ok: false, error: 'Could not open that website.' };
+  }
+}
+
 // Keyboard commands → tools on active tab
 chrome.commands.onCommand.addListener(async (command) => {
   try {
@@ -292,6 +426,14 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'navable:openSite') {
+    openSiteInBrowser(msg.query || '', msg.newTab).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'open site failed') });
+    });
+    return true;
+  }
   if (msg && msg.type === 'planner:run') {
     runPlanner(msg.command || '').then((res) => {
       sendResponse(res);
