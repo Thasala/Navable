@@ -10,7 +10,7 @@ function loadSettings() {
     const noSensitiveSites = document.getElementById('noSensitiveSites');
 
     if (language) language.value = s.language || 'en-US';
-    if (continuous) continuous.checked = !!s.autostart;
+    if (continuous) continuous.checked = typeof s.autostart === 'boolean' ? s.autostart : true;
     if (aiEnabled) aiEnabled.checked = !!s.aiEnabled;
     if (aiMode) aiMode.value = s.aiMode || 'off';
     if (noFormFields) noFormFields.checked = true; // always enforced by design
@@ -30,7 +30,7 @@ function saveSettings() {
   const navable_settings = {
     language: language ? language.value : 'en-US',
     overlay: false,
-    autostart: continuous ? continuous.checked : false,
+    autostart: continuous ? continuous.checked : true,
     aiEnabled: aiEnabled ? aiEnabled.checked : false,
     aiMode: aiMode ? aiMode.value : 'off',
     noSensitiveSites: noSensitiveSites ? noSensitiveSites.checked : false
