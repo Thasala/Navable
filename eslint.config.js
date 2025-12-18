@@ -19,6 +19,8 @@ export default [
         clearTimeout: 'readonly',
         crypto: 'readonly',
         location: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
         MutationObserver: 'readonly',
         Event: 'readonly'
       }
@@ -39,7 +41,9 @@ export default [
         self: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
-        clearTimeout: 'readonly'
+        clearTimeout: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly'
       }
     }
   },

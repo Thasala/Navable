@@ -28,13 +28,35 @@
     recognizer.continuous = !!options.continuous;
 
     var autoRestart = !!options.autoRestart;
+    var restartDelayMs = typeof options.restartDelayMs === 'number' ? options.restartDelayMs : 250;
     var shouldRestart = autoRestart;
+    var isStarting = false;
+    var isStarted = false;
+    var restartTimer = null;
     var listeners = {
       result: [],
       error: [],
       start: [],
       end: []
     };
+
+    function clearRestartTimer() {
+      if (!restartTimer) return;
+      try {
+        clearTimeout(restartTimer);
+      } catch (_err) {
+        // ignore
+      }
+      restartTimer = null;
+    }
+
+    function emitStartError(err) {
+      var name = err && err.name ? String(err.name) : '';
+      // Treat "already started" as a no-op to keep start() idempotent.
+      if (name === 'InvalidStateError') return;
+      var code = (name === 'NotAllowedError' || name === 'SecurityError') ? 'not-allowed' : 'start-failed';
+      emit('error', { error: code, message: String(err || ''), raw: err });
+    }
 
     function emit(type, payload) {
       var list = listeners[type];
@@ -77,6 +99,8 @@
       if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'network') {
         shouldRestart = false;
       }
+      // Ensure manual re-starts aren't blocked by stale state.
+      isStarting = false;
       emit('error', {
         error: code,
         message: event && event.message ? String(event.message) : '',
@@ -85,32 +109,50 @@
     };
 
     recognizer.onstart = function () {
+      clearRestartTimer();
+      isStarting = false;
+      isStarted = true;
       emit('start');
     };
 
     recognizer.onend = function (event) {
+      clearRestartTimer();
+      isStarting = false;
+      isStarted = false;
       emit('end', { raw: event });
       if (autoRestart && shouldRestart) {
-        try {
-          recognizer.start();
-        } catch (_err) {
-          // restart failed; give up
-          shouldRestart = false;
-        }
+        // Guard against external start() calls while we're between restarts.
+        isStarting = true;
+        restartTimer = setTimeout(function () {
+          if (!(autoRestart && shouldRestart)) { isStarting = false; return; }
+          try {
+            recognizer.start();
+          } catch (_err) {
+            // restart failed; give up
+            isStarting = false;
+            shouldRestart = false;
+          }
+        }, Math.max(0, restartDelayMs));
       }
     };
 
     var api = {
       start: function () {
         shouldRestart = autoRestart;
+        if (isStarted || isStarting) return;
+        clearRestartTimer();
+        isStarting = true;
         try {
           recognizer.start();
         } catch (err) {
-          emit('error', { error: 'start-failed', message: String(err || ''), raw: err });
+          isStarting = false;
+          emitStartError(err);
         }
       },
       stop: function () {
         shouldRestart = false;
+        clearRestartTimer();
+        isStarting = false;
         try {
           recognizer.stop();
         } catch (err) {
@@ -156,4 +198,3 @@
     speak: speak
   };
 })();
-
