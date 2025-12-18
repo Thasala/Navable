@@ -1,0 +1,11 @@
+FROM mcr.microsoft.com/playwright:v1.55.0-jammy
+
+WORKDIR /work
+ENV CI=1
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+CMD ["npm", "run", "ci"]
