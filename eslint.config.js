@@ -18,11 +18,16 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        MutationObserver: 'readonly',
+        Event: 'readonly'
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }]
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
+      'no-empty': ['error', { allowEmptyCatch: true }]
     }
   },
 
@@ -32,17 +37,20 @@ export default [
     languageOptions: {
       globals: {
         chrome: 'readonly',
+        fetch: 'readonly',
         self: 'readonly',
         console: 'readonly',
         setTimeout: 'readonly',
-        clearTimeout: 'readonly'
+        clearTimeout: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly'
       }
     }
   },
 
-  // Content script + popup + shared utilities
+  // Content script + popup + options + shared utilities
   {
-    files: ['src/content.js', 'src/popup/**/*.js', 'src/common/**/*.js'],
+    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/common/**/*.js'],
     languageOptions: {
       globals: {
         chrome: 'readonly',
@@ -52,7 +60,9 @@ export default [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         crypto: 'readonly',
-        location: 'readonly'
+        location: 'readonly',
+        MutationObserver: 'readonly',
+        Event: 'readonly'
       }
     }
   },

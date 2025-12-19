@@ -1,0 +1,15 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+  ci:
+    build:
+      context: .
+      dockerfile: Dockerfile.ci
+    profiles: ["ci"]

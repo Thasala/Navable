@@ -5,31 +5,58 @@
     <title>Navable</title>
     <style>
       body { font: 14px/1.4 system-ui, sans-serif; margin: 12px; width: 280px; }
-      button { padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; cursor: pointer; }
+      button { padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; cursor: pointer; background:#fff; }
+      button.primary { font-size: 15px; font-weight: 600; padding: 10px 12px; background:#0059d6; color:#fff; border-color:#0040a0; }
+      button[disabled] { opacity: 0.6; cursor: default; }
       input[type="text"] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; }
       label { display: block; font-weight: 600; margin-bottom: 4px; }
       .hint { color: #666; font-size: 12px; margin-top: 8px; }
       .section { margin-top: 10px; }
-      .status { font-size: 12px; color: #0b5; min-height: 16px; margin-top: 6px; }
+      .status { font-size: 12px; min-height: 16px; margin-top: 4px; }
+      .status.ok { color: #0b5; }
+      .status.error { color: #c00; }
+      .mic-status { font-size: 12px; margin-top: 4px; }
+      .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .help-box { font-size: 12px; margin-top: 6px; padding: 6px; border-radius: 6px; background:#f5f5f5; display:none; }
+      .help-box ul { padding-left: 18px; margin: 4px 0; }
     </style>
   </head>
   <body>
     <h1 style="font-size:16px;margin:0 0 8px;">Navable</h1>
     <div class="section">
-      <label for="txtCommand">Ask Navable</label>
-      <input id="txtCommand" type="text" placeholder="Describe this page, scroll down…" />
-      <div style="height:6px"></div>
-      <button id="btnSendAI">Send to AI (stub)</button>
-      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <button id="btnMicToggle" class="primary">Checking voice support…</button>
+      <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
+    </div>
+    <div class="section">
+      <label>Quick actions</label>
+      <div class="quick-grid">
+        <button id="btnSummarize">Summarize page</button>
+        <button id="btnListHeadings">List headings</button>
+        <button id="btnListLinks">List links</button>
+        <button id="btnReadFocused">Read focused</button>
+      </div>
+    </div>
+    <div class="section">
+      <label>Last action</label>
+      <div id="status" class="status ok" role="status" aria-live="polite"></div>
       <div id="description" class="hint" role="status" aria-live="polite"></div>
     </div>
     <div class="section">
-      <button id="btnMicToggle">Toggle mic (prototype)</button>
+      <button id="btnHelp">Help / Commands</button>
+      <div id="helpPanel" class="help-box" aria-hidden="true">
+        <strong>Examples:</strong>
+        <ul>
+          <li>“Scroll down”, “Scroll up”</li>
+          <li>“Next heading”, “Previous heading”</li>
+          <li>“Click login”, “Open first link”</li>
+          <li>“Open facebook”, “Open example dot com”</li>
+          <li>“Read title”, “Read selection”</li>
+          <li>“Summarize this page”</li>
+        </ul>
+        <p>Keyboard shortcuts: configure in Chrome → Extensions → Keyboard shortcuts.</p>
+      </div>
     </div>
-    <div class="section">
-      <button id="btnAnnounce">Speak test announcement</button>
-    </div>
-    <div class="hint">Tip: Try Alt+Shift+K or Alt+Shift+; (fallback) on any page.</div>
+    <div class="hint">Tip: Use voice, quick actions, or keyboard shortcuts for your demo.</div>
     <script src="popup.js"></script>
   </body>
 </html>
