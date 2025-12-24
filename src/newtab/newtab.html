@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Navable</title>
+    <link rel="stylesheet" href="../common/ui.css" />
+    <link rel="stylesheet" href="newtab.css" />
+  </head>
+  <body class="nv-ui nv-newtab">
+    <main class="nv-container">
+      <section class="nv-card nv-newtab-hero" aria-label="Navable new tab">
+        <div class="nv-card-inner">
+          <div class="nv-newtab-top">
+            <div class="nv-newtab-brand">
+              <img
+                class="nv-newtab-logo"
+                src="../../assets/navable-logo.svg"
+                width="40"
+                height="40"
+                alt=""
+                aria-hidden="true"
+              />
+              <div>
+                <div class="nv-newtab-wordmark">Navable</div>
+                <div id="greeting" class="nv-newtab-greeting">Welcome back.</div>
+              </div>
+            </div>
+
+            <div class="nv-newtab-actions">
+              <div class="nv-badge" aria-label="Current time">
+                <span class="nv-dot nv-dot--ok" aria-hidden="true"></span>
+                <span id="clock" class="nv-newtab-clock">--:--</span>
+              </div>
+              <a class="nv-btn nv-btn--ghost" href="../options/index.html" target="_blank" rel="noreferrer">Options</a>
+            </div>
+          </div>
+
+          <h1 class="nv-newtab-headline">A calmer, voice-first new tab.</h1>
+          <p class="nv-newtab-lede">Use voice or type to open a site.</p>
+
+          <section class="nv-newtab-voice" aria-label="Voice controls">
+            <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn" type="button">
+              Checking voice support…
+            </button>
+            <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
+            <div class="nv-newtab-voice-hint">Try: “Open YouTube”, “Open example dot com”.</div>
+          </section>
+
+          <form id="searchForm" class="nv-newtab-search" role="search" aria-label="Search">
+            <label class="nv-sr-only" for="searchInput">Search or type a URL</label>
+            <input
+              id="searchInput"
+              class="nv-input"
+              type="text"
+              inputmode="search"
+              autocomplete="off"
+              placeholder="Search or type a URL"
+            />
+            <button class="nv-btn nv-btn--primary" type="submit">Go</button>
+          </form>
+
+          <div class="nv-chips" aria-label="Suggestions">
+            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://example.com">
+              example.com
+            </button>
+            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://wikipedia.org">Wikipedia</button>
+            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://news.ycombinator.com">
+              Hacker News
+            </button>
+          </div>
+
+          <details class="nv-newtab-details">
+            <summary class="nv-newtab-details-summary">Demo tips</summary>
+            <div class="nv-newtab-details-body">
+              <ul class="nv-newtab-mini">
+                <li>Try: “Scroll down”, “Next heading”, “Read title”</li>
+                <li>Use the popup for quick actions + summarize</li>
+              </ul>
+              <div class="nv-newtab-details-actions">
+                <button id="openShortcuts" class="nv-btn nv-btn--ghost" type="button">Keyboard shortcuts</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <footer class="nv-newtab-footer">
+        <span>Tip: Press Alt+Shift+M to toggle voice.</span>
+        <span> · </span>
+        <a href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
+      </footer>
+    </main>
+
+    <script src="../common/announce.js"></script>
+    <script src="../common/speech.js"></script>
+    <script src="newtab.js"></script>
+  </body>
+</html>
