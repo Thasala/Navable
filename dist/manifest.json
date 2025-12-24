@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Navable (Phase A)",
+  "version": "0.1.0",
+  "description": "Baseline MV3 with announce helper + messaging + CI.",
+  "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
+  "options_page": "src/options/index.html",
+  "chrome_url_overrides": { "newtab": "src/newtab/newtab.html" },
+  "icons": { "16": "assets/icon16.png", "48": "assets/icon48.png", "128": "assets/icon128.png" },
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["src/common/announce.js", "src/common/speech.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "scroll-down": {
+      "suggested_key": { "default": "Alt+Shift+J" },
+      "description": "Scroll down the page"
+    },
+    "scroll-up": {
+      "suggested_key": { "default": "Alt+Shift+L" },
+      "description": "Scroll up the page"
+    },
+    "next-heading": {
+      "suggested_key": { "default": "Alt+Shift+N" },
+      "description": "Move to the next heading"
+    },
+    "prev-heading": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Move to the previous heading"
+    }
+  }
+}
