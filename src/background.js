@@ -156,6 +156,26 @@ function stubPlanner(command, structure) {
   return { description, steps };
 }
 
+function isSummaryCommandText(text) {
+  const t = String(text || '').toLowerCase();
+  if (!t) return false;
+  return (
+    t.includes('summarize') ||
+    t.includes('summary') ||
+    t.includes('describe this page') ||
+    t.includes('describe the page') ||
+    t.includes('what is this page') ||
+    t.includes("what's on this page") ||
+    t.includes('what is on this page') ||
+    t.includes("what's this page") ||
+    /ما هذه الصفحه/.test(t) ||
+    /ما هذه الصفحة/.test(t) ||
+    /ما هو محتوى الصفحة/.test(t) ||
+    /ملخص/.test(t) ||
+    /وصف الصفحة/.test(t)
+  );
+}
+
 function buildFriendlyOrientation(structure) {
   if (!structure) return 'Page summary is unavailable.';
   const counts = structure.counts || {};
@@ -185,9 +205,10 @@ async function runPlanner(command) {
   const structureRes = await sendToActiveTab({ type: 'navable:getStructure' });
   const structure = structureRes && structureRes.structure ? structureRes.structure : null;
   const text = String(command || '').toLowerCase();
+  const isSummaryRequest = isSummaryCommandText(text);
 
   // If the user asks to summarize/summary, prefer backend AI + plan where allowed by settings.
-  if (text.includes('summarize') || text.includes('summary')) {
+  if (isSummaryRequest) {
     const settings = await loadSettings();
     const aiEnabled = !!settings.aiEnabled;
     const aiMode = settings.aiMode || 'off';
@@ -205,7 +226,8 @@ async function runPlanner(command) {
           await sendToActiveTab({
             type: 'navable:announce',
             text: cached.description,
-            mode: 'polite'
+            mode: 'assertive',
+            priority: true
           });
         }
         if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
@@ -251,7 +273,8 @@ async function runPlanner(command) {
           await sendToActiveTab({
             type: 'navable:announce',
             text: description,
-            mode: 'assertive'
+            mode: 'assertive',
+            priority: true
           });
         }
         if (aiMode === 'summary_plan' && aiResult.plan && aiResult.plan.steps && aiResult.plan.steps.length) {
@@ -278,7 +301,7 @@ async function runPlanner(command) {
     } else {
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
       const description = `${buildFriendlyOrientation(structure)} AI summaries are off. Enable AI in options for a richer summary.`;
-      await sendToActiveTab({ type: 'navable:announce', text: description, mode: 'assertive' });
+      await sendToActiveTab({ type: 'navable:announce', text: description, mode: 'assertive', priority: true });
       return {
         ok: true,
         plan: { steps: [] },
@@ -293,7 +316,12 @@ async function runPlanner(command) {
   const plan = stubPlanner(command, structure);
 
   if (plan.description) {
-    await sendToActiveTab({ type: 'navable:announce', text: plan.description, mode: 'polite' });
+    await sendToActiveTab({
+      type: 'navable:announce',
+      text: plan.description,
+      mode: isSummaryRequest ? 'assertive' : 'polite',
+      priority: isSummaryRequest
+    });
   }
   if (plan.steps && plan.steps.length) {
     await sendToActiveTab({ type: 'navable:executePlan', plan: { steps: plan.steps } });

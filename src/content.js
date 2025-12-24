@@ -13,10 +13,22 @@
   // Announce helper wrapper
   function announce(text, opts) {
     try {
+      const options = opts || { mode: 'polite' };
       if (typeof window.NavableAnnounce === 'function') {
-        window.NavableAnnounce(text, opts || { mode: 'polite' });
-      } else if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
-        window.NavableAnnounce.speak(text);
+        window.NavableAnnounce(text, options);
+        return;
+      }
+      if (
+        options &&
+        options.priority &&
+        window.NavableAnnounce &&
+        typeof window.NavableAnnounce.output === 'function'
+      ) {
+        window.NavableAnnounce.output(text, options);
+        return;
+      }
+      if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
+        window.NavableAnnounce.speak(text, options);
       }
     } catch (_e) {
       // no-op
@@ -38,11 +50,11 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg && msg.type === 'announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite' });
+        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
         return;
       }
       if (msg && msg.type === 'navable:announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite' });
+        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
         sendResponse && sendResponse({ ok: true });
         return true;
       }
@@ -109,7 +121,7 @@
   // Speak on activation (top window only)
   try {
     if (window.top === window) {
-      announce('Navable is ready. Press H for help in later phases.', { mode: 'polite' });
+      announce('Navable is ready. Say “help” to hear example commands.', { mode: 'polite' });
     }
   } catch (_e) {
     // ignore cross-origin frame access errors
@@ -574,10 +586,13 @@
   var manualListening = null; // null = follow autostart; true = force on; false = force off
   var settingsLoaded = false;
   var lastSpoken = '';
+  var lastUnknownCmdAt = 0;
+  var lastMicBusyAt = 0;
   var recogLang = 'en-US';
   var transientRestoreTimer = null;
   var startRetryTimer = null;
   var startRetryCount = 0;
+  var outputOpen = false;
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -654,6 +669,7 @@
   }
 
   function computeShouldListen() {
+    if (outputOpen) return false;
     if (!isPageActiveForVoice()) return false;
     if (manualListening === true) return true;
     if (manualListening === false) return false;
@@ -680,6 +696,11 @@
         if (code === 'start-failed' || code === 'audio-capture' || code === 'aborted') {
           // Common when another tab/window is still holding the mic. Retry quietly while we still want to listen.
           if (computeShouldListen()) {
+            var now2 = Date.now();
+            if (now2 - lastMicBusyAt > 15000) {
+              lastMicBusyAt = now2;
+              speakTransient('Microphone is busy in another tab or app. Retrying…', 3500);
+            }
             clearStartRetryTimer();
             startRetryCount = Math.min(10, startRetryCount + 1);
             var backoff = Math.min(2000, 150 * startRetryCount);
@@ -692,7 +713,8 @@
           return;
         }
 	        if (code === 'no-speech') {
-	          speak('I did not hear anything.');
+	          // Silence timeouts are common during continuous listening; do not spam announcements.
+	          return;
 	        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
 	          listening = false;
 	          manualListening = false;
@@ -728,7 +750,7 @@
       return;
     }
     listening = true;
-    if (opts.announce) speak('Listening');
+    if (opts.announce) speak('Listening. Say “help” to hear example commands.');
     try { recognizer.start(); } catch (_err) { /* errors are handled via recognizer error events */ }
   }
 
@@ -737,7 +759,7 @@
     listening = false;
     clearStartRetryTimer();
     startRetryCount = 0;
-    if (opts.announce) speak('Stopped listening');
+    if (opts.announce) speak('Stopped listening. Press Alt+Shift+M to start again.');
     try { if (recognizer) recognizer.stop(); } catch (_err) { /* ignore */ }
   }
 
@@ -752,6 +774,24 @@
     var currentlyOn = computeShouldListen();
     manualListening = currentlyOn ? false : true;
     syncListening({ announce: true });
+  }
+
+  // Pause listening while the Navable output overlay is open to avoid SR/TTS feedback loops.
+  try {
+    window.addEventListener(
+      'navable:output-open',
+      function (e) {
+        try {
+          outputOpen = !!(e && e.detail && e.detail.open);
+        } catch (_err) {
+          outputOpen = false;
+        }
+        syncListening({ announce: false });
+      },
+      { capture: true }
+    );
+  } catch (_e) {
+    // ignore
   }
 
   // Auto-pause/resume based on tab visibility/focus so multiple open tabs don't contend for speech recognition.
@@ -804,6 +844,11 @@
     if (!t) return null;
     var num = extractNumber(t);
     var label;
+
+    // Help / examples.
+    if (/^(help|help me|commands|show commands|what can i say\??)$/.test(t) || /مساعدة/.test(t)) {
+      return { type: 'help' };
+    }
 
     // English summary triggers + common Arabic phrasing.
     if (
@@ -979,7 +1024,14 @@
   }
 
   function execCommand(cmd) {
-    if (!cmd) { speakTransient("I didn't catch that.", 2500); return; }
+    if (!cmd) {
+      var now = Date.now();
+      if (now - lastUnknownCmdAt < 5000) return;
+      lastUnknownCmdAt = now;
+      speakTransient('I did not catch that. Say “help” to hear example commands.', 3200);
+      return;
+    }
+    if (cmd.type === 'help') { speakHelp(); return; }
     if (cmd.type === 'open_site') {
       openSiteRequest(cmd.query, cmd.newTab !== false);
       return;
@@ -1141,20 +1193,20 @@
 
   async function runSummaryRequest(commandText) {
     var cmdText = (commandText && String(commandText).trim()) || 'Summarize this page';
-    speak('Summarizing this page.');
+    announce('Summarizing this page… please wait.', { mode: 'assertive', priority: true });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak('Planner is unavailable.');
+      announce('Sorry — summarization is unavailable on this page.', { mode: 'assertive', priority: true });
       return;
     }
     try {
       var res = await chrome.runtime.sendMessage({ type: 'planner:run', command: cmdText });
       if (!res || res.ok !== true) {
-        speak('Could not summarize this page.');
+        announce((res && res.error) ? String(res.error) : 'Sorry — I could not summarize this page.', { mode: 'assertive', priority: true });
       }
       // On success, the background will announce the summary via the live region.
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      speak('Summarization failed.');
+      announce('Sorry — the summary request failed. Please try again.', { mode: 'assertive', priority: true });
     }
   }
 
@@ -1232,7 +1284,7 @@
 
   // Help voice command + hotkey
   function speakHelp() {
-    speak('Try: scroll down, read title, open first link, open facebook, open example dot com, focus second button, next heading, activate focused, read selection.');
+    speak('Try: summarize this page, scroll down, read title, next heading, open first link, activate focused, read selection. Press Alt+Shift+M to toggle listening.');
   }
 
   document.addEventListener('keydown', function (e) {
