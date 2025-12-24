@@ -1,0 +1,162 @@
+.nv-popup {
+  width: 360px;
+  padding: 14px;
+}
+
+.nv-popup-shell {
+  overflow: hidden;
+}
+
+.nv-popup-inner {
+  padding: 16px;
+}
+
+.nv-popup-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nv-popup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-popup-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--nv-border);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.2);
+}
+
+.nv-popup-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.nv-popup-link {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.nv-section {
+  margin-top: 14px;
+}
+
+.nv-mic-btn {
+  width: 100%;
+  font-weight: 720;
+  padding: 12px 14px;
+}
+
+.nv-mic-btn::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-right: 10px;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+  vertical-align: -1px;
+}
+
+.nv-mic-btn[disabled]::before {
+  opacity: 0.7;
+}
+
+.mic-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--nv-muted);
+}
+
+.nv-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.nv-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.nv-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.nv-action svg {
+  width: 18px;
+  height: 18px;
+  opacity: 0.92;
+  flex: 0 0 auto;
+}
+
+.nv-status-card {
+  padding: 12px;
+  border-radius: var(--nv-radius-md);
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.status {
+  font-size: 12px;
+  min-height: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.status.ok {
+  color: var(--nv-success);
+}
+
+.status.error {
+  color: var(--nv-danger);
+}
+
+.hint {
+  color: var(--nv-muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.help-box {
+  font-size: 12px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: var(--nv-radius-md);
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.05);
+  display: none;
+}
+
+.help-box ul {
+  padding-left: 18px;
+  margin: 8px 0 0;
+}
+
+.help-box p {
+  margin: 10px 0 0;
+  color: var(--nv-muted);
+}
+
+.nv-footer-tip {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--nv-muted);
+}
+

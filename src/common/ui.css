@@ -1,0 +1,286 @@
+:root {
+  color-scheme: light dark;
+  --nv-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji',
+    'Segoe UI Emoji';
+
+  --nv-bg0: #070a12;
+  --nv-bg1: #0b1220;
+  --nv-fg: rgba(255, 255, 255, 0.92);
+  --nv-muted: rgba(255, 255, 255, 0.66);
+
+  --nv-card: rgba(255, 255, 255, 0.06);
+  --nv-card-strong: rgba(255, 255, 255, 0.1);
+  --nv-border: rgba(255, 255, 255, 0.14);
+  --nv-border-strong: rgba(255, 255, 255, 0.22);
+  --nv-shadow: 0 18px 60px rgba(0, 0, 0, 0.38);
+
+  --nv-primary-a: #7c3aed;
+  --nv-primary-b: #06b6d4;
+  --nv-success: #22c55e;
+  --nv-danger: #fb7185;
+  --nv-warning: #fbbf24;
+  --nv-focus: rgba(34, 211, 238, 0.95);
+
+  --nv-radius-sm: 12px;
+  --nv-radius-md: 16px;
+  --nv-radius-lg: 22px;
+
+  --nv-gap-1: 8px;
+  --nv-gap-2: 12px;
+  --nv-gap-3: 16px;
+  --nv-gap-4: 20px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --nv-bg0: #f8fafc;
+    --nv-bg1: #eef2ff;
+    --nv-fg: rgba(2, 6, 23, 0.9);
+    --nv-muted: rgba(2, 6, 23, 0.62);
+    --nv-card: rgba(255, 255, 255, 0.72);
+    --nv-card-strong: rgba(255, 255, 255, 0.9);
+    --nv-border: rgba(2, 6, 23, 0.12);
+    --nv-border-strong: rgba(2, 6, 23, 0.18);
+    --nv-shadow: 0 18px 60px rgba(2, 6, 23, 0.12);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.nv-ui {
+  min-height: 100vh;
+  margin: 0;
+  font-family: var(--nv-font);
+  color: var(--nv-fg);
+  background: radial-gradient(900px 520px at 12% 16%, rgba(124, 58, 237, 0.28), transparent 60%),
+    radial-gradient(900px 520px at 88% 18%, rgba(6, 182, 212, 0.22), transparent 62%),
+    radial-gradient(900px 520px at 50% 88%, rgba(34, 197, 94, 0.14), transparent 64%),
+    linear-gradient(180deg, var(--nv-bg0), var(--nv-bg1));
+}
+
+.nv-ui::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(1px 1px at 25% 22%, rgba(255, 255, 255, 0.18), transparent 60%),
+    radial-gradient(1px 1px at 80% 30%, rgba(255, 255, 255, 0.14), transparent 60%),
+    radial-gradient(1px 1px at 35% 76%, rgba(255, 255, 255, 0.12), transparent 60%),
+    radial-gradient(1px 1px at 60% 66%, rgba(255, 255, 255, 0.1), transparent 60%);
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-ui::before {
+    opacity: 0.35;
+  }
+}
+
+.nv-container {
+  width: min(1080px, calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.nv-card {
+  border-radius: var(--nv-radius-lg);
+  border: 1px solid var(--nv-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+  box-shadow: var(--nv-shadow);
+  backdrop-filter: blur(14px);
+}
+
+@media (prefers-color-scheme: light) {
+  .nv-card {
+    background: linear-gradient(180deg, var(--nv-card-strong), var(--nv-card));
+  }
+}
+
+.nv-card-inner {
+  padding: 18px;
+}
+
+.nv-title {
+  font-size: 18px;
+  line-height: 1.2;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.nv-subtitle {
+  margin: 6px 0 0;
+  color: var(--nv-muted);
+  font-size: 13px;
+}
+
+.nv-row {
+  display: flex;
+  align-items: center;
+  gap: var(--nv-gap-2);
+}
+
+.nv-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nv-gap-2);
+}
+
+.nv-grid {
+  display: grid;
+  gap: var(--nv-gap-2);
+}
+
+.nv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nv-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.nv-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+}
+
+.nv-dot--ok {
+  background: var(--nv-success);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.nv-dot--warn {
+  background: var(--nv-warning);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+}
+
+.nv-dot--err {
+  background: var(--nv-danger);
+  box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.18);
+}
+
+.nv-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nv-fg);
+  border-radius: var(--nv-radius-md);
+  padding: 10px 12px;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.nv-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--nv-border-strong);
+}
+
+.nv-btn:active {
+  transform: translateY(1px);
+}
+
+.nv-btn:focus-visible {
+  outline: 2px solid var(--nv-focus);
+  outline-offset: 2px;
+}
+
+.nv-btn[disabled] {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.nv-btn--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--nv-primary-a), var(--nv-primary-b));
+  box-shadow: 0 10px 28px rgba(124, 58, 237, 0.24);
+}
+
+.nv-btn--primary:hover {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.96), rgba(6, 182, 212, 0.96));
+}
+
+.nv-btn--ghost {
+  background: transparent;
+}
+
+.nv-input,
+.nv-select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--nv-radius-md);
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nv-fg);
+  font: inherit;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.nv-input::placeholder {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+@media (prefers-color-scheme: light) {
+  .nv-input::placeholder {
+    color: rgba(2, 6, 23, 0.55);
+  }
+}
+
+.nv-input:focus,
+.nv-select:focus {
+  border-color: rgba(34, 211, 238, 0.6);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nv-label {
+  display: block;
+  font-weight: 650;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--nv-muted);
+  margin: 0 0 8px;
+}
+
+.nv-kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nv-fg);
+}
+
+.nv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
