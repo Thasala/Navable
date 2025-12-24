@@ -5,6 +5,7 @@
   "description": "Baseline MV3 with announce helper + messaging + CI.",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
   "options_page": "src/options/index.html",
+  "chrome_url_overrides": { "newtab": "src/newtab/newtab.html" },
   "icons": { "16": "assets/icon16.png", "48": "assets/icon48.png", "128": "assets/icon128.png" },
   "permissions": ["tabs", "scripting", "storage"],
   "host_permissions": ["https://*/*", "http://*/*"],

@@ -16,6 +16,8 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
     },
     tabs: {
       _created: [],
+      onCreated: { addListener() {} },
+      onUpdated: { addListener() {} },
       query() { return Promise.resolve([{ id: 1 }]); },
       create(createProperties) {
         const url = createProperties && createProperties.url ? String(createProperties.url) : 'about:blank';
@@ -70,6 +72,37 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
       onChanged: { addListener() {} }
     }
   };
+}
+
+const NAVABLE_NEW_TAB_URL = (() => {
+  try {
+    return chrome && chrome.runtime && chrome.runtime.getURL
+      ? String(chrome.runtime.getURL('src/newtab/newtab.html'))
+      : '';
+  } catch (_err) {
+    return '';
+  }
+})();
+
+function isInternalNewTabUrl(url) {
+  const u = String(url || '');
+  if (!u) return false;
+  if (u === 'chrome://newtab/' || u === 'chrome://newtab') return true;
+  if (u === 'edge://newtab/' || u === 'edge://newtab') return true;
+  if (u === 'about:newtab' || u === 'about:newtab#' || u === 'about:home') return true;
+  if (u.startsWith('chrome-search://local-ntp')) return true;
+  if (u.startsWith('chrome://new-tab-page')) return true;
+  return false;
+}
+
+async function redirectNewTabToNavable(tabId, url) {
+  if (!NAVABLE_NEW_TAB_URL || !tabId) return;
+  if (!isInternalNewTabUrl(url)) return;
+  try {
+    await chrome.tabs.update(tabId, { url: NAVABLE_NEW_TAB_URL });
+  } catch (err) {
+    console.warn('[Navable] new tab redirect failed', err);
+  }
 }
 
 // Send message to the active tab
@@ -423,6 +456,28 @@ chrome.commands.onCommand.addListener(async (command) => {
     console.warn('[Navable] command handler failed', command, err);
   }
 });
+
+// Ensure Navable is usable "from the beginning" by redirecting internal new tab pages
+// (where extensions cannot inject content scripts) to Navable's New Tab page.
+try {
+  if (chrome?.tabs?.onCreated?.addListener) {
+    chrome.tabs.onCreated.addListener((tab) => {
+      const url = tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '';
+      if (!tab || !tab.id) return;
+      redirectNewTabToNavable(tab.id, url);
+    });
+  }
+  if (chrome?.tabs?.onUpdated?.addListener) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      const url =
+        (changeInfo && changeInfo.url) ||
+        (tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '');
+      redirectNewTabToNavable(tabId, url);
+    });
+  }
+} catch (_err) {
+  // ignore in test contexts
+}
 
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

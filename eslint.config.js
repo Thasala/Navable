@@ -17,12 +17,15 @@ export default [
         console: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
         crypto: 'readonly',
         location: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
         MutationObserver: 'readonly',
-        Event: 'readonly'
+        Event: 'readonly',
+        CustomEvent: 'readonly'
       }
     },
     rules: {
@@ -50,7 +53,7 @@ export default [
 
   // Content script + popup + options + shared utilities
   {
-    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/common/**/*.js'],
+    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/newtab/**/*.js', 'src/common/**/*.js'],
     languageOptions: {
       globals: {
         chrome: 'readonly',
@@ -59,10 +62,13 @@ export default [
         console: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
         crypto: 'readonly',
         location: 'readonly',
         MutationObserver: 'readonly',
-        Event: 'readonly'
+        Event: 'readonly',
+        CustomEvent: 'readonly'
       }
     }
   },
