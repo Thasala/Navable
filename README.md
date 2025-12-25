@@ -10,6 +10,8 @@ docker compose up --build backend
 curl http://localhost:3000/health
 ```
 
+Swagger UI is available at `http://localhost:3000/api-docs` (OpenAPI JSON: `http://localhost:3000/api-docs.json`).
+
 ## Tests / CI (Docker)
 
 Runs `npm run ci` (lint + Playwright tests) inside a Playwright container.
