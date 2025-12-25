@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
+import swaggerUi from 'swagger-ui-express';
+import { getOpenApiSpec } from './openapi.js';
 
 dotenv.config();
 
@@ -10,6 +12,19 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+app.get('/api-docs.json', (req, res) => {
+  res.json(getOpenApiSpec(req));
+});
+
+app.use(
+  '/api-docs',
+  swaggerUi.serve,
+  swaggerUi.setup(null, {
+    customSiteTitle: 'Navable API Docs',
+    swaggerOptions: { url: '/api-docs.json' }
+  })
+);
 
 // Allow only a small, known set of tool actions that the content script supports.
 const ALLOWED_ACTIONS = new Set([
