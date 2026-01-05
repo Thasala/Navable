@@ -23,6 +23,7 @@ const baseSpec = {
   },
   tags: [
     { name: 'Health', description: 'Service status endpoints' },
+    { name: 'Settings', description: 'Runtime backend settings' },
     { name: 'Summarization', description: 'Page summarization endpoints' }
   ],
   paths: {
@@ -37,6 +38,66 @@ const baseSpec = {
               'application/json': {
                 schema: { $ref: '#/components/schemas/HealthResponse' },
                 examples: { ok: { value: { ok: true } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/settings': {
+      get: {
+        tags: ['Settings'],
+        summary: 'Get runtime settings',
+        responses: {
+          200: {
+            description: 'Current settings',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Settings' }
+              }
+            }
+          }
+        }
+      },
+      put: {
+        tags: ['Settings'],
+        summary: 'Update runtime settings',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/UpdateSettingsRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Updated settings',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Settings' }
+              }
+            }
+          },
+          400: {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          }
+        }
+      },
+      delete: {
+        tags: ['Settings'],
+        summary: 'Reset runtime settings to defaults',
+        responses: {
+          200: {
+            description: 'Default settings',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Settings' }
               }
             }
           }
@@ -150,6 +211,27 @@ const baseSpec = {
           suggestions: { type: 'array', items: { type: 'string' } },
           plan: { $ref: '#/components/schemas/Plan' }
         }
+      },
+      Settings: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['aiEnabled', 'model'],
+        properties: {
+          aiEnabled: {
+            type: 'boolean',
+            description:
+              'When false, /api/summarize skips OpenAI and uses local fallback.'
+          },
+          model: { type: 'string', description: 'OpenAI model ID.' }
+        }
+      },
+      UpdateSettingsRequest: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          aiEnabled: { type: 'boolean' },
+          model: { type: 'string' }
+        }
       }
     }
   }
@@ -172,4 +254,3 @@ export function getOpenApiSpec(req) {
     getRequestServerUrl(req) || `http://localhost:${process.env.PORT || 3000}`;
   return { ...baseSpec, servers: [{ url: serverUrl }] };
 }
-
