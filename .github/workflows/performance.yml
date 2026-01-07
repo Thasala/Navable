@@ -1,0 +1,81 @@
+name: Performance (Non-Functional)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - .github/workflows/performance.yml
+
+jobs:
+  backend-latency-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Latency smoke test (/api/summarize)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo "Missing repo secret: OPENAI_API_KEY"
+            exit 1
+          fi
+
+          cd backend
+          npm ci
+
+          node src/server.js > ../backend.log 2>&1 &
+          pid=$!
+          cleanup() {
+            code=$?
+            if [ "$code" -ne 0 ] && [ -f ../backend.log ]; then
+              echo "---- backend.log ----"
+              cat ../backend.log
+            fi
+            kill "$pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          curl -fsS --retry 30 --retry-connrefused --retry-delay 1 http://localhost:3000/health >/dev/null 2>&1 || {
+            echo "Backend did not become healthy in time"
+            exit 1
+          }
+
+          url="http://localhost:3000/api/summarize"
+          payload='{"command":"summarize","pageStructure":{"title":"Navable perf check","counts":{"headings":1,"links":1,"buttons":0},"headings":[{"label":"Example heading"}],"links":[{"label":"Example link"}],"buttons":[],"excerpt":"Short excerpt for performance smoke test."}}'
+
+          warmup=1
+          requests=5
+          avg_budget=8.00
+          max_budget=20.00
+
+          for _ in $(seq 1 "$warmup"); do
+            curl -fsS -o /dev/null -H "Content-Type: application/json" -d "$payload" "$url"
+          done
+
+          times=$(
+            for _ in $(seq 1 "$requests"); do
+              curl -fsS -o /dev/null -w "%{time_total}\n" -H "Content-Type: application/json" -d "$payload" "$url"
+            done
+          )
+          avg=$(echo "$times" | awk '{sum+=$1} END {printf "%.4f", sum/NR}')
+          max=$(echo "$times" | awk 'max<$1{max=$1} END {printf "%.4f", max}')
+
+          echo "Requests: $requests (AI enabled)"
+          echo "Avg seconds: $avg (budget $avg_budget)"
+          echo "Max seconds: $max (budget $max_budget)"
+
+          awk -v avg="$avg" -v max="$max" -v avg_budget="$avg_budget" -v max_budget="$max_budget" \
+            'BEGIN { if (avg > avg_budget || max > max_budget) { print "Latency budget exceeded"; exit 1 } }'
