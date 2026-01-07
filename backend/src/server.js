@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
+import swaggerUi from 'swagger-ui-express';
+import { getOpenApiSpec } from './openapi.js';
 
 dotenv.config();
 
@@ -10,6 +12,19 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+app.get('/api-docs.json', (req, res) => {
+  res.json(getOpenApiSpec(req));
+});
+
+app.use(
+  '/api-docs',
+  swaggerUi.serve,
+  swaggerUi.setup(null, {
+    customSiteTitle: 'Navable API Docs',
+    swaggerOptions: { url: '/api-docs.json' }
+  })
+);
 
 // Allow only a small, known set of tool actions that the content script supports.
 const ALLOWED_ACTIONS = new Set([
@@ -26,6 +41,13 @@ const ALLOWED_ACTIONS = new Set([
   'wait_for_user_input',
   'move_heading'
 ]);
+
+const DEFAULT_SETTINGS = {
+  aiEnabled: true,
+  model: 'gpt-4.1-mini'
+};
+
+let runtimeSettings = { ...DEFAULT_SETTINGS };
 
 function buildFallbackSummary(structure) {
   if (!structure) return 'No page data available.';
@@ -62,15 +84,15 @@ function sanitizePlan(rawPlan) {
   return { steps };
 }
 
-async function callOpenAiSummarize(command, pageStructure) {
+async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SETTINGS) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  if (!apiKey || settings.aiEnabled === false) {
     return null;
   }
 
   const client = new OpenAI({ apiKey });
   // Use the cheapest suitable model for short page summaries.
-  const model = 'gpt-4.1-mini';
+  const model = settings.model || DEFAULT_SETTINGS.model;
 
   const systemPrompt = [
     'You are an accessibility-oriented navigator assistant for a browser extension called Navable.',
@@ -136,6 +158,49 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/settings', (_req, res) => {
+  res.json(runtimeSettings);
+});
+
+app.put('/api/settings', (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+
+  const allowedKeys = new Set(['aiEnabled', 'model']);
+  const unknownKeys = Object.keys(body).filter((key) => !allowedKeys.has(key));
+  if (unknownKeys.length) {
+    return res
+      .status(400)
+      .json({ error: `Unknown setting(s): ${unknownKeys.join(', ')}` });
+  }
+
+  const updates = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, 'aiEnabled')) {
+    if (typeof body.aiEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'aiEnabled must be a boolean' });
+    }
+    updates.aiEnabled = body.aiEnabled;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'model')) {
+    if (typeof body.model !== 'string' || !body.model.trim()) {
+      return res.status(400).json({ error: 'model must be a non-empty string' });
+    }
+    updates.model = body.model.trim();
+  }
+
+  runtimeSettings = { ...runtimeSettings, ...updates };
+  res.json(runtimeSettings);
+});
+
+app.delete('/api/settings', (_req, res) => {
+  runtimeSettings = { ...DEFAULT_SETTINGS };
+  res.json(runtimeSettings);
+});
+
 app.post('/api/summarize', async (req, res) => {
   try {
     const { command, pageStructure } = req.body || {};
@@ -147,7 +212,7 @@ app.post('/api/summarize', async (req, res) => {
 
     let result = null;
     try {
-      result = await callOpenAiSummarize(command, structure);
+      result = await callOpenAiSummarize(command, structure, runtimeSettings);
     } catch (err) {
       // Failed OpenAI call; fall back to local summary.
       // eslint-disable-next-line no-console
