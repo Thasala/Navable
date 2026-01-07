@@ -13,6 +13,7 @@ const ALLOWED_STEP_ACTIONS = [
   'move_heading'
 ];
 
+// CI: non-functional change to trigger the Docker publish workflow.
 const baseSpec = {
   openapi: '3.0.3',
   info: {
