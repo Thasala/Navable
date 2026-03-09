@@ -74,11 +74,61 @@ function announce(text, mode = 'polite') {
   if (!msg) return;
   try {
     if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
-      window.NavableAnnounce.speak(msg, { mode: mode === 'assertive' ? 'assertive' : 'polite' });
+      window.NavableAnnounce.speak(msg, {
+        mode: mode === 'assertive' ? 'assertive' : 'polite',
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   } catch (_err) {
     // ignore
   }
+}
+
+const i18n = window.NavableI18n || null;
+
+function normalizeOutputLanguage(lang) {
+  if (i18n && typeof i18n.normalizeLanguage === 'function') return i18n.normalizeLanguage(lang);
+  return String(lang || 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+}
+
+function outputLocale(lang) {
+  if (i18n && typeof i18n.localeForLanguage === 'function') return i18n.localeForLanguage(lang);
+  return String(lang || 'en-US');
+}
+
+function currentOutputLanguage() {
+  return normalizeOutputLanguage(newtabOutputLanguage || newtabVoiceLang || 'en-US');
+}
+
+function translate(key, params, lang) {
+  const resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+  if (i18n && typeof i18n.t === 'function') return i18n.t(key, resolved, params);
+  return key;
+}
+
+function ensureOutputLanguageReady(lang) {
+  const resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+  if (i18n && typeof i18n.ensureLanguage === 'function') return i18n.ensureLanguage(resolved);
+  return Promise.resolve();
+}
+
+function resolveTranscriptLanguage(text) {
+  if (i18n && typeof i18n.resolveOutputLanguage === 'function') {
+    return i18n.resolveOutputLanguage({
+      transcript: text,
+      fallbackLanguage: currentOutputLanguage()
+    });
+  }
+  return currentOutputLanguage();
+}
+
+function setNewtabOutputLanguage(transcript, detectedLanguage) {
+  if (detectedLanguage) {
+    newtabOutputLanguage = normalizeOutputLanguage(detectedLanguage);
+    return newtabOutputLanguage;
+  }
+  newtabOutputLanguage = resolveTranscriptLanguage(transcript);
+  return newtabOutputLanguage;
 }
 
 function isVoiceSupported() {
@@ -100,15 +150,26 @@ function extractOpenSiteQuery(transcript) {
   const s = String(transcript || '').trim().toLowerCase();
   if (!s) return null;
 
-  // Arabic: "افتح <شيء>"
-  const ar = s.match(/^افتح\s+(.+)$/);
-  if (ar && ar[1]) return String(ar[1]).trim();
+  // Arabic website intents.
+  const ar = s.match(/^(افتح|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى)\s+(.+)$/);
+  if (ar && ar[2]) return String(ar[2]).trim();
 
-  // English: "open (me) <site>"
-  if (!/^(open|navigate to|go to|take me to)\b/.test(s)) return null;
+  // French website intents.
+  const fr = s.match(/^(ouvre|va(?:s)?\s+(?:a|à)|aller?\s+(?:a|à)|visite|lance)\s+(.+)$/);
+  if (fr && fr[2]) {
+    return String(fr[2])
+      .trim()
+      .replace(/^(le|la|les|un|une)\b/, '')
+      .trim()
+      .replace(/^(site|page|onglet)\b/, '')
+      .trim();
+  }
+
+  // English: flexible website intents.
+  if (!/^(open|navigate to|go to|take me to|visit|bring up|launch)\b/.test(s)) return null;
 
   const q = s
-    .replace(/^(open(\s+up)?|navigate to|go to|take me to)\b/, '')
+    .replace(/^(open(\s+up)?|navigate to|go to|take me to|visit|bring up|launch)\b/, '')
     .trim()
     .replace(/^(me|for me)\b/, '')
     .trim()
@@ -124,23 +185,40 @@ function extractOpenSiteQuery(transcript) {
   return q || null;
 }
 
+function extractSearchQuery(transcript) {
+  const s = String(transcript || '').trim().toLowerCase();
+  if (!s) return null;
+
+  const en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+  if (en && en[3]) return `search for ${String(en[3]).trim()}`;
+
+  const fr = s.match(/^(cherche|recherche)\s+(.+)$/);
+  if (fr && fr[2]) return `search for ${String(fr[2]).trim()}`;
+
+  const ar = s.match(/^(ابحث|فتش)(\s+عن)?\s+(.+)$/);
+  if (ar && ar[3]) return `search for ${String(ar[3]).trim()}`;
+
+  return null;
+}
+
 function parseVoiceCommand(transcript) {
   const t = String(transcript || '').trim();
   const low = t.toLowerCase();
   if (!low) return null;
 
-  if (/^(help|commands|show commands|what can i say\??)$/.test(low) || /مساعدة/.test(low)) {
+  if (
+    /^(help|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(low) ||
+    /مساعدة/.test(low)
+  ) {
     return { type: 'help' };
   }
 
-  if (/^(stop|stop listening|cancel)$/.test(low)) {
+  if (/^(stop|stop listening|cancel|arr[êe]te|stoppe|توقف|قف)$/.test(low)) {
     return { type: 'stop' };
   }
 
-  const searchMatch = low.match(/^(search|google)\s+(for\s+)?(.+)$/);
-  if (searchMatch && searchMatch[3]) {
-    return { type: 'open_site', query: `search for ${searchMatch[3]}` };
-  }
+  const searchQuery = extractSearchQuery(low);
+  if (searchQuery) return { type: 'open_site', query: searchQuery };
 
   const q = extractOpenSiteQuery(t);
   if (q) return { type: 'open_site', query: q };
@@ -152,6 +230,7 @@ let newtabRecognizer = null;
 let newtabWantsListening = false;
 let newtabVoiceReady = false;
 let newtabVoiceLang = 'en-US';
+let newtabOutputLanguage = 'en';
 
 function refreshNewtabMicUi() {
   const { btn, status } = getVoiceStatusEls();
@@ -204,6 +283,7 @@ async function ensureNewtabRecognizer() {
 
   const settings = await loadNewtabVoiceSettings();
   newtabVoiceLang = settings.language || 'en-US';
+  newtabOutputLanguage = normalizeOutputLanguage(newtabVoiceLang);
 
   try {
     newtabRecognizer = window.NavableSpeech.createRecognizer({
@@ -215,7 +295,7 @@ async function ensureNewtabRecognizer() {
 
     newtabRecognizer.on('result', (ev) => {
       if (!ev?.transcript) return;
-      handleNewtabTranscript(ev.transcript);
+      handleNewtabTranscript(ev.transcript, ev.language || '');
     });
 
     newtabRecognizer.on('error', (e) => {
@@ -225,23 +305,23 @@ async function ensureNewtabRecognizer() {
       if (code === 'not-allowed' || code === 'service-not-allowed') {
         newtabWantsListening = false;
         refreshNewtabMicUi();
-        setNewtabMicMessage('Microphone access is blocked. Allow microphone for this extension to use voice.', 'assertive');
+        setNewtabMicMessage(translate('mic_access_blocked'), 'assertive');
         return;
       }
 
       if (code === 'audio-capture' || code === 'aborted' || code === 'start-failed') {
-        setNewtabMicMessage('Microphone is busy. Close other apps/tabs using the mic, then try again.', 'polite');
+        setNewtabMicMessage(translate('mic_busy'), 'polite');
         return;
       }
 
       if (code === 'network') {
         newtabWantsListening = false;
         refreshNewtabMicUi();
-        setNewtabMicMessage('Speech recognition is unavailable due to a network issue.', 'assertive');
+        setNewtabMicMessage(translate('speech_network_issue'), 'assertive');
         return;
       }
 
-      setNewtabMicMessage('Speech recognition had a problem. Please try again.', 'assertive');
+      setNewtabMicMessage(translate('speech_problem_retry'), 'assertive');
     });
 
     newtabRecognizer.on('start', () => {
@@ -265,9 +345,14 @@ async function openSiteFromVoice(query) {
 
   try {
     if (chrome?.runtime?.sendMessage) {
-      const res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: false });
+      const res = await chrome.runtime.sendMessage({
+        type: 'navable:openSite',
+        query: q,
+        newTab: false,
+        outputLanguage: currentOutputLanguage()
+      });
       if (res?.ok) return;
-      setNewtabMicMessage(res?.error || 'Could not open that website.', 'assertive');
+      setNewtabMicMessage(res?.error || translate('open_site_failed'), 'assertive');
       return;
     }
   } catch (_err) {
@@ -276,21 +361,23 @@ async function openSiteFromVoice(query) {
 
   const url = resolveQueryToUrl(q);
   if (!url) {
-    setNewtabMicMessage('Missing website name or URL.', 'assertive');
+    setNewtabMicMessage(translate('missing_url'), 'assertive');
     return;
   }
   await openUrl(url);
 }
 
-async function handleNewtabTranscript(transcript) {
+async function handleNewtabTranscript(transcript, detectedLanguage) {
+  setNewtabOutputLanguage(transcript, detectedLanguage);
+  await ensureOutputLanguageReady();
   const cmd = parseVoiceCommand(transcript);
   if (!cmd) {
-    setNewtabMicMessage('I did not catch that. Try: “Open YouTube”.', 'polite');
+    setNewtabMicMessage(translate('newtab_try_open'), 'polite');
     return;
   }
 
   if (cmd.type === 'help') {
-    setNewtabMicMessage('Try: “Open YouTube”, “Open example dot com”, “Search for weather”.', 'assertive');
+    setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
     return;
   }
 
@@ -300,7 +387,7 @@ async function handleNewtabTranscript(transcript) {
   }
 
   if (cmd.type === 'open_site') {
-    setNewtabMicMessage(`Opening ${cmd.query}…`, 'assertive');
+    setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
     await openSiteFromVoice(cmd.query);
   }
 }
@@ -314,12 +401,12 @@ async function startNewtabListening() {
     newtabWantsListening = false;
     newtabVoiceReady = true;
     refreshNewtabMicUi();
-    setNewtabMicMessage('Voice input is not available in this browser.', 'assertive');
+    setNewtabMicMessage(translate('voice_unavailable_browser'), 'assertive');
     return;
   }
 
   recognizer.start();
-  setNewtabMicMessage('Listening… Say “Open YouTube”.', 'polite');
+  setNewtabMicMessage(translate('newtab_listening'), 'polite');
 }
 
 function stopNewtabListening(opts = {}) {
@@ -330,7 +417,7 @@ function stopNewtabListening(opts = {}) {
   } catch (_err) {
     // ignore
   }
-  if (opts.announce) setNewtabMicMessage('Stopped listening.', 'polite');
+  if (opts.announce) setNewtabMicMessage(translate('stopped_listening'), 'polite');
 }
 
 async function toggleNewtabListening() {
@@ -386,7 +473,7 @@ function wireNewtabVoice() {
   if (!isVoiceSupported()) {
     const { btn: btn2 } = getVoiceStatusEls();
     if (btn2) btn2.disabled = true;
-    setNewtabMicMessage('Voice input is not available in this browser.', 'polite');
+    setNewtabMicMessage(translate('voice_unavailable_browser'), 'polite');
   }
 }
 

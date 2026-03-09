@@ -13,7 +13,7 @@
   "content_scripts": [
     {
       "matches": ["https://*/*", "http://*/*"],
-      "js": ["src/common/announce.js", "src/common/speech.js", "src/content.js"],
+      "js": ["src/common/i18n.js", "src/common/announce.js", "src/common/speech.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],

@@ -25,7 +25,8 @@ const baseSpec = {
   tags: [
     { name: 'Health', description: 'Service status endpoints' },
     { name: 'Settings', description: 'Runtime backend settings' },
-    { name: 'Summarization', description: 'Page summarization endpoints' }
+    { name: 'Summarization', description: 'Page summarization endpoints' },
+    { name: 'Speech', description: 'Voice transcription endpoints' }
   ],
   paths: {
     '/health': {
@@ -146,6 +147,82 @@ const baseSpec = {
           }
         }
       }
+    },
+    '/api/transcribe': {
+      post: {
+        tags: ['Speech'],
+        summary: 'Transcribe a short voice command',
+        description:
+          'Accepts a short base64-encoded audio clip and returns the transcript text plus detected input language.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TranscribeRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Transcription result',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TranscribeResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          503: {
+            description: 'Transcription backend unavailable',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/translate-messages': {
+      post: {
+        tags: ['Speech'],
+        summary: 'Translate Navable UI messages',
+        description:
+          'Accepts a message catalog and returns the same keys translated into the requested language.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/TranslateMessagesRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Translated message catalog',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TranslateMessagesResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          }
+        }
+      }
     }
   },
   components: {
@@ -200,6 +277,10 @@ const baseSpec = {
             type: 'string',
             description: 'Optional user command (any language).'
           },
+          outputLanguage: {
+            type: 'string',
+            description: 'Preferred language for Navable-authored summary output.'
+          },
           pageStructure: { $ref: '#/components/schemas/PageStructure' }
         }
       },
@@ -213,17 +294,70 @@ const baseSpec = {
           plan: { $ref: '#/components/schemas/Plan' }
         }
       },
+      TranscribeRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['audioBase64'],
+        properties: {
+          audioBase64: {
+            type: 'string',
+            description: 'Base64-encoded short audio clip (for example webm/opus).'
+          },
+          mimeType: {
+            type: 'string',
+            description: 'Optional MIME type for the uploaded audio clip.'
+          }
+        }
+      },
+      TranscribeResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['text', 'language'],
+        properties: {
+          text: { type: 'string' },
+          language: { type: 'string' }
+        }
+      },
+      TranslateMessagesRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['language', 'messages'],
+        properties: {
+          language: {
+            type: 'string',
+            description: 'Target language code for the translated output.'
+          },
+          messages: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description: 'Flat message catalog to translate.'
+          }
+        }
+      },
+      TranslateMessagesResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['language', 'messages'],
+        properties: {
+          language: { type: 'string' },
+          messages: {
+            type: 'object',
+            additionalProperties: { type: 'string' }
+          }
+        }
+      },
       Settings: {
         type: 'object',
         additionalProperties: false,
-        required: ['aiEnabled', 'model'],
+        required: ['aiEnabled', 'model', 'transcriptionModel'],
         properties: {
           aiEnabled: {
             type: 'boolean',
             description:
               'When false, /api/summarize skips OpenAI and uses local fallback.'
           },
-          model: { type: 'string', description: 'OpenAI model ID.' }
+          model: { type: 'string', description: 'OpenAI model ID for summaries.' },
+          transcriptionModel: { type: 'string', description: 'OpenAI model ID for voice transcription.' }
         }
       },
       UpdateSettingsRequest: {
@@ -231,7 +365,8 @@ const baseSpec = {
         additionalProperties: false,
         properties: {
           aiEnabled: { type: 'boolean' },
-          model: { type: 'string' }
+          model: { type: 'string' },
+          transcriptionModel: { type: 'string' }
         }
       }
     }

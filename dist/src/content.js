@@ -35,12 +35,79 @@
     }
   }
 
+  var i18n = window.NavableI18n || null;
+
+  function normalizeOutputLanguage(lang) {
+    if (i18n && typeof i18n.normalizeLanguage === 'function') {
+      return i18n.normalizeLanguage(lang);
+    }
+    return String(lang || 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+  }
+
+  function outputLocale(lang) {
+    if (i18n && typeof i18n.localeForLanguage === 'function') {
+      return i18n.localeForLanguage(lang);
+    }
+    return String(lang || 'en-US');
+  }
+
+  function currentOutputLanguage() {
+    return normalizeOutputLanguage(outputLanguage || settings.language || recogLang || 'en-US');
+  }
+
+  function translate(key, params, lang) {
+    var resolvedLang = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (i18n && typeof i18n.t === 'function') {
+      return i18n.t(key, resolvedLang, params);
+    }
+    return key;
+  }
+
+  function ensureOutputLanguageReady(lang) {
+    var resolvedLang = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (i18n && typeof i18n.ensureLanguage === 'function') {
+      return i18n.ensureLanguage(resolvedLang);
+    }
+    return Promise.resolve();
+  }
+
+  function resolveTranscriptLanguage(text) {
+    if (i18n && typeof i18n.resolveOutputLanguage === 'function') {
+      return i18n.resolveOutputLanguage({
+        transcript: text,
+        fallbackLanguage: currentOutputLanguage()
+      });
+    }
+    return currentOutputLanguage();
+  }
+
+  function localizeTarget(target, lang) {
+    var resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (target === 'link') return translate('target_link', null, resolved);
+    if (target === 'button') return translate('target_button', null, resolved);
+    if (target === 'heading') return translate('target_heading', null, resolved);
+    if (target === 'input') return translate('target_input', null, resolved);
+    return translate('target_element', null, resolved);
+  }
+
+  function setOutputLanguageFromTranscript(text, detectedLanguage) {
+    if (detectedLanguage) {
+      outputLanguage = normalizeOutputLanguage(detectedLanguage);
+      return outputLanguage;
+    }
+    outputLanguage = resolveTranscriptLanguage(text);
+    return outputLanguage;
+  }
+
   // Fallback hotkey: Alt+Shift+;
   document.addEventListener(
     'keydown',
     (e) => {
       if (e.altKey && e.shiftKey && e.key === ';') {
-        announce('Navable: test announcement (fallback hotkey).', { mode: 'polite' });
+        announce(translate('navable_test_announcement'), {
+          mode: 'polite',
+          lang: outputLocale(currentOutputLanguage())
+        });
       }
     },
     { capture: true }
@@ -50,12 +117,23 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg && msg.type === 'announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
+        announce(msg.text || translate('generic_announcement'), {
+          mode: msg.mode || 'polite',
+          priority: !!msg.priority,
+          lang: msg.lang || outputLocale(currentOutputLanguage())
+        });
         return;
       }
       if (msg && msg.type === 'navable:announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
-        sendResponse && sendResponse({ ok: true });
+        if (msg.lang) outputLanguage = normalizeOutputLanguage(msg.lang);
+        ensureOutputLanguageReady(outputLanguage).finally(function () {
+          announce(msg.text || translate('generic_announcement'), {
+            mode: msg.mode || 'polite',
+            priority: !!msg.priority,
+            lang: msg.lang || outputLocale(currentOutputLanguage())
+          });
+          sendResponse && sendResponse({ ok: true });
+        });
         return true;
       }
       if (msg && msg.type === 'navable:getStructure') {
@@ -121,7 +199,10 @@
   // Speak on activation (top window only)
   try {
     if (window.top === window) {
-      announce('Navable is ready. Say “help” to hear example commands.', { mode: 'polite' });
+      announce(translate('navable_ready'), {
+        mode: 'polite',
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   } catch (_e) {
     // ignore cross-origin frame access errors
@@ -551,7 +632,7 @@
       return { ok: true, message: 'Moved heading ' + (dir === 'prev' ? 'previous' : 'next') };
     }
     if (action === 'wait_for_user_input') {
-      speak(step.prompt || 'Please provide input, then tell me to continue.');
+      speak(step.prompt || translate('wait_for_user_input'));
       return { ok: true, message: 'Waiting for user input' };
     }
     return { ok: false, message: 'Unknown action ' + action };
@@ -589,6 +670,7 @@
   var lastUnknownCmdAt = 0;
   var lastMicBusyAt = 0;
   var recogLang = 'en-US';
+  var outputLanguage = 'en';
   var transientRestoreTimer = null;
   var startRetryTimer = null;
   var startRetryCount = 0;
@@ -617,12 +699,13 @@
     var msg = String(text || '');
     var isTransient = !!opts.transient;
     var restoreMs = typeof opts.restoreMs === 'number' ? opts.restoreMs : 2500;
+    var lang = opts && opts.lang ? String(opts.lang) : outputLocale(currentOutputLanguage());
 
     if (!isTransient) {
       lastSpoken = msg;
       clearTransientRestoreTimer();
       // Rely on the ARIA live region + screen reader; do not use browser text-to-speech.
-      announce(lastSpoken, { mode: mode });
+      announce(lastSpoken, { mode: mode, lang: lang });
       return;
     }
 
@@ -634,7 +717,7 @@
     } catch (_err) {
       previousText = '';
     }
-    announce(msg, { mode: mode });
+    announce(msg, { mode: mode, lang: lang });
 
     clearTransientRestoreTimer();
     transientRestoreTimer = setTimeout(function () {
@@ -688,7 +771,10 @@
   function ensureRecognizer() {
     if (recognizer || !isVoiceSupported()) return recognizer;
     recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
-    recognizer.on('result', function (ev) { if (!ev || !ev.transcript) return; handleTranscript(ev.transcript); });
+    recognizer.on('result', function (ev) {
+      if (!ev || !ev.transcript) return;
+      handleTranscript(ev.transcript, ev.language || '');
+    });
     recognizer.on('error', function (e) {
       console.warn('[Navable] speech error', e && e.error);
       try {
@@ -699,7 +785,7 @@
             var now2 = Date.now();
             if (now2 - lastMicBusyAt > 15000) {
               lastMicBusyAt = now2;
-              speakTransient('Microphone is busy in another tab or app. Retrying…', 3500);
+              speakTransient(translate('microphone_busy_retry'), 3500);
             }
             clearStartRetryTimer();
             startRetryCount = Math.min(10, startRetryCount + 1);
@@ -718,13 +804,13 @@
 	        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
 	          listening = false;
 	          manualListening = false;
-	          speak('Speech recognition is not allowed in this browser.');
+	          speak(translate('speech_not_allowed'));
 	        } else if (code === 'network') {
 	          listening = false;
 	          manualListening = false;
-	          speak('Speech recognition is unavailable due to a network issue.');
+	          speak(translate('speech_network_issue'));
 	        } else {
-	          speak('Speech recognition had a problem. Please try again.');
+	          speak(translate('speech_problem_retry'));
 	        }
       } catch (_err) {
         // ignore secondary failures
@@ -745,12 +831,12 @@
     startRetryCount = 0;
     ensureRecognizer();
     if (!recognizer) {
-      if (opts.announce !== false) speak('Speech recognition not available.');
+      if (opts.announce !== false) speak(translate('speech_not_available'));
       listening = false;
       return;
     }
     listening = true;
-    if (opts.announce) speak('Listening. Say “help” to hear example commands.');
+    if (opts.announce) speak(translate('listening_help'));
     try { recognizer.start(); } catch (_err) { /* errors are handled via recognizer error events */ }
   }
 
@@ -759,7 +845,7 @@
     listening = false;
     clearStartRetryTimer();
     startRetryCount = 0;
-    if (opts.announce) speak('Stopped listening. Press Alt+Shift+M to start again.');
+    if (opts.announce) speak(translate('stopped_listening'));
     try { if (recognizer) recognizer.stop(); } catch (_err) { /* ignore */ }
   }
 
@@ -804,22 +890,56 @@
     // ignore
   }
 
+  function matchesAnyPattern(text, patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      if (patterns[i].test(text)) return true;
+    }
+    return false;
+  }
+
+  function extractSearchSiteQuery(t) {
+    var s = String(t || '').trim().toLowerCase();
+    if (!s) return null;
+
+    var en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+    if (en && en[3]) return 'search for ' + String(en[3]).trim();
+
+    var fr = s.match(/^(cherche|recherche)\s+(.+)$/);
+    if (fr && fr[2]) return 'search for ' + String(fr[2]).trim();
+
+    var ar = s.match(/^(ابحث|فتش)(\s+عن)?\s+(.+)$/);
+    if (ar && ar[3]) return 'search for ' + String(ar[3]).trim();
+
+    return null;
+  }
+
   function extractOpenSiteQuery(t) {
     var s = String(t || '').trim().toLowerCase();
     if (!s) return null;
 
     // Avoid conflicting with in-page intents like "open first link" or "press button".
-    if (/\b(link|button|heading)\b/.test(s)) return null;
+    if (/\b(link|button|heading|lien|bouton|titre)\b|رابط|زر|عنوان/.test(s)) return null;
 
-    // Arabic: "افتح <شيء>"
-    var ar = s.match(/^افتح\s+(.+)$/);
-    if (ar && ar[1]) return String(ar[1]).trim();
+    // Arabic website intents.
+    var ar = s.match(/^(افتح|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى)\s+(.+)$/);
+    if (ar && ar[2]) return String(ar[2]).trim();
 
-    // English: "open (me) <site>"
-    if (!/^(open|navigate to|take me to)\b/.test(s)) return null;
+    // French website intents.
+    var fr = s.match(/^(ouvre|va(?:s)?\s+(?:a|à)|aller?\s+(?:a|à)|visite|lance)\s+(.+)$/);
+    if (fr && fr[2]) {
+      return String(fr[2])
+        .trim()
+        .replace(/^(le|la|les|un|une)\b/, '')
+        .trim()
+        .replace(/^(site|page|onglet)\b/, '')
+        .trim();
+    }
+
+    // English: flexible website intents.
+    if (!/^(open|navigate to|take me to|go to|visit|bring up|launch)\b/.test(s)) return null;
 
     var q = s
-      .replace(/^(open(\s+up)?|navigate to|take me to)\b/, '')
+      .replace(/^(open(\s+up)?|navigate to|take me to|go to|visit|bring up|launch)\b/, '')
       .trim()
       .replace(/^(me|for me)\b/, '')
       .trim()
@@ -846,11 +966,14 @@
     var label;
 
     // Help / examples.
-    if (/^(help|help me|commands|show commands|what can i say\??)$/.test(t) || /مساعدة/.test(t)) {
+    if (
+      /^(help|help me|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(t) ||
+      /مساعدة/.test(t)
+    ) {
       return { type: 'help' };
     }
 
-    // English summary triggers + common Arabic phrasing.
+    // Summary/orientation triggers in English, French, and Arabic.
     if (
       t.includes('summarize') ||
       t.includes('summary') ||
@@ -859,6 +982,10 @@
       t.includes("what's on this page") ||
       t.includes('what is on this page') ||
       t.includes("what's this page") ||
+      /r[ée]sum[ée]?.*cette page/.test(t) ||
+      /d[ée]cri(s|re).*cette page/.test(t) ||
+      /c[' ]?est quoi cette page/.test(t) ||
+      /qu[' ]?est[- ]ce que cette page/.test(t) ||
       /ما هذه الصفحه/.test(t) ||
       /ما هذه الصفحة/.test(t) ||
       /ما هو محتوى الصفحة/.test(t) ||
@@ -868,17 +995,20 @@
       return { type: 'summarize', command: original || 'Summarize this page' };
     }
 
+    var searchQuery = extractSearchSiteQuery(t);
+    if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
+
     // Open a new website (dynamic) in a new tab.
     var siteQuery = extractOpenSiteQuery(t);
     if (siteQuery) return { type: 'open_site', query: siteQuery, newTab: true };
 
-    if (/(scroll )?down/.test(t) || /scroll down/.test(t)) return { type: 'scroll', dir: 'down' };
-    if (/(scroll )?up/.test(t) || /scroll up/.test(t)) return { type: 'scroll', dir: 'up' };
-    if (/top/.test(t) || /scroll (to )?top/.test(t)) return { type: 'scroll', dir: 'top' };
-    if (/bottom/.test(t) || /scroll (to )?bottom/.test(t)) return { type: 'scroll', dir: 'bottom' };
-    if (/read (the )?title/.test(t) || /read title/.test(t)) return { type: 'read', what: 'title' };
-    if (/^read (the )?selection/.test(t) || /^read selected/.test(t)) return { type: 'read', what: 'selection' };
-    if (/^read (the )?(focus|focused|this)$/.test(t)) return { type: 'read', what: 'focused' };
+    if (matchesAnyPattern(t, [/(scroll )?down/, /scroll down/, /\bdescend(s)?\b/, /plus bas/, /انزل|نز[ّل]|مرر.*(للأسفل|للاسفل)/])) return { type: 'scroll', dir: 'down' };
+    if (matchesAnyPattern(t, [/(scroll )?up/, /scroll up/, /\bmonte\b/, /plus haut/, /اطلع|اصعد|مرر.*(للأعلى|للاعلى)/])) return { type: 'scroll', dir: 'up' };
+    if (matchesAnyPattern(t, [/\btop\b/, /scroll (to )?top/, /en haut/, /أعلى الصفحة|اعلى الصفحة/])) return { type: 'scroll', dir: 'top' };
+    if (matchesAnyPattern(t, [/\bbottom\b/, /scroll (to )?bottom/, /en bas/, /أسفل الصفحة|اسفل الصفحة/])) return { type: 'scroll', dir: 'bottom' };
+    if (matchesAnyPattern(t, [/read (the )?title/, /read title/, /lis le titre/, /quel est le titre/, /اقر[أا] العنوان|ما عنوان الصفحة/])) return { type: 'read', what: 'title' };
+    if (matchesAnyPattern(t, [/^read (the )?selection/, /^read selected/, /lis la s[ée]lection/, /اقر[أا] التحديد/])) return { type: 'read', what: 'selection' };
+    if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا/])) return { type: 'read', what: 'focused' };
 
     // Explicit label-based intents first
     if ((/^open/.test(t) || /^click/.test(t)) && /link/.test(t) && (label = extractLabel(t, 'link'))) return { type: 'open', target: 'link', label: label };
@@ -918,8 +1048,8 @@
     if (/next .*heading/.test(t) || /^next heading/.test(t)) return { type: 'move', target: 'heading', dir: 'next' };
     if (/previous .*heading/.test(t) || /^previous heading/.test(t) || /prev .*heading/.test(t)) return { type: 'move', target: 'heading', dir: 'prev' };
 
-    if (/repeat/.test(t)) return { type: 'repeat' };
-    if (/stop/.test(t)) return { type: 'stop' };
+    if (/repeat|r[ée]p[èe]te|كرر/.test(t)) return { type: 'repeat' };
+    if (/stop|arr[êe]te|stoppe|توقف|قف|اسكت/.test(t)) return { type: 'stop' };
     return null;
   }
 
@@ -1028,7 +1158,7 @@
       var now = Date.now();
       if (now - lastUnknownCmdAt < 5000) return;
       lastUnknownCmdAt = now;
-      speakTransient('I did not catch that. Say “help” to hear example commands.', 3200);
+      speakTransient(translate('unknown_command'), 3200);
       return;
     }
     if (cmd.type === 'help') { speakHelp(); return; }
@@ -1040,19 +1170,19 @@
       var amount = Math.floor(window.innerHeight * 0.8);
       if (cmd.dir === 'down') {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
+        speak(translate('scrolled_down'));
       } else if (cmd.dir === 'up') {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak('Scrolled up.');
+        speak(translate('scrolled_up'));
       } else if (cmd.dir === 'top') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak('Scrolled to top.');
+        speak(translate('scrolled_top'));
       } else if (cmd.dir === 'bottom') {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak('Scrolled to bottom.');
+        speak(translate('scrolled_bottom'));
       } else {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
+        speak(translate('scrolled_down'));
       }
       console.log('[Navable] Action: scroll', cmd.dir);
       return;
@@ -1060,14 +1190,14 @@
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
-      speak('Title: ' + (title || 'not found'));
+      speak(translate('title_value', { value: title || translate('value_not_found') }));
       console.log('[Navable] Action: read title');
       return;
     }
     if (cmd.type === 'read' && cmd.what === 'selection') {
       var sel = '';
       try { sel = String(window.getSelection && window.getSelection().toString() || '').trim(); } catch (_err) { /* selection failed */ }
-      if (sel) { speak('Selection: ' + sel); } else { speak('No selection.'); }
+      if (sel) { speak(translate('selection_value', { value: sel })); } else { speak(translate('no_selection')); }
       console.log('[Navable] Action: read selection');
       return;
     }
@@ -1076,43 +1206,43 @@
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
-        speak(fl || 'No focused element text.');
+        speak(fl || translate('no_focused_text'));
       } else {
-        speak('No focused element.');
+        speak(translate('no_focused_element'));
       }
       console.log('[Navable] Action: read focused');
       return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var elhL = findByLabel('heading', cmd.label);
-      if (!elhL) { speak('I did not find that heading.'); return; }
+      if (!elhL) { speak(translate('not_found_heading')); return; }
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
-      speak('Heading: ' + (lblhL.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
       console.log('[Navable] Action: read heading by label', cmd.label);
       return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && !cmd.label) {
       var elh = pickNth('heading', cmd.n || 1);
-      if (!elh) { speak('I did not find a heading.'); return; }
+      if (!elh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
       var lblh = elh.dataset.navableLabel || elh.innerText || elh.textContent || '';
-      speak('Heading: ' + (lblh.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblh.trim() || translate('unnamed') }));
       console.log('[Navable] Action: read heading', cmd.n);
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
       var ellL = findByLabel('link', cmd.label);
-      if (!ellL) { speak('I did not find that link.'); return; }
+      if (!ellL) { speak(translate('not_found_link')); return; }
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
-      speak('Opening ' + (lbllL.trim() || 'link'));
+      speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
       ellL.click();
       console.log('[Navable] Action: open link by label', cmd.label);
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
       var ell = pickNth('link', cmd.n || 1);
-      if (!ell) { speak('I did not find a link.'); return; }
+      if (!ell) { speak(translate('not_found_generic', { target: localizeTarget('link') })); return; }
       var lbll = ell.dataset.navableLabel || ell.innerText || ell.textContent || '';
-      speak('Opening ' + (lbll.trim() || 'link'));
+      speak(translate('opening_value', { value: lbll.trim() || translate('target_link') }));
       // Prefer click to follow anchors and SPA handlers
       ell.click();
       console.log('[Navable] Action: open link', cmd.n);
@@ -1120,70 +1250,70 @@
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
       var elbL = findByLabel('button', cmd.label);
-      if (!elbL) { speak('I did not find that button.'); return; }
+      if (!elbL) { speak(translate('not_found_button')); return; }
       try { elbL.focus(); } catch (_err) { /* focus failed */ }
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
-      speak('Focused ' + (lblbL.trim() || 'button'));
+      speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button by label', cmd.label);
       return;
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
-      if (!elb) { speak('I did not find a button.'); return; }
+      if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
       try { elb.focus(); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
-      speak('Focused ' + (lblb.trim() || 'button'));
+      speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button', cmd.n);
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
       var aef = document.activeElement;
-      if (!aef) { speak('No focused element.'); return; }
+      if (!aef) { speak(translate('no_focused_element')); return; }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
       try { aef.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (labf || 'element'));
+      speak(translate('activated_value', { value: labf || translate('target_element') }));
       console.log('[Navable] Action: activate focused');
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
       var ab = findByLabel('button', cmd.label);
-      if (!ab) { speak('I did not find that button.'); return; }
+      if (!ab) { speak(translate('not_found_button')); return; }
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
       try { ab.focus(); } catch (_err) { /* focus failed */ }
       try { ab.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (String(labb || 'button').trim()));
+      speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
       console.log('[Navable] Action: activate button by label', cmd.label);
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
       var abin = pickNth('button', cmd.n);
-      if (!abin) { speak('I did not find a button.'); return; }
+      if (!abin) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
       var labbn = abin.dataset.navableLabel || abin.innerText || abin.textContent || '';
       try { abin.focus(); } catch (_err) { /* focus failed */ }
       try { abin.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (String(labbn || 'button').trim()));
+      speak(translate('activated_value', { value: String(labbn || translate('target_button')).trim() }));
       console.log('[Navable] Action: activate button', cmd.n);
       return;
     }
     if (cmd.type === 'move' && (cmd.target === 'link' || cmd.target === 'button')) {
       var elmv = moveBy(cmd.target, cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmv) { speak('I did not find a ' + cmd.target + '.'); return; }
+      if (!elmv) { speak(translate('not_found_generic', { target: localizeTarget(cmd.target) })); return; }
       try { elmv.focus(); } catch (_err) { /* focus failed */ }
       var lblmv = elmv.dataset.navableLabel || elmv.innerText || elmv.textContent || '';
-      speak('Focused ' + (lblmv.trim() || cmd.target));
+      speak(translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }));
       console.log('[Navable] Action: move ' + cmd.target, cmd.dir);
       return;
     }
     if (cmd.type === 'move' && cmd.target === 'heading') {
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmh) { speak('I did not find a heading.'); return; }
+      if (!elmh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
       if (!elmh.hasAttribute('tabindex')) {
         try { elmh.setAttribute('tabindex', '-1'); } catch (_err) { /* ignore */ }
       }
       try { elmh.focus(); } catch (_err) { /* focus failed */ }
-      speak('Heading: ' + (lblmh.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblmh.trim() || translate('unnamed') }));
       console.log('[Navable] Action: move heading', cmd.dir);
       return;
     }
@@ -1193,52 +1323,104 @@
 
   async function runSummaryRequest(commandText) {
     var cmdText = (commandText && String(commandText).trim()) || 'Summarize this page';
-    announce('Summarizing this page… please wait.', { mode: 'assertive', priority: true });
+    announce(translate('summarizing_wait'), {
+      mode: 'assertive',
+      priority: true,
+      lang: outputLocale(currentOutputLanguage())
+    });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      announce('Sorry — summarization is unavailable on this page.', { mode: 'assertive', priority: true });
+      announce(translate('summarize_unavailable_page'), {
+        mode: 'assertive',
+        priority: true,
+        lang: outputLocale(currentOutputLanguage())
+      });
       return;
     }
     try {
-      var res = await chrome.runtime.sendMessage({ type: 'planner:run', command: cmdText });
+      var res = await chrome.runtime.sendMessage({
+        type: 'planner:run',
+        command: cmdText,
+        outputLanguage: currentOutputLanguage()
+      });
       if (!res || res.ok !== true) {
-        announce((res && res.error) ? String(res.error) : 'Sorry — I could not summarize this page.', { mode: 'assertive', priority: true });
+        announce((res && res.error) ? String(res.error) : translate('summarize_failed'), {
+          mode: 'assertive',
+          priority: true,
+          lang: outputLocale(currentOutputLanguage())
+        });
       }
       // On success, the background will announce the summary via the live region.
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      announce('Sorry — the summary request failed. Please try again.', { mode: 'assertive', priority: true });
+      announce(translate('summarize_request_failed'), {
+        mode: 'assertive',
+        priority: true,
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   }
 
   async function openSiteRequest(query, newTab) {
     var q = String(query || '').trim();
     if (!q) {
-      speak('Tell me which website to open.');
+      speak(translate('tell_website_to_open'));
       return;
     }
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak('Opening a website is unavailable.');
+      speak(translate('open_site_unavailable'));
       return;
     }
     try {
-      var res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: newTab !== false });
+      var res = await chrome.runtime.sendMessage({
+        type: 'navable:openSite',
+        query: q,
+        newTab: newTab !== false,
+        outputLanguage: currentOutputLanguage()
+      });
       if (!res || res.ok !== true) {
-        speak((res && res.error) ? String(res.error) : 'Could not open that site.');
+        speak((res && res.error) ? String(res.error) : translate('open_site_failed'));
       }
     } catch (err) {
       console.warn('[Navable] open site via background failed', err);
-      speak('Could not open that site.');
+      speak(translate('open_site_failed'));
     }
   }
 
-  function handleTranscript(text) {
+  async function tryIntentFallback(commandText) {
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
+    try {
+      var res = await chrome.runtime.sendMessage({
+        type: 'planner:run',
+        command: commandText,
+        outputLanguage: currentOutputLanguage(),
+        preferIntentFallback: true
+      });
+      return !!(res && res.ok === true && (
+        (res.plan && res.plan.steps && res.plan.steps.length) ||
+        res.description ||
+        res.summary
+      ));
+    } catch (err) {
+      console.warn('[Navable] intent fallback failed', err);
+      return false;
+    }
+  }
+
+  async function handleTranscript(text, detectedLanguage) {
     console.log('[Navable] Recognized:', text);
+    setOutputLanguageFromTranscript(text, detectedLanguage);
+    await ensureOutputLanguageReady();
     var cmd = parseCommand(text);
     if (cmd && cmd.type === 'summarize') {
-      runSummaryRequest(cmd.command);
+      await runSummaryRequest(cmd.command);
       return;
     }
-    execCommand(cmd);
+    if (cmd) {
+      execCommand(cmd);
+      return;
+    }
+    if (await tryIntentFallback(text)) return;
+    execCommand(null);
   }
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
@@ -1266,6 +1448,7 @@
 	        settings = { language: s.language || 'en-US', overlay: !!s.overlay, autostart: autostart };
 	        settingsLoaded = true;
 	        recogLang = settings.language || 'en-US';
+	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	        syncListening({ announce: false });
 	      });
@@ -1276,6 +1459,7 @@
 	        settings = { language: s2.language || 'en-US', overlay: !!s2.overlay, autostart: autostart2 };
 	        settingsLoaded = true;
 	        recogLang = settings.language || 'en-US';
+	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	        syncListening({ announce: false });
 	      });
@@ -1284,7 +1468,7 @@
 
   // Help voice command + hotkey
   function speakHelp() {
-    speak('Try: summarize this page, scroll down, read title, next heading, open first link, activate focused, read selection. Press Alt+Shift+M to toggle listening.');
+    speak(translate('help_examples'));
   }
 
   document.addEventListener('keydown', function (e) {

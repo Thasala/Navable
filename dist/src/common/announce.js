@@ -202,7 +202,14 @@
     return panel;
   }
 
-  function showPriorityOutput(text) {
+  function applyLanguageAttributes(node, opts) {
+    if (!node) return;
+    const lang = opts && opts.lang ? String(opts.lang).trim() : '';
+    if (lang) node.setAttribute('lang', lang);
+    else node.removeAttribute('lang');
+  }
+
+  function showPriorityOutput(text, opts) {
     const panel = ensurePriorityPanel();
     if (!panel) return;
     const textarea = document.getElementById('navable-output-text');
@@ -224,6 +231,8 @@
     panel.style.display = 'block';
     emitOutputOpen(true);
     textarea.value = message;
+    applyLanguageAttributes(panel, opts);
+    applyLanguageAttributes(textarea, opts);
 
     // Put the screen reader/keyboard cursor directly on the output text and select it.
     setTimeout(() => {
@@ -239,6 +248,7 @@
   function setAnnounceText(region, mode, text, opts) {
     const m = mode === 'assertive' ? 'assertive' : 'polite';
     const shouldFocus = !!(opts && opts.focus === true);
+    applyLanguageAttributes(region, opts);
 
     // A clear-then-set with small delays is more reliably announced by VoiceOver and NVDA.
     if (timersByMode[m]) {
@@ -270,8 +280,8 @@
       const region = ensureLiveRegion(mode);
       setAnnounceText(region, mode, text, opts);
     },
-    output(text) {
-      showPriorityOutput(text);
+    output(text, opts) {
+      showPriorityOutput(text, opts);
     }
   };
 })();
