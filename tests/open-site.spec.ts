@@ -18,18 +18,23 @@ test('openSiteInBrowser resolves a single token to a .com URL', async ({ page })
   expect(created).toContain(res.url);
 });
 
-test('resolveOpenQueryToUrl supports spoken dot/slash and search fallback', async ({ page }) => {
+test('resolveOpenQueryToUrl supports spoken dot/slash, multilingual site aliases, and direct-open preference', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 
   const urls = await page.evaluate(() => {
     // @ts-ignore
     return {
       login: (window as any).resolveOpenQueryToUrl('example dot com slash login'),
-      search: (window as any).resolveOpenQueryToUrl('stack overflow')
+      arabicYoutube: (window as any).resolveOpenQueryToUrl('يوتيوب'),
+      knownAlias: (window as any).resolveOpenQueryToUrl('stack overflow'),
+      guessedHost: (window as any).resolveOpenQueryToUrl('new york times'),
+      genericHost: (window as any).resolveOpenQueryToUrl('weather tomorrow')
     };
   });
 
   expect(urls.login).toBe('https://example.com/login');
-  expect(urls.search).toContain('https://www.google.com/search?q=');
+  expect(urls.arabicYoutube).toBe('https://www.youtube.com/');
+  expect(urls.knownAlias).toBe('https://stackoverflow.com/');
+  expect(urls.guessedHost).toBe('https://www.newyorktimes.com/');
+  expect(urls.genericHost).toBe('https://www.weathertomorrow.com/');
 });
-
