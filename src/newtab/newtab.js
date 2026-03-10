@@ -367,27 +367,87 @@ async function openSiteFromVoice(query) {
   await openUrl(url);
 }
 
+async function assistantQuestionFromVoice(questionText) {
+  const q = String(questionText || '').trim();
+  if (!q) return false;
+
+  await ensureOutputLanguageReady();
+  setNewtabMicMessage(translate('answering_question'), 'polite');
+
+  if (chrome?.runtime?.sendMessage) {
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'navable:assistant',
+        input: q,
+        outputLanguage: currentOutputLanguage(),
+        pageContext: false,
+        autoExecutePlan: false
+      });
+      if (res?.ok && res.speech) {
+        setNewtabMicMessage(String(res.speech), 'assertive');
+        return true;
+      }
+      if (res?.error) {
+        console.warn('[Navable] newtab assistant background request returned error', res.error);
+      }
+    } catch (err) {
+      console.warn('[Navable] newtab answer failed', err);
+    }
+  }
+
+  try {
+    const response = await window.fetch('http://localhost:3000/api/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: q,
+        outputLanguage: currentOutputLanguage()
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data?.speech) {
+      setNewtabMicMessage(String(data.speech), 'assertive');
+      return true;
+    }
+    if (data?.error) {
+      setNewtabMicMessage(String(data.error), 'assertive');
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Navable] newtab direct assistant request failed', err);
+  }
+
+  setNewtabMicMessage(translate('answer_failed'), 'assertive');
+  return true;
+}
+
 async function handleNewtabTranscript(transcript, detectedLanguage) {
   setNewtabOutputLanguage(transcript, detectedLanguage);
-  await ensureOutputLanguageReady();
+  const languageReady = ensureOutputLanguageReady();
   const cmd = parseVoiceCommand(transcript);
   if (!cmd) {
+    if (await assistantQuestionFromVoice(transcript)) return;
+    await languageReady;
     setNewtabMicMessage(translate('newtab_try_open'), 'polite');
     return;
   }
 
   if (cmd.type === 'help') {
+    await languageReady;
     setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
     return;
   }
 
   if (cmd.type === 'stop') {
+    await languageReady;
     stopNewtabListening({ announce: true });
     return;
   }
 
   if (cmd.type === 'open_site') {
-    setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
+    languageReady.then(() => {
+      setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
+    }).catch(() => {});
     await openSiteFromVoice(cmd.query);
   }
 }
@@ -524,3 +584,8 @@ function wireNewtab() {
 }
 
 document.addEventListener('DOMContentLoaded', wireNewtab);
+
+window.NavableNewtabTools = {
+  handleTranscript: handleNewtabTranscript,
+  assistantQuestionFromVoice
+};
