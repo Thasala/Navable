@@ -60,7 +60,9 @@ const OUTPUT_MESSAGES = {
     suggestion_scroll: 'Try: scroll down.',
     suggestion_title: 'Try: read the title.',
     suggestion_heading: 'Try: move to the next heading.',
-    suggestion_open_link: 'Try: open first link.'
+    suggestion_open_link: 'Try: open first link.',
+    ai_answers_off: 'AI answers are off. Enable AI in options to ask general questions.',
+    answer_unavailable: 'I could not answer that right now.'
   },
   fr: {
     no_page_data: 'Aucune donnee de page disponible.',
@@ -70,7 +72,9 @@ const OUTPUT_MESSAGES = {
     suggestion_scroll: 'Essayez : fais defiler vers le bas.',
     suggestion_title: 'Essayez : lis le titre.',
     suggestion_heading: 'Essayez : va au titre suivant.',
-    suggestion_open_link: 'Essayez : ouvre le premier lien.'
+    suggestion_open_link: 'Essayez : ouvre le premier lien.',
+    ai_answers_off: 'Les reponses IA sont desactivees. Activez l IA dans les options pour poser des questions generales.',
+    answer_unavailable: 'Je n ai pas pu repondre a cela pour le moment.'
   },
   ar: {
     no_page_data: 'لا توجد بيانات متاحة عن الصفحة.',
@@ -80,7 +84,9 @@ const OUTPUT_MESSAGES = {
     suggestion_scroll: 'جرّب: مرر إلى الأسفل.',
     suggestion_title: 'جرّب: اقرأ العنوان.',
     suggestion_heading: 'جرّب: انتقل إلى العنوان التالي.',
-    suggestion_open_link: 'جرّب: افتح أول رابط.'
+    suggestion_open_link: 'جرّب: افتح أول رابط.',
+    ai_answers_off: 'إجابات الذكاء الاصطناعي متوقفة. فعّل الذكاء الاصطناعي من الإعدادات لطرح أسئلة عامة.',
+    answer_unavailable: 'تعذر عليّ الإجابة عن ذلك الآن.'
   }
 };
 
@@ -357,6 +363,208 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
   };
 }
 
+async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+  if (settings.aiEnabled === false) {
+    return null;
+  }
+
+  const client = getOpenAiClient();
+  if (!client) return null;
+
+  const model = settings.model || DEFAULT_SETTINGS.model;
+  const completion = await client.chat.completions.create({
+    model,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are a concise voice-first assistant for a browser extension called Navable.',
+          `Answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user explicitly requests another language.`,
+          'The user asked a general informational question.',
+          'Reply with 1 to 3 short sentences that are useful when read aloud.',
+          'Do not use markdown, lists, headings, or emojis.',
+          'If the question is ambiguous, ask one short clarifying question instead of guessing.',
+          'If you do not know, say so briefly.',
+          'Return exactly one JSON object: { "answer": string }.'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          question: String(question || '').trim(),
+          outputLanguage: normalizeOutputLanguage(outputLanguage)
+        })
+      }
+    ]
+  });
+
+  const raw = completion.choices?.[0]?.message?.content || '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = {};
+  }
+
+  return {
+    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : ''
+  };
+}
+
+function isSummaryIntentText(text) {
+  const t = String(text || '').toLowerCase();
+  if (!t) return false;
+  return (
+    t.includes('summarize') ||
+    t.includes('summary') ||
+    t.includes('describe this page') ||
+    t.includes('describe the page') ||
+    t.includes('what is this page') ||
+    t.includes("what's on this page") ||
+    t.includes('what is on this page') ||
+    t.includes("what's this page") ||
+    /r[ée]sum[ée]?.*cette page/.test(t) ||
+    /d[ée]cri(s|re).*cette page/.test(t) ||
+    /c[' ]?est quoi cette page/.test(t) ||
+    /qu[' ]?est[- ]ce que cette page/.test(t) ||
+    /ما هذه الصفحه/.test(t) ||
+    /ما هذه الصفحة/.test(t) ||
+    /ما هو محتوى الصفحة/.test(t) ||
+    /ملخص/.test(t) ||
+    /وصف الصفحة/.test(t)
+  );
+}
+
+function isPageContextIntentText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  if (isSummaryIntentText(t)) return true;
+  return (
+    /\b(this page|that page|page|here|this site|website|site|heading|section|link|button|field|input|title|selection|focused)\b/.test(t) ||
+    /\b(scroll|read|focus|click|press|activate|open|move|next|previous|prev|help me here|where am i|what can i do here)\b/.test(t) ||
+    /\b(cette page|page|ici|site|site web|titre|section|lien|bouton|champ|selection|focus)\b/.test(t) ||
+    /\b(fais defiler|lis|ouvre|clique|active|va|suivant|precedent|précédent|ou suis-je|où suis-je|que puis-je faire ici)\b/.test(t) ||
+    /(هذه الصفحة|الصفحة|هنا|الموقع|العنوان|القسم|الرابط|الزر|الحقل|التحديد|العنصر المحدد)/.test(t) ||
+    /(مرر|اقر[أا]|افتح|اضغط|فعّل|فعل|انتقل|التالي|السابق|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا)/.test(t)
+  );
+}
+
+function isGeneralKnowledgeQuestionText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  if (isPageContextIntentText(t)) return false;
+  return (
+    /^(who|what|when|where|why|how)\b/.test(t) ||
+    /^(explain|define|compare|tell me about)\b/.test(t) ||
+    /\?$/.test(t) ||
+    /^(qui|que|qu[' ]?est[- ]?ce que|qu[' ]?est-ce que|quand|où|ou|pourquoi|comment)\b/.test(t) ||
+    /^(explique|definis|définis|compare|parle-moi de|dis-moi)\b/.test(t) ||
+    /^(من|ما|متى|أين|اين|لماذا|كيف)\b/.test(t) ||
+    /^(اشرح|عر[ّ]ف|عرف|قارن|قل لي عن)\b/.test(t)
+  );
+}
+
+function buildAssistantSpeech(primaryText, suggestions = []) {
+  const parts = [];
+  const main = String(primaryText || '').trim();
+  if (main) parts.push(main);
+  if (Array.isArray(suggestions) && suggestions.length) {
+    parts.push(suggestions.map((item) => String(item || '').trim()).filter(Boolean).join(' '));
+  }
+  return parts.join(' ').trim();
+}
+
+async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto') {
+  const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
+  const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, settings);
+  const text = String(input || '').trim();
+  const resolvedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
+  const wantsSummary = resolvedPurpose === 'summary' || isSummaryIntentText(text);
+  const wantsPageAssistant =
+    !!pageStructure &&
+    (
+      resolvedPurpose === 'summary' ||
+      resolvedPurpose === 'page' ||
+      (!isGeneralKnowledgeQuestionText(text) || wantsSummary)
+    );
+
+  if (wantsSummary && !pageStructure) {
+    const summary = outputMessage('no_page_data', resolvedOutputLanguage, {}, outputCatalog);
+    return {
+      mode: 'page',
+      speech: summary,
+      summary,
+      answer: '',
+      suggestions: [],
+      plan: { steps: [] }
+    };
+  }
+
+  if (wantsPageAssistant) {
+    let result = null;
+    try {
+      result = await callOpenAiSummarize(text, pageStructure, settings, resolvedOutputLanguage);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[Navable backend] OpenAI page assistant error:', err);
+    }
+
+    const summary =
+      (result && result.friendlySummary) || buildFallbackSummary(pageStructure, resolvedOutputLanguage, outputCatalog);
+    const suggestions =
+      (result && result.suggestions && result.suggestions.length
+        ? result.suggestions
+        : buildFallbackSuggestions(pageStructure, resolvedOutputLanguage, outputCatalog));
+    const plan =
+      (result && result.plan && Array.isArray(result.plan.steps)
+        ? sanitizePlan(result.plan)
+        : { steps: [] });
+
+    return {
+      mode: 'page',
+      speech: buildAssistantSpeech(summary, suggestions),
+      summary,
+      answer: '',
+      suggestions,
+      plan
+    };
+  }
+
+  if (settings.aiEnabled === false) {
+    return {
+      ok: false,
+      status: 503,
+      error: outputMessage('ai_answers_off', resolvedOutputLanguage, {}, outputCatalog)
+    };
+  }
+
+  let answerResult = null;
+  try {
+    answerResult = await callOpenAiAnswerQuestion(text, settings, resolvedOutputLanguage);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[Navable backend] OpenAI answer error:', err);
+  }
+
+  if (!answerResult || !answerResult.answer) {
+    return {
+      ok: false,
+      status: 503,
+      error: outputMessage('answer_unavailable', resolvedOutputLanguage, {}, outputCatalog)
+    };
+  }
+
+  return {
+    mode: 'answer',
+    speech: answerResult.answer,
+    summary: '',
+    answer: answerResult.answer,
+    suggestions: [],
+    plan: { steps: [] }
+  };
+}
+
 async function callOpenAiTranscribe(audioBase64, mimeType, settings = DEFAULT_SETTINGS) {
   const client = getOpenAiClient();
   if (!client) return null;
@@ -506,46 +714,30 @@ app.post('/api/translate-messages', async (req, res) => {
   }
 });
 
-app.post('/api/summarize', async (req, res) => {
+app.post('/api/assistant', async (req, res) => {
   try {
-    const { command, pageStructure, outputLanguage } = req.body || {};
-    if (!pageStructure) {
-      return res.status(400).json({ error: 'Missing pageStructure' });
+    const { input, pageStructure, outputLanguage, purpose } = req.body || {};
+    if (!input || typeof input !== 'string' || !input.trim()) {
+      return res.status(400).json({ error: 'Missing input' });
     }
 
-    const structure = pageStructure;
-    const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
-
-    let result = null;
-    try {
-      result = await callOpenAiSummarize(command, structure, runtimeSettings, resolvedOutputLanguage);
-    } catch (err) {
-      // Failed OpenAI call; fall back to local summary.
-      // eslint-disable-next-line no-console
-      console.error('[Navable backend] OpenAI error:', err);
+    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto');
+    if (result && result.ok === false) {
+      return res.status(result.status || 503).json({ error: result.error || 'Assistant unavailable' });
     }
-
-    const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, runtimeSettings);
-    const friendlySummary =
-      (result && result.friendlySummary) || buildFallbackSummary(structure, resolvedOutputLanguage, outputCatalog);
-    const suggestions =
-      (result && result.suggestions && result.suggestions.length
-        ? result.suggestions
-        : buildFallbackSuggestions(structure, resolvedOutputLanguage, outputCatalog));
-    const plan =
-      (result && result.plan && Array.isArray(result.plan.steps)
-        ? sanitizePlan(result.plan)
-        : { steps: [] });
 
     res.json({
-      friendlySummary,
-      suggestions,
-      plan
+      mode: result.mode || 'answer',
+      speech: result.speech || '',
+      summary: result.summary || '',
+      answer: result.answer || '',
+      suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
+      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] }
     });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[Navable backend] /api/summarize error:', err);
-    res.status(500).json({ error: 'Summarization failed' });
+    console.error('[Navable backend] /api/assistant error:', err);
+    res.status(500).json({ error: 'Assistant request failed' });
   }
 });
 

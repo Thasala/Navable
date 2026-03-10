@@ -2,7 +2,7 @@
 
 ## Backend (Docker)
 
-Runs the local summarization API on `http://localhost:3000`.
+Runs the local AI backend on `http://localhost:3000` for page summarization, brief answers, and speech services.
 
 ```sh
 export OPENAI_API_KEY="..."
@@ -32,7 +32,7 @@ docker compose --profile ci run --rm ci
 Workflows used for the CI/CD demonstration:
 
 - Functional: `.github/workflows/docker-publish.yml` builds + publishes the backend Docker image (GHCR + Docker Hub).
-- Non-functional: `.github/workflows/performance.yml` runs a quick AI-backed latency smoke test for `/api/summarize` (requires repo secret `OPENAI_API_KEY`).
+- Non-functional: `.github/workflows/performance.yml` runs a quick AI-backed latency smoke test for `/api/assistant` (requires repo secret `OPENAI_API_KEY`).
 
 Both workflows also support manual runs from the GitHub Actions tab.
 
