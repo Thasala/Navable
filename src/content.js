@@ -18,17 +18,12 @@
         window.NavableAnnounce(text, options);
         return;
       }
-      if (
-        options &&
-        options.priority &&
-        window.NavableAnnounce &&
-        typeof window.NavableAnnounce.output === 'function'
-      ) {
-        window.NavableAnnounce.output(text, options);
-        return;
-      }
       if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
         window.NavableAnnounce.speak(text, options);
+        return;
+      }
+      if (window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
+        window.NavableAnnounce.output(text, options);
       }
     } catch (_e) {
       // no-op
@@ -146,7 +141,7 @@
         return true;
       }
       if (msg && msg.type === 'navable:executePlan') {
-        runPlan(msg.plan || { steps: [] }).then(function (res) {
+        runPlan(msg.plan || { steps: [] }, { silentOutput: !!msg.silentOutput }).then(function (res) {
           sendResponse && sendResponse(res);
         }).catch(function (err) {
           sendResponse && sendResponse({ ok: false, error: String(err || 'plan failed') });
@@ -299,6 +294,22 @@
     return 'other';
   }
 
+  function isNavableUiElement(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var node = el;
+    if (node.id === 'navable-marker') return true;
+    if (node.id === 'navable-output-panel' || node.id === 'navable-output-box' || node.id === 'navable-output-title' || node.id === 'navable-output-text' || node.id === 'navable-output-close') {
+      return true;
+    }
+    if (typeof node.id === 'string' && node.id.indexOf('navable-live-region-') === 0) {
+      return true;
+    }
+    if (node.closest && node.closest('#navable-output-panel, [id^="navable-live-region-"], #navable-marker')) {
+      return true;
+    }
+    return false;
+  }
+
   function buildIndex(doc) {
     var d = doc || document;
     var items = [];
@@ -318,6 +329,7 @@
       if (seen.has(el)) return;
       seen.add(el);
       if (isHidden(el)) return;
+      if (isNavableUiElement(el)) return;
       var label = textOf(el);
       if (!label) return; // skip unlabeled entries for now
       if (!el.dataset.navableId) el.dataset.navableId = nextId();
@@ -401,7 +413,7 @@
     var seen = new Set();
     var landmarks = [];
     nodes.forEach(function (el) {
-      if (seen.has(el) || isHidden(el)) return;
+      if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
       seen.add(el);
       var role = el.getAttribute && el.getAttribute('role');
       var tag = (el.tagName || '').toLowerCase();
@@ -425,7 +437,7 @@
     for (var i = 0; i < nodes.length; i++) {
       if (parts.length >= 24) break;
       var el = nodes[i];
-      if (isHidden(el)) continue;
+      if (isHidden(el) || isNavableUiElement(el)) continue;
       var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text || text.length < 12) continue;
       var remaining = maxChars - total;
@@ -440,6 +452,7 @@
   function buildPageStructure() {
     rescan();
     var active = document.activeElement;
+    if (isNavableUiElement(active)) active = null;
     var activeId = active && active.dataset ? active.dataset.navableId : null;
     var activeLabel = '';
     if (active) activeLabel = textOf(active);
@@ -638,15 +651,21 @@
     return { ok: false, message: 'Unknown action ' + action };
   }
 
-  async function runPlan(plan) {
+  async function runPlan(plan, opts) {
     if (!plan || !Array.isArray(plan.steps)) return { ok: false, error: 'Invalid plan' };
-    for (var i = 0; i < plan.steps.length; i++) {
-      var step = plan.steps[i];
-      var res = runToolStep(step);
-      if (!res.ok) return { ok: false, error: res.message || 'Step failed', step: step };
-      if (step.pauseMs) {
-        await new Promise(function (resolve) { setTimeout(resolve, step.pauseMs); });
+    var silentOutput = !!(opts && opts.silentOutput);
+    if (silentOutput) suppressedSpeechDepth += 1;
+    try {
+      for (var i = 0; i < plan.steps.length; i++) {
+        var step = plan.steps[i];
+        var res = runToolStep(step);
+        if (!res.ok) return { ok: false, error: res.message || 'Step failed', step: step };
+        if (step.pauseMs) {
+          await new Promise(function (resolve) { setTimeout(resolve, step.pauseMs); });
+        }
       }
+    } finally {
+      if (silentOutput) suppressedSpeechDepth = Math.max(0, suppressedSpeechDepth - 1);
     }
     return { ok: true };
   }
@@ -675,6 +694,7 @@
   var startRetryTimer = null;
   var startRetryCount = 0;
   var outputOpen = false;
+  var suppressedSpeechDepth = 0;
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -695,6 +715,7 @@
 
   function speak(text, opts) {
     opts = opts || {};
+    if (suppressedSpeechDepth > 0) return;
     var mode = opts && opts.mode === 'assertive' ? 'assertive' : 'polite';
     var msg = String(text || '');
     var isTransient = !!opts.transient;
@@ -776,9 +797,11 @@
       handleTranscript(ev.transcript, ev.language || '');
     });
     recognizer.on('error', function (e) {
-      console.warn('[Navable] speech error', e && e.error);
       try {
         var code = e && e.error ? String(e.error) : 'unknown';
+        if (code !== 'no-speech') {
+          console.warn('[Navable] speech error', code);
+        }
         if (code === 'start-failed' || code === 'audio-capture' || code === 'aborted') {
           // Common when another tab/window is still holding the mic. Retry quietly while we still want to listen.
           if (computeShouldListen()) {
@@ -1386,6 +1409,64 @@
     }
   }
 
+  async function assistantRequest(questionText) {
+    var q = String(questionText || '').trim();
+    if (!q) return false;
+
+    await ensureOutputLanguageReady();
+    speakTransient(translate('answering_question'), 2500);
+
+    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        var res = await chrome.runtime.sendMessage({
+          type: 'navable:assistant',
+          input: q,
+          outputLanguage: currentOutputLanguage(),
+          pageContext: true,
+          autoExecutePlan: true
+        });
+        if (res && res.ok === true && res.speech) {
+          speak(String(res.speech), { mode: 'assertive' });
+          return true;
+        }
+        if (res && res.error) {
+          console.warn('[Navable] assistant background request returned error', res.error);
+        }
+      } catch (err) {
+        console.warn('[Navable] assistant message request failed', err);
+      }
+    }
+
+    try {
+      var directResponse = await window.fetch('http://localhost:3000/api/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: q,
+          outputLanguage: currentOutputLanguage(),
+          pageStructure: buildPageStructure()
+        })
+      });
+      var directData = await directResponse.json().catch(function () { return {}; });
+      if (directResponse.ok && directData && directData.speech) {
+        if (directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
+          await runPlan(directData.plan);
+        }
+        speak(String(directData.speech), { mode: 'assertive' });
+        return true;
+      }
+      if (directData && directData.error) {
+        speak(String(directData.error), { mode: 'assertive' });
+        return true;
+      }
+    } catch (err2) {
+      console.warn('[Navable] assistant direct request failed', err2);
+    }
+
+    speak(translate('answer_failed'), { mode: 'assertive' });
+    return true;
+  }
+
   async function tryIntentFallback(commandText) {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
     try {
@@ -1409,7 +1490,7 @@
   async function handleTranscript(text, detectedLanguage) {
     console.log('[Navable] Recognized:', text);
     setOutputLanguageFromTranscript(text, detectedLanguage);
-    await ensureOutputLanguageReady();
+    var languageReady = ensureOutputLanguageReady();
     var cmd = parseCommand(text);
     if (cmd && cmd.type === 'summarize') {
       await runSummaryRequest(cmd.command);
@@ -1420,8 +1501,12 @@
       return;
     }
     if (await tryIntentFallback(text)) return;
+    if (await assistantRequest(text)) return;
+    await languageReady;
     execCommand(null);
   }
+
+  window.NavableTools.handleTranscript = handleTranscript;
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
   document.addEventListener('keydown', function (e) {
