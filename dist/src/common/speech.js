@@ -121,6 +121,7 @@
     var isStarting = false;
     var isStarted = false;
     var restartTimer = null;
+    var suppressNextEnd = false;
 
     function clearRestartTimer() {
       if (!restartTimer) return;
@@ -185,6 +186,10 @@
       clearRestartTimer();
       isStarting = false;
       isStarted = false;
+      if (suppressNextEnd) {
+        suppressNextEnd = false;
+        return;
+      }
       emitter.emit('end', { raw: event, provider: 'native' });
       if (autoRestart && shouldRestart) {
         isStarting = true;
@@ -221,13 +226,7 @@
         shouldRestart = false;
         clearRestartTimer();
         isStarting = false;
-        if (opts.silent) {
-          recognizer.onend = function () {
-            clearRestartTimer();
-            isStarting = false;
-            isStarted = false;
-          };
-        }
+        suppressNextEnd = !!opts.silent;
         try {
           recognizer.stop();
         } catch (err) {
@@ -737,10 +736,10 @@
         }
         throw new Error('Speech recognition not supported');
       },
-      stop: function () {
+      stop: function (opts) {
         desiredRunning = false;
         if (!activeRecognizer) return;
-        activeRecognizer.stop();
+        activeRecognizer.stop(opts || {});
         activeRecognizer = null;
       },
       on: emitter.on
