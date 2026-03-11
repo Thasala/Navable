@@ -131,6 +131,42 @@ function setNewtabOutputLanguage(transcript, detectedLanguage) {
   return newtabOutputLanguage;
 }
 
+function detectNewtabRecognitionLanguage(transcript, detectedLanguage) {
+  if (detectedLanguage) return normalizeOutputLanguage(detectedLanguage);
+  if (i18n && typeof i18n.detectLanguage === 'function') {
+    return i18n.detectLanguage(transcript, normalizeOutputLanguage(newtabVoiceLang || 'en-US'));
+  }
+  return normalizeOutputLanguage(newtabVoiceLang || 'en-US');
+}
+
+function newtabRecognitionLocaleFor(lang) {
+  const raw = String(lang || '').trim();
+  if (!raw) return String(newtabVoiceLang || 'en-US');
+  if (raw.includes('-') || raw.includes('_')) return raw.replace(/_/g, '-');
+  return outputLocale(raw);
+}
+
+function newtabRecognitionCandidateLocales() {
+  const seen = new Set();
+  const list = [];
+
+  function pushLocale(locale) {
+    const normalized = newtabRecognitionLocaleFor(locale);
+    const key = String(normalized || '').toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    list.push(normalized);
+  }
+
+  pushLocale(newtabVoiceLang || 'en-US');
+  pushLocale(newtabConfiguredVoiceLang || 'en-US');
+  pushLocale(currentOutputLanguage());
+  pushLocale('ar-SA');
+  pushLocale('fr-FR');
+  pushLocale('en-US');
+  return list;
+}
+
 function isVoiceSupported() {
   try {
     return !!(window.NavableSpeech && typeof window.NavableSpeech.supportsRecognition === 'function' && window.NavableSpeech.supportsRecognition());
@@ -230,7 +266,72 @@ let newtabRecognizer = null;
 let newtabWantsListening = false;
 let newtabVoiceReady = false;
 let newtabVoiceLang = 'en-US';
+let newtabConfiguredVoiceLang = 'en-US';
 let newtabOutputLanguage = 'en';
+let newtabRecognizerRefreshTimer = null;
+let newtabLastRecognitionResultAt = 0;
+let newtabLastRecognitionLocaleRotateAt = 0;
+let newtabVoiceTurnInFlight = false;
+let newtabVoiceTurnResumeTimer = null;
+let newtabPausedForVisibility = false;
+
+function clearNewtabRecognizerRefreshTimer() {
+  if (!newtabRecognizerRefreshTimer) return;
+  try {
+    clearTimeout(newtabRecognizerRefreshTimer);
+  } catch (_err) {
+    // ignore
+  }
+  newtabRecognizerRefreshTimer = null;
+}
+
+function clearNewtabVoiceTurnResumeTimer() {
+  if (!newtabVoiceTurnResumeTimer) return;
+  try {
+    clearTimeout(newtabVoiceTurnResumeTimer);
+  } catch (_err) {
+    // ignore
+  }
+  newtabVoiceTurnResumeTimer = null;
+}
+
+function isNewtabVisibleForVoice() {
+  try {
+    return !document.visibilityState || document.visibilityState === 'visible';
+  } catch (_err) {
+    return true;
+  }
+}
+
+function shouldNewtabListen() {
+  return !!(newtabWantsListening && !newtabVoiceTurnInFlight && !newtabPausedForVisibility && isNewtabVisibleForVoice());
+}
+
+function maybeRotateNewtabRecognitionLocale() {
+  const now = Date.now();
+  if (!newtabLastRecognitionResultAt || now - newtabLastRecognitionResultAt > 15000) return false;
+  if (now - newtabLastRecognitionLocaleRotateAt < 2500) return false;
+
+  const locales = newtabRecognitionCandidateLocales();
+  if (!locales.length) return false;
+
+  const currentKey = String(newtabVoiceLang || '').toLowerCase();
+  let currentIndex = -1;
+  for (let i = 0; i < locales.length; i += 1) {
+    if (String(locales[i] || '').toLowerCase() === currentKey) {
+      currentIndex = i;
+      break;
+    }
+  }
+
+  const nextVoiceLang = locales[(currentIndex + 1 + locales.length) % locales.length];
+  if (!nextVoiceLang || String(nextVoiceLang).toLowerCase() === currentKey) return false;
+
+  newtabLastRecognitionLocaleRotateAt = now;
+  newtabVoiceLang = nextVoiceLang;
+  refreshNewtabRecognizer({ restart: true, delayMs: 80 });
+  return true;
+}
 
 function refreshNewtabMicUi() {
   const { btn, status } = getVoiceStatusEls();
@@ -252,6 +353,16 @@ function refreshNewtabMicUi() {
   }
 
   btn.disabled = false;
+  if (newtabVoiceTurnInFlight) {
+    btn.textContent = 'Working…';
+    status.textContent = translate('processing_request');
+    return;
+  }
+  if (newtabPausedForVisibility) {
+    btn.textContent = 'Listening paused';
+    status.textContent = translate('listening_paused_hidden');
+    return;
+  }
   btn.textContent = newtabWantsListening ? 'Stop listening' : 'Start listening';
   status.textContent = newtabWantsListening ? 'Listening…' : 'Not listening.';
 }
@@ -278,12 +389,27 @@ async function loadNewtabVoiceSettings() {
 }
 
 async function ensureNewtabRecognizer() {
+  const settings = await loadNewtabVoiceSettings();
+  const previousConfiguredVoiceLang = newtabConfiguredVoiceLang;
+  const previousConfiguredOutputLanguage = normalizeOutputLanguage(previousConfiguredVoiceLang || 'en-US');
+  newtabConfiguredVoiceLang = newtabRecognitionLocaleFor(settings.language || 'en-US');
+  if (
+    !newtabVoiceLang ||
+    String(newtabVoiceLang).toLowerCase() === String(previousConfiguredVoiceLang || '').toLowerCase() ||
+    !newtabWantsListening
+  ) {
+    newtabVoiceLang = newtabConfiguredVoiceLang;
+  }
+  if (
+    !newtabOutputLanguage ||
+    normalizeOutputLanguage(newtabOutputLanguage) === previousConfiguredOutputLanguage ||
+    !newtabWantsListening
+  ) {
+    newtabOutputLanguage = normalizeOutputLanguage(newtabVoiceLang);
+  }
+
   if (newtabRecognizer) return newtabRecognizer;
   if (!isVoiceSupported()) return null;
-
-  const settings = await loadNewtabVoiceSettings();
-  newtabVoiceLang = settings.language || 'en-US';
-  newtabOutputLanguage = normalizeOutputLanguage(newtabVoiceLang);
 
   try {
     newtabRecognizer = window.NavableSpeech.createRecognizer({
@@ -295,12 +421,17 @@ async function ensureNewtabRecognizer() {
 
     newtabRecognizer.on('result', (ev) => {
       if (!ev?.transcript) return;
-      handleNewtabTranscript(ev.transcript, ev.language || '');
+      if (newtabVoiceTurnInFlight) return;
+      handleNewtabTranscript(ev.transcript, ev.language || '', ev.provider || '');
     });
 
     newtabRecognizer.on('error', (e) => {
       const code = String(e?.error || 'unknown');
-      if (code === 'no-speech') return;
+      const provider = String(e?.provider || '');
+      if (code === 'no-speech') {
+        if (provider === 'native' && maybeRotateNewtabRecognitionLocale()) return;
+        return;
+      }
 
       if (code === 'not-allowed' || code === 'service-not-allowed') {
         newtabWantsListening = false;
@@ -337,6 +468,113 @@ async function ensureNewtabRecognizer() {
   }
 
   return newtabRecognizer;
+}
+
+function refreshNewtabRecognizer(opts = {}) {
+  clearNewtabRecognizerRefreshTimer();
+
+  const shouldResume = opts.restart !== false && shouldNewtabListen();
+  const delayMs = typeof opts.delayMs === 'number' ? opts.delayMs : 180;
+  const oldRecognizer = newtabRecognizer;
+
+  newtabRecognizer = null;
+
+  if (oldRecognizer) {
+    try {
+      oldRecognizer.stop({ silent: true });
+    } catch (_err) {
+      // ignore
+    }
+  }
+
+  if (!shouldResume) return;
+
+  newtabRecognizerRefreshTimer = setTimeout(() => {
+    newtabRecognizerRefreshTimer = null;
+    ensureNewtabRecognizer()
+      .then((recognizer) => {
+        if (!recognizer || !shouldNewtabListen()) return;
+        recognizer.start();
+      })
+      .catch(() => {});
+  }, oldRecognizer ? Math.max(0, delayMs) : 0);
+}
+
+function maybeRefreshNewtabRecognizerLanguage(transcript, detectedLanguage, provider) {
+  if (String(provider || '').toLowerCase() !== 'native') return;
+  const nextVoiceLang = newtabRecognitionLocaleFor(detectNewtabRecognitionLanguage(transcript, detectedLanguage));
+  if (!nextVoiceLang) return;
+  if (String(nextVoiceLang).toLowerCase() === String(newtabVoiceLang || '').toLowerCase()) return;
+  newtabVoiceLang = nextVoiceLang;
+  refreshNewtabRecognizer({ restart: true });
+}
+
+function beginNewtabVoiceTurn() {
+  if (newtabVoiceTurnInFlight) return false;
+  clearNewtabVoiceTurnResumeTimer();
+  newtabVoiceTurnInFlight = true;
+  if (newtabWantsListening) {
+    const oldRecognizer = newtabRecognizer;
+    newtabRecognizer = null;
+    try {
+      oldRecognizer && oldRecognizer.stop();
+    } catch (_err) {
+      // ignore
+    }
+    refreshNewtabMicUi();
+  }
+  setNewtabMicMessage(translate('processing_request'), 'polite');
+  return true;
+}
+
+function finishNewtabVoiceTurn(opts = {}) {
+  clearNewtabVoiceTurnResumeTimer();
+  newtabVoiceTurnInFlight = false;
+  const delayMs = typeof opts.delayMs === 'number' ? opts.delayMs : 900;
+  if (!newtabWantsListening || !shouldNewtabListen()) return;
+  newtabVoiceTurnResumeTimer = setTimeout(() => {
+    newtabVoiceTurnResumeTimer = null;
+    if (newtabVoiceTurnInFlight || !shouldNewtabListen()) return;
+    ensureNewtabRecognizer()
+      .then((recognizer) => {
+        if (!recognizer || newtabVoiceTurnInFlight || !shouldNewtabListen()) return;
+        recognizer.start();
+      })
+      .catch(() => {});
+  }, Math.max(0, delayMs));
+}
+
+function pauseNewtabListeningForVisibility() {
+  if (newtabPausedForVisibility) return;
+  newtabPausedForVisibility = true;
+  clearNewtabRecognizerRefreshTimer();
+  clearNewtabVoiceTurnResumeTimer();
+  const oldRecognizer = newtabRecognizer;
+  newtabRecognizer = null;
+  try {
+    oldRecognizer && oldRecognizer.stop({ silent: true });
+  } catch (_err) {
+    // ignore
+  }
+  refreshNewtabMicUi();
+}
+
+function resumeNewtabListeningFromVisibility() {
+  if (!newtabPausedForVisibility) return;
+  newtabPausedForVisibility = false;
+  if (!shouldNewtabListen()) {
+    refreshNewtabMicUi();
+    return;
+  }
+  ensureNewtabRecognizer()
+    .then((recognizer) => {
+      if (!recognizer || !shouldNewtabListen()) {
+        refreshNewtabMicUi();
+        return;
+      }
+      recognizer.start();
+    })
+    .catch(() => {});
 }
 
 async function openSiteFromVoice(query) {
@@ -421,40 +659,51 @@ async function assistantQuestionFromVoice(questionText) {
   return true;
 }
 
-async function handleNewtabTranscript(transcript, detectedLanguage) {
-  setNewtabOutputLanguage(transcript, detectedLanguage);
-  const languageReady = ensureOutputLanguageReady();
-  const cmd = parseVoiceCommand(transcript);
-  if (!cmd) {
-    if (await assistantQuestionFromVoice(transcript)) return;
-    await languageReady;
-    setNewtabMicMessage(translate('newtab_try_open'), 'polite');
-    return;
-  }
+async function handleNewtabTranscript(transcript, detectedLanguage, provider) {
+  if (!beginNewtabVoiceTurn()) return false;
+  try {
+    newtabLastRecognitionResultAt = Date.now();
+    maybeRefreshNewtabRecognizerLanguage(transcript, detectedLanguage, provider);
+    setNewtabOutputLanguage(transcript, detectedLanguage);
+    const languageReady = ensureOutputLanguageReady();
+    const cmd = parseVoiceCommand(transcript);
+    if (!cmd) {
+      if (await assistantQuestionFromVoice(transcript)) return true;
+      await languageReady;
+      setNewtabMicMessage(translate('newtab_try_open'), 'polite');
+      return true;
+    }
 
-  if (cmd.type === 'help') {
-    await languageReady;
-    setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
-    return;
-  }
+    if (cmd.type === 'help') {
+      await languageReady;
+      setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
+      return true;
+    }
 
-  if (cmd.type === 'stop') {
-    await languageReady;
-    stopNewtabListening({ announce: true });
-    return;
-  }
+    if (cmd.type === 'stop') {
+      await languageReady;
+      stopNewtabListening({ announce: true });
+      return true;
+    }
 
-  if (cmd.type === 'open_site') {
-    languageReady.then(() => {
-      setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
-    }).catch(() => {});
-    await openSiteFromVoice(cmd.query);
+    if (cmd.type === 'open_site') {
+      languageReady.then(() => {
+        setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
+      }).catch(() => {});
+      await openSiteFromVoice(cmd.query);
+    }
+    return true;
+  } finally {
+    finishNewtabVoiceTurn({ delayMs: 900 });
   }
 }
 
 async function startNewtabListening() {
   newtabWantsListening = true;
+  newtabPausedForVisibility = !isNewtabVisibleForVoice();
   refreshNewtabMicUi();
+
+  if (!shouldNewtabListen()) return;
 
   const recognizer = await ensureNewtabRecognizer();
   if (!recognizer) {
@@ -471,9 +720,15 @@ async function startNewtabListening() {
 
 function stopNewtabListening(opts = {}) {
   newtabWantsListening = false;
+  newtabPausedForVisibility = false;
   refreshNewtabMicUi();
+  clearNewtabRecognizerRefreshTimer();
+  clearNewtabVoiceTurnResumeTimer();
+  newtabVoiceTurnInFlight = false;
+  const oldRecognizer = newtabRecognizer;
+  newtabRecognizer = null;
   try {
-    newtabRecognizer && newtabRecognizer.stop();
+    oldRecognizer && oldRecognizer.stop();
   } catch (_err) {
     // ignore
   }
@@ -515,9 +770,11 @@ function wireNewtabVoice() {
   document.addEventListener(
     'visibilitychange',
     () => {
-      if (document.visibilityState !== 'visible' && newtabWantsListening) {
-        stopNewtabListening({ announce: false });
+      if (document.visibilityState !== 'visible') {
+        if (newtabWantsListening) pauseNewtabListeningForVisibility();
+        return;
       }
+      if (newtabPausedForVisibility) resumeNewtabListeningFromVisibility();
     },
     { capture: true }
   );

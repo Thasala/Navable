@@ -285,6 +285,16 @@ async function sendToActiveTab(payload) {
   return chrome.tabs.sendMessage(tab.id, payload);
 }
 
+async function sendToSpecificTab(tabId, payload) {
+  if (!tabId) throw new Error('No target tab');
+  return chrome.tabs.sendMessage(tabId, payload);
+}
+
+async function sendToTargetTab(tabId, payload) {
+  if (tabId) return sendToSpecificTab(tabId, payload);
+  return sendToActiveTab(payload);
+}
+
 async function tryExecutePlan(plan) {
   try {
     await sendToActiveTab({ type: 'navable:executePlan', plan });
@@ -576,6 +586,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const text = String(input || '').trim();
+  const sourceTabId = options.sourceTabId || null;
 
   if (!text) {
     await outputMessagesReady;
@@ -585,7 +596,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   let structure = options.pageStructure || null;
   if (!structure && options.includePageContext) {
     try {
-      const structureRes = await sendToActiveTab({ type: 'navable:getStructure' });
+      const structureRes = await sendToTargetTab(sourceTabId, { type: 'navable:getStructure' });
       structure = structureRes && structureRes.structure ? structureRes.structure : null;
     } catch (_err) {
       structure = null;
@@ -618,12 +629,16 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   return { ok: false, structure, error: outputMessage('answer_unavailable', outputLanguage) };
 }
 
-async function runPlanner(command, requestedOutputLanguage, preferIntentFallback) {
+async function runPlanner(command, requestedOutputLanguage, preferIntentFallback, options = {}) {
   const settings = await loadSettings();
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
-  const structureRes = await sendToActiveTab({ type: 'navable:getStructure' });
-  const structure = structureRes && structureRes.structure ? structureRes.structure : null;
+  const sourceTabId = options.sourceTabId || null;
+  let structure = options.pageStructure || null;
+  if (!structure) {
+    const structureRes = await sendToTargetTab(sourceTabId, { type: 'navable:getStructure' });
+    structure = structureRes && structureRes.structure ? structureRes.structure : null;
+  }
   const text = String(command || '').toLowerCase();
   const isSummaryRequest = isSummaryCommandText(text);
 
@@ -642,16 +657,15 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
         if (cached.description) {
-          await sendToActiveTab({
+          await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: cached.description,
             mode: 'assertive',
-            priority: true,
             lang: outputLocale(outputLanguage)
           });
         }
         if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
-          await sendToActiveTab({
+          await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: cached.plan,
             silentOutput: true
@@ -663,6 +677,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       const assistantResult = await requestAssistant(command || 'Summarize this page', outputLanguage, {
         settings,
         pageStructure: structure,
+        sourceTabId,
         purpose: 'summary'
       });
 
@@ -675,11 +690,10 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
         const description = (summaryText + suggestionsText).trim();
 
         if (description) {
-          await sendToActiveTab({
+          await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: description,
             mode: 'assertive',
-            priority: true,
             lang: outputLocale(outputLanguage)
           });
         }
@@ -689,7 +703,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           assistantResult.plan.steps &&
           assistantResult.plan.steps.length
         ) {
-          await sendToActiveTab({
+          await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: assistantResult.plan,
             silentOutput: true
@@ -715,11 +729,10 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
       await outputMessagesReady;
       const description = `${buildFriendlyOrientation(structure, outputLanguage)} ${outputMessage('ai_summaries_off', outputLanguage)}`;
-      await sendToActiveTab({
+      await sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: description,
         mode: 'assertive',
-        priority: true,
         lang: outputLocale(outputLanguage)
       });
       return {
@@ -741,16 +754,15 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
 
   if (plan.description) {
     await outputMessagesReady;
-    await sendToActiveTab({
+    await sendToTargetTab(sourceTabId, {
       type: 'navable:announce',
       text: plan.description,
       mode: isSummaryRequest ? 'assertive' : 'polite',
-      priority: isSummaryRequest,
       lang: outputLocale(outputLanguage)
     });
   }
   if (plan.steps && plan.steps.length) {
-    await sendToActiveTab({ type: 'navable:executePlan', plan: { steps: plan.steps } });
+    await sendToTargetTab(sourceTabId, { type: 'navable:executePlan', plan: { steps: plan.steps } });
   }
 
   return { ok: true, plan, structure };
@@ -965,14 +977,15 @@ function friendlyUrlForSpeech(url) {
   }
 }
 
-async function openSiteInBrowser(query, newTab, requestedOutputLanguage) {
+async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options = {}) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const url = resolveOpenQueryToUrl(query);
+  const sourceTabId = options.sourceTabId || null;
   if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
 
   outputMessagesReady.then(() => (
-    sendToActiveTab({
+    sendToTargetTab(sourceTabId, {
       type: 'navable:announce',
       text: outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) }),
       mode: 'assertive',
@@ -984,11 +997,15 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage) {
 
   try {
     if (newTab === false) {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab && tab.id) {
-        await chrome.tabs.update(tab.id, { url });
+      if (sourceTabId) {
+        await chrome.tabs.update(sourceTabId, { url });
       } else {
-        await chrome.tabs.create({ url });
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (tab && tab.id) {
+          await chrome.tabs.update(tab.id, { url });
+        } else {
+          await chrome.tabs.create({ url });
+        }
       }
     } else {
       await chrome.tabs.create({ url });
@@ -1059,9 +1076,12 @@ try {
 }
 
 // Planner + bus bridge
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const sourceTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
   if (msg && msg.type === 'navable:openSite') {
-    openSiteInBrowser(msg.query || '', msg.newTab, msg.outputLanguage).then((res) => {
+    openSiteInBrowser(msg.query || '', msg.newTab, msg.outputLanguage, {
+      sourceTabId
+    }).then((res) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'open site failed') });
@@ -1070,7 +1090,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg && msg.type === 'navable:assistant') {
     requestAssistant(msg.input || '', msg.outputLanguage, {
-      includePageContext: !!msg.pageContext
+      includePageContext: !!msg.pageContext,
+      pageStructure: msg.pageStructure || null,
+      sourceTabId
     }).then(async (res) => {
       if (
         res &&
@@ -1082,7 +1104,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         res.plan.steps.length
       ) {
         try {
-          await sendToActiveTab({ type: 'navable:executePlan', plan: res.plan });
+          await sendToTargetTab(sourceTabId, { type: 'navable:executePlan', plan: res.plan });
         } catch (err) {
           console.warn('[Navable] assistant plan execution failed', err);
         }
@@ -1094,7 +1116,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === 'planner:run') {
-    runPlanner(msg.command || '', msg.outputLanguage, msg.preferIntentFallback).then((res) => {
+    runPlanner(msg.command || '', msg.outputLanguage, msg.preferIntentFallback, {
+      pageStructure: msg.pageStructure || null,
+      sourceTabId
+    }).then((res) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'planner failed') });
@@ -1103,13 +1128,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg && msg.type === 'bus:request') {
     if (msg.kind === 'planner:run') {
-      runPlanner(msg.payload?.command || '', msg.payload?.outputLanguage, msg.payload?.preferIntentFallback).then((res) => sendResponse(res)).catch((err) => {
+      runPlanner(msg.payload?.command || '', msg.payload?.outputLanguage, msg.payload?.preferIntentFallback, {
+        pageStructure: msg.payload?.pageStructure || null,
+        sourceTabId
+      }).then((res) => sendResponse(res)).catch((err) => {
         sendResponse({ ok: false, error: String(err || 'planner failed') });
       });
       return true;
     }
     if (msg.kind === 'navable:getStructure') {
-      sendToActiveTab({ type: 'navable:getStructure' }).then((res) => sendResponse(res)).catch((err) => {
+      sendToTargetTab(sourceTabId, { type: 'navable:getStructure' }).then((res) => sendResponse(res)).catch((err) => {
         sendResponse({ ok: false, error: String(err || 'structure failed') });
       });
       return true;
