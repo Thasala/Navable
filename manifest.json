@@ -3,6 +3,7 @@
   "name": "Navable (Phase A)",
   "version": "0.1.0",
   "description": "Baseline MV3 with announce helper + messaging + CI.",
+  "minimum_chrome_version": "109",
   "action": {
     "default_title": "Navable",
     "default_popup": "src/popup/popup.html"

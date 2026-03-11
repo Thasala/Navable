@@ -1,3 +1,7 @@
+// Background service worker responsibilities:
+// - keep microphone permission and speech recognition inside the extension origin
+// - own the offscreen document lifecycle
+// - forward recognized voice commands to the active tab content script
 // Test fallback: if chrome is missing (non-extension env), create a minimal shim so tests can run.
 if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
   const localStore = {};
@@ -145,6 +149,8 @@ const NAVABLE_OFFSCREEN_URL = (() => {
     return '';
   }
 })();
+const VOICE_COMMAND_MESSAGE_TYPE = 'VOICE_COMMAND';
+const LEGACY_VOICE_COMMAND_MESSAGE_TYPE = 'navable:voiceTranscript';
 
 const NAVABLE_ONBOARDING_URL = (() => {
   try {
@@ -299,8 +305,9 @@ async function hasOffscreenDocument() {
   }
 
   try {
-    if (chrome?.offscreen?.hasDocument) {
-      return await chrome.offscreen.hasDocument();
+    if (globalThis.clients && typeof globalThis.clients.matchAll === 'function' && NAVABLE_OFFSCREEN_URL) {
+      const matchedClients = await globalThis.clients.matchAll();
+      return matchedClients.some((client) => String(client?.url || '') === NAVABLE_OFFSCREEN_URL);
     }
   } catch (_err2) {
     // ignore
@@ -423,6 +430,13 @@ async function syncVoiceWithSettings() {
     return;
   }
 
+  const offscreenReady = await ensureOffscreenDocument();
+  if (!offscreenReady) {
+    await persistVoiceState();
+    broadcastVoiceStatus();
+    return;
+  }
+
   if (autostart && !voiceState.listening) {
     await startVoiceListeningInExtension(language);
     return;
@@ -439,7 +453,7 @@ async function syncVoiceWithSettings() {
 async function dispatchVoiceTranscript(transcript) {
   const text = String(transcript || '').trim();
   if (!text) return;
-  const payload = { type: 'navable:voiceTranscript', text };
+  const payload = { type: VOICE_COMMAND_MESSAGE_TYPE, text };
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -729,6 +743,18 @@ function tryParseHttpUrl(candidate) {
   return null;
 }
 
+function hostnameFromUrl(candidate) {
+  try {
+    const parsed = new URL(String(candidate || ''));
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.hostname || '';
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return '';
+}
+
 function looksLikeHostWithOptionalPath(candidate) {
   if (!candidate) return false;
   if (/\s/.test(candidate)) return false;
@@ -746,11 +772,105 @@ function looksLikeHostWithOptionalPath(candidate) {
   return true;
 }
 
-function resolveOpenQueryToUrl(query) {
+const SITE_SEARCH_PROVIDERS = {
+  // Register additional site-specific search URLs here.
+  youtube: {
+    aliases: ['youtube.com', 'yt'],
+    buildUrl(query) {
+      return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    }
+  },
+  google: {
+    aliases: ['google.com'],
+    buildUrl(query) {
+      return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    }
+  },
+  facebook: {
+    aliases: ['facebook.com', 'fb'],
+    buildUrl(query) {
+      return `https://www.facebook.com/search/top?q=${encodeURIComponent(query)}`;
+    }
+  },
+  amazon: {
+    aliases: ['amazon.com'],
+    buildUrl(query) {
+      return `https://www.amazon.com/s?k=${encodeURIComponent(query)}`;
+    }
+  }
+};
+
+function aliasesForSiteSearchProvider(siteKey, provider) {
+  return [siteKey].concat(Array.isArray(provider.aliases) ? provider.aliases : []);
+}
+
+function normalizeSiteSearchTarget(rawSite) {
+  const normalizedSite = String(rawSite || '').trim().toLowerCase().replace(/^the\s+/, '');
+  if (!normalizedSite) return '';
+
+  for (const [siteKey, provider] of Object.entries(SITE_SEARCH_PROVIDERS)) {
+    const aliases = aliasesForSiteSearchProvider(siteKey, provider);
+    if (aliases.includes(normalizedSite)) return siteKey;
+  }
+
+  return '';
+}
+
+function siteSearchProviderFromHostname(hostname) {
+  const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/^www\./, '');
+  if (!normalizedHostname) return '';
+
+  for (const [siteKey, provider] of Object.entries(SITE_SEARCH_PROVIDERS)) {
+    const aliases = aliasesForSiteSearchProvider(siteKey, provider);
+    const matched = aliases.some((alias) => {
+      const normalizedAlias = String(alias || '').trim().toLowerCase().replace(/^www\./, '');
+      return normalizedHostname === normalizedAlias || normalizedHostname.endsWith(`.${normalizedAlias}`);
+    });
+    if (matched) return siteKey;
+  }
+
+  return '';
+}
+
+function parseSearchCommand(query) {
+  const raw = String(query || '').trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^(?:search|google)\s+(?:for\s+)?(.+?)\s+on\s+([a-z0-9.-]+)\s*$/i);
+  if (match && match[1] && match[2]) {
+    const searchQuery = String(match[1] || '').trim();
+    const siteKey = normalizeSiteSearchTarget(match[2]);
+    if (!searchQuery || !siteKey || !SITE_SEARCH_PROVIDERS[siteKey]) return null;
+    return { searchQuery, siteKey };
+  }
+
+  const genericMatch = raw.match(/^(?:search|google)\s+(?:for\s+)?(.+?)\s*$/i);
+  if (!genericMatch || !genericMatch[1]) return null;
+
+  const searchQuery = String(genericMatch[1] || '').trim();
+  if (!searchQuery) return null;
+  return { searchQuery, siteKey: '' };
+}
+
+function tryResolveSiteSearchUrl(query, currentHostname) {
+  const parsed = parseSearchCommand(query);
+  if (!parsed || !parsed.searchQuery) return null;
+
+  const siteKey = parsed.siteKey || siteSearchProviderFromHostname(currentHostname) || 'google';
+  const provider = SITE_SEARCH_PROVIDERS[siteKey];
+  if (!provider) return null;
+
+  return provider.buildUrl(parsed.searchQuery);
+}
+
+function resolveOpenQueryToUrl(query, currentHostname) {
   const raw = String(query || '').trim();
   if (!raw) return null;
 
   const normalized = normalizeSpokenUrl(raw);
+
+  const siteSearchUrl = tryResolveSiteSearchUrl(raw, currentHostname);
+  if (siteSearchUrl) return siteSearchUrl;
 
   // Explicit search intent: "search for <x>"
   const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
@@ -787,8 +907,19 @@ function friendlyUrlForSpeech(url) {
   }
 }
 
-async function openSiteInBrowser(query, newTab) {
-  const url = resolveOpenQueryToUrl(query);
+async function openSiteInBrowser(query, newTab, currentPageUrl) {
+  let currentHostname = hostnameFromUrl(currentPageUrl);
+  try {
+    if (!currentHostname) {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const activeTabUrl = String((activeTab && (activeTab.url || activeTab.pendingUrl)) || '');
+      currentHostname = hostnameFromUrl(activeTabUrl);
+    }
+  } catch (_err) {
+    currentHostname = '';
+  }
+
+  const url = resolveOpenQueryToUrl(query, currentHostname);
   if (!url) return { ok: false, error: 'Missing website name or URL.' };
 
   try {
@@ -923,6 +1054,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return true;
   }
+  if (msg && msg.type === LEGACY_VOICE_COMMAND_MESSAGE_TYPE) {
+    dispatchVoiceTranscript(msg.text || '').then(() => {
+      sendResponse({ ok: true });
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice-command-dispatch-failed') });
+    });
+    return true;
+  }
   if (msg && msg.type === 'voice:getStatus') {
     getVoiceStatus().then((res) => sendResponse(res)).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'voice-status-failed') });
@@ -957,7 +1096,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === 'navable:openSite') {
-    openSiteInBrowser(msg.query || '', msg.newTab).then((res) => {
+    const senderUrl =
+      (_sender && _sender.tab && (_sender.tab.url || _sender.tab.pendingUrl))
+        ? String(_sender.tab.url || _sender.tab.pendingUrl)
+        : (_sender && _sender.url ? String(_sender.url) : '');
+    openSiteInBrowser(msg.query || '', msg.newTab, senderUrl).then((res) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'open site failed') });

@@ -1,3 +1,8 @@
+// Content script responsibilities:
+// - inspect the active page
+// - parse recognized voice text into Navable commands
+// - execute those commands against the DOM
+// Microphone permission and speech recognition stay in the extension offscreen document.
 (function () {
   console.log('[Navable] content script loaded on', location.href);
 
@@ -106,40 +111,13 @@
         }
         return true;
       }
-      if (msg && msg.type === 'navable:getSpeechStatus') {
-        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-          sendResponse && sendResponse({ ok: false, error: 'runtime unavailable' });
-          return true;
-        }
-        chrome.runtime.sendMessage({ type: 'voice:getStatus' }).then(function (res) {
-          sendResponse && sendResponse(res || { ok: false, error: 'status unavailable' });
-        }).catch(function (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'status failed') });
-        });
-        return true;
-      }
-      if (msg && msg.type === 'navable:voiceTranscript') {
+      if (msg && (msg.type === 'VOICE_COMMAND' || msg.type === 'navable:voiceTranscript')) {
         try {
-          handleTranscript(msg.text || '');
+          handleVoiceCommandText(msg.text || '');
           sendResponse && sendResponse({ ok: true });
         } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'transcript failed') });
+          sendResponse && sendResponse({ ok: false, error: String(err || 'voice command failed') });
         }
-        return true;
-      }
-      if (msg && msg.type === 'speech') {
-        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-          sendResponse && sendResponse({ ok: false, error: 'runtime unavailable' });
-          return true;
-        }
-        var actionType = 'voice:toggle';
-        if (msg.action === 'start') actionType = 'voice:start';
-        if (msg.action === 'stop') actionType = 'voice:stop';
-        chrome.runtime.sendMessage({ type: actionType }).then(function (res2) {
-          sendResponse && sendResponse(res2 || { ok: false, error: 'voice action failed' });
-        }).catch(function (err2) {
-          sendResponse && sendResponse({ ok: false, error: String(err2 || 'voice action failed') });
-        });
         return true;
       }
     });
@@ -604,35 +582,17 @@
   };
 
   // -------------------------------
-  // Voice input/output (prototype)
+  // Voice command output + execution
   // -------------------------------
 
-  // Note: microphone + speech recognition run in the extension (offscreen document),
-  // not in the webpage/content-script context.
-  var speech = window.NavableSpeech || {};
-  var recognizer = null;
-  var listening = false; // legacy per-tab state (kept inert; voice runs in extension)
-  var manualListening = null; // null = follow autostart; true = force on; false = force off
-  var settingsLoaded = false;
   var lastSpoken = '';
   var lastUnknownCmdAt = 0;
-  var lastMicBusyAt = 0;
-  var recogLang = 'en-US';
   var transientRestoreTimer = null;
-  var startRetryTimer = null;
-  var startRetryCount = 0;
-  var outputOpen = false;
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
     try { clearTimeout(transientRestoreTimer); } catch (_err) { /* ignore */ }
     transientRestoreTimer = null;
-  }
-
-  function clearStartRetryTimer() {
-    if (!startRetryTimer) return;
-    try { clearTimeout(startRetryTimer); } catch (_err) { /* ignore */ }
-    startRetryTimer = null;
   }
 
   function getLiveRegion(mode) {
@@ -683,110 +643,6 @@
     speak(text, { transient: true, restoreMs: restoreMs });
   }
 
-  function isVoiceSupported() {
-    // Voice capture is handled in the extension (offscreen document), not the webpage.
-    return false;
-  }
-
-  function isPageActiveForVoice() {
-    try {
-      if (document.visibilityState && document.visibilityState !== 'visible') return false;
-      if (typeof document.hasFocus === 'function' && !document.hasFocus()) return false;
-      return true;
-    } catch (_err) {
-      return true;
-    }
-  }
-
-  function computeShouldListen() {
-    return false;
-  }
-
-  function ensureRecognizer() {
-    if (recognizer || !isVoiceSupported()) return recognizer;
-    recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
-    recognizer.on('result', function (ev) { if (!ev || !ev.transcript) return; handleTranscript(ev.transcript); });
-    recognizer.on('error', function (e) {
-      console.warn('[Navable] speech error', e && e.error);
-      try {
-        var code = e && e.error ? String(e.error) : 'unknown';
-        if (code === 'start-failed' || code === 'audio-capture' || code === 'aborted') {
-          // Common when another tab/window is still holding the mic. Retry quietly while we still want to listen.
-          if (computeShouldListen()) {
-            var now2 = Date.now();
-            if (now2 - lastMicBusyAt > 15000) {
-              lastMicBusyAt = now2;
-              speakTransient('Microphone is busy in another tab or app. Retrying…', 3500);
-            }
-            clearStartRetryTimer();
-            startRetryCount = Math.min(10, startRetryCount + 1);
-            var backoff = Math.min(2000, 150 * startRetryCount);
-            startRetryTimer = setTimeout(function () {
-              if (!computeShouldListen()) return;
-              try { ensureRecognizer(); if (recognizer) recognizer.start(); } catch (_err) { /* ignore */ }
-            }, backoff);
-            return;
-          }
-          return;
-        }
-	        if (code === 'no-speech') {
-	          // Silence timeouts are common during continuous listening; do not spam announcements.
-	          return;
-	        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
-	          listening = false;
-	          manualListening = false;
-	          speak('Speech recognition is not allowed in this browser.');
-	        } else if (code === 'network') {
-	          listening = false;
-	          manualListening = false;
-	          speak('Speech recognition is unavailable due to a network issue.');
-	        } else {
-	          speak('Speech recognition had a problem. Please try again.');
-	        }
-      } catch (_err) {
-        // ignore secondary failures
-      }
-    });
-    recognizer.on('start', function () {
-      startRetryCount = 0;
-      clearStartRetryTimer();
-      console.log('[Navable] listening');
-    });
-    recognizer.on('end', function () { console.log('[Navable] speech recognition ended'); });
-    return recognizer;
-  }
-
-  function startListening(opts) {
-    opts = opts || {};
-    clearStartRetryTimer();
-    startRetryCount = 0;
-    ensureRecognizer();
-    if (!recognizer) {
-      if (opts.announce !== false) speak('Speech recognition not available.');
-      listening = false;
-      return;
-    }
-    listening = true;
-    if (opts.announce) speak('Listening. Say “help” to hear example commands.');
-    try { recognizer.start(); } catch (_err) { /* errors are handled via recognizer error events */ }
-  }
-
-  function stopListening(opts) {
-    opts = opts || {};
-    listening = false;
-    clearStartRetryTimer();
-    startRetryCount = 0;
-    if (opts.announce) speak('Stopped listening. Press Alt+Shift+M to start again.');
-    try { if (recognizer) recognizer.stop(); } catch (_err) { /* ignore */ }
-  }
-
-  function syncListening(opts) {
-    opts = opts || {};
-    var should = computeShouldListen();
-    if (should && !listening) startListening(opts);
-    else if (!should && listening) stopListening(opts);
-  }
-
   function toggleListening() {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
       speakTransient('Voice controls are unavailable on this page.', 2500);
@@ -795,34 +651,6 @@
     chrome.runtime.sendMessage({ type: 'voice:toggle' }).catch(function () {
       speakTransient('Voice action failed. Open Navable popup and try again.', 3000);
     });
-  }
-
-  // Pause listening while the Navable output overlay is open to avoid SR/TTS feedback loops.
-  try {
-    window.addEventListener(
-      'navable:output-open',
-      function (e) {
-        try {
-          outputOpen = !!(e && e.detail && e.detail.open);
-        } catch (_err) {
-          outputOpen = false;
-        }
-        syncListening({ announce: false });
-      },
-      { capture: true }
-    );
-  } catch (_e) {
-    // ignore
-  }
-
-  // Auto-pause/resume based on tab visibility/focus so multiple open tabs don't contend for speech recognition.
-  try {
-    document.addEventListener('visibilitychange', function () { syncListening({ announce: false }); }, { capture: true });
-    window.addEventListener('focus', function () { syncListening({ announce: false }); }, { capture: true });
-    window.addEventListener('blur', function () { syncListening({ announce: false }); }, { capture: true });
-    window.addEventListener('pagehide', function () { stopListening({ announce: false }); }, { capture: true });
-  } catch (_err) {
-    // ignore
   }
 
   function extractOpenSiteQuery(t) {
@@ -859,6 +687,23 @@
     return q;
   }
 
+  function extractCompoundSiteSearchQuery(text) {
+    var raw = String(text || '').trim();
+    if (!raw) return null;
+    var match = raw.match(/^(?:open|navigate to|go to|take me to)\s+(.+?)\s+and\s+(?:search|google)\s+(?:for\s+)?(.+?)\s*$/i);
+    if (!match || !match[1] || !match[2]) return null;
+
+    var siteQuery = String(match[1] || '')
+      .replace(/^(a|an|the)\s+/i, '')
+      .replace(/^(new\s+)?tab\s+/i, '')
+      .replace(/^(website|site|page)\s+/i, '')
+      .replace(/\bplease\b/gi, '')
+      .trim();
+    var searchQuery = String(match[2] || '').trim();
+    if (!siteQuery || !searchQuery) return null;
+    return 'search ' + searchQuery + ' on ' + siteQuery;
+  }
+
   function parseCommand(text) {
     var original = String(text || '');
     var t = original.trim().toLowerCase();
@@ -887,6 +732,15 @@
       /وصف الصفحة/.test(t)
     ) {
       return { type: 'summarize', command: original || 'Summarize this page' };
+    }
+
+    var compoundSiteSearchQuery = extractCompoundSiteSearchQuery(original);
+    if (compoundSiteSearchQuery) {
+      return { type: 'open_site', query: compoundSiteSearchQuery, newTab: true };
+    }
+
+    if (/^(search|google)\b/.test(t)) {
+      return { type: 'open_site', query: original, newTab: true };
     }
 
     // Open a new website (dynamic) in a new tab.
@@ -1252,7 +1106,7 @@
     }
   }
 
-  function handleTranscript(text) {
+  function handleVoiceCommandText(text) {
     console.log('[Navable] Recognized:', text);
     var cmd = parseCommand(text);
     if (cmd && cmd.type === 'summarize') {

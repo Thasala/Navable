@@ -81,14 +81,6 @@ function announce(text, mode = 'polite') {
   }
 }
 
-function isVoiceSupported() {
-  try {
-    return !!(window.NavableSpeech && typeof window.NavableSpeech.supportsRecognition === 'function' && window.NavableSpeech.supportsRecognition());
-  } catch (_err) {
-    return false;
-  }
-}
-
 function getVoiceStatusEls() {
   return {
     btn: document.getElementById('btnMicToggle'),
@@ -96,15 +88,66 @@ function getVoiceStatusEls() {
   };
 }
 
+let lastVoiceStatus = null;
+
+function setNewtabMicMessage(text, mode = 'polite') {
+  const msg = String(text || '').trim();
+  const { status } = getVoiceStatusEls();
+  if (status) status.textContent = msg || 'Not listening.';
+  announce(msg, mode);
+}
+
+function updateNewtabMicUiFromStatus(status) {
+  const { btn, status: statusEl } = getVoiceStatusEls();
+  if (!btn || !statusEl) return;
+
+  if (!status || status.ok !== true) {
+    btn.disabled = true;
+    btn.textContent = 'Voice unavailable';
+    statusEl.textContent = (status && status.error) ? String(status.error) : 'Voice status is unavailable.';
+    return;
+  }
+
+  if (!status.supports) {
+    btn.disabled = true;
+    btn.textContent = 'Voice not supported';
+    statusEl.textContent = 'Voice recognition is not supported in this browser.';
+    return;
+  }
+
+  btn.disabled = false;
+  if (!status.permissionGranted) {
+    btn.textContent = 'Enable microphone';
+    statusEl.textContent = 'Grant microphone access once for the extension.';
+    return;
+  }
+
+  btn.textContent = status.listening ? 'Stop listening' : 'Start listening';
+  statusEl.textContent = status.listening ? 'Listening...' : 'Not listening.';
+}
+
+async function requestVoiceStatus() {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'voice:getStatus' });
+    lastVoiceStatus = res || null;
+    return lastVoiceStatus;
+  } catch (err) {
+    lastVoiceStatus = { ok: false, error: String(err || 'voice-status-failed') };
+    return lastVoiceStatus;
+  }
+}
+
+async function refreshNewtabMicStatus() {
+  const status = await requestVoiceStatus();
+  updateNewtabMicUiFromStatus(status);
+}
+
 function extractOpenSiteQuery(transcript) {
   const s = String(transcript || '').trim().toLowerCase();
   if (!s) return null;
 
-  // Arabic: "افتح <شيء>"
-  const ar = s.match(/^افتح\s+(.+)$/);
+  const ar = s.match(/^ط§ظپطھط­\s+(.+)$/);
   if (ar && ar[1]) return String(ar[1]).trim();
-
-  // English: "open (me) <site>"
   if (!/^(open|navigate to|go to|take me to)\b/.test(s)) return null;
 
   const q = s
@@ -124,12 +167,29 @@ function extractOpenSiteQuery(transcript) {
   return q || null;
 }
 
+function extractCompoundSiteSearchQuery(transcript) {
+  const raw = String(transcript || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(?:open|navigate to|go to|take me to)\s+(.+?)\s+and\s+(?:search|google)\s+(?:for\s+)?(.+?)\s*$/i);
+  if (!match || !match[1] || !match[2]) return null;
+
+  const siteQuery = String(match[1] || '')
+    .replace(/^(a|an|the)\s+/i, '')
+    .replace(/^(new\s+)?tab\s+/i, '')
+    .replace(/^(website|site|page)\s+/i, '')
+    .replace(/\bplease\b/gi, '')
+    .trim();
+  const searchQuery = String(match[2] || '').trim();
+  if (!siteQuery || !searchQuery) return null;
+  return `search ${searchQuery} on ${siteQuery}`;
+}
+
 function parseVoiceCommand(transcript) {
-  const t = String(transcript || '').trim();
-  const low = t.toLowerCase();
+  const spokenText = String(transcript || '').trim();
+  const low = spokenText.toLowerCase();
   if (!low) return null;
 
-  if (/^(help|commands|show commands|what can i say\??)$/.test(low) || /مساعدة/.test(low)) {
+  if (/^(help|commands|show commands|what can i say\??)$/.test(low) || /ظ…ط³ط§ط¹ط¯ط©/.test(low)) {
     return { type: 'help' };
   }
 
@@ -137,126 +197,20 @@ function parseVoiceCommand(transcript) {
     return { type: 'stop' };
   }
 
-  const searchMatch = low.match(/^(search|google)\s+(for\s+)?(.+)$/);
-  if (searchMatch && searchMatch[3]) {
-    return { type: 'open_site', query: `search for ${searchMatch[3]}` };
+  const compoundSiteSearchQuery = extractCompoundSiteSearchQuery(spokenText);
+  if (compoundSiteSearchQuery) {
+    return { type: 'open_site', query: compoundSiteSearchQuery };
   }
 
-  const q = extractOpenSiteQuery(t);
+  const searchMatch = low.match(/^(search|google)\s+(for\s+)?(.+)$/);
+  if (searchMatch && searchMatch[3]) {
+    return { type: 'open_site', query: spokenText };
+  }
+
+  const q = extractOpenSiteQuery(spokenText);
   if (q) return { type: 'open_site', query: q };
 
   return null;
-}
-
-let newtabVoiceReady = false;
-let newtabRecognizer = null;
-let newtabWantsListening = false;
-let newtabVoiceLang = 'en-US';
-
-function refreshNewtabMicUi() {
-  const { btn, status } = getVoiceStatusEls();
-  if (!btn || !status) return;
-
-  if (!newtabVoiceReady) {
-    btn.disabled = true;
-    btn.textContent = 'Checking voice support…';
-    status.textContent = 'Loading voice tools…';
-    return;
-  }
-
-  const supported = isVoiceSupported();
-  if (!supported) {
-    btn.disabled = true;
-    btn.textContent = 'Voice not available';
-    status.textContent = 'Voice input is not available in this browser.';
-    return;
-  }
-
-  btn.disabled = false;
-  btn.textContent = newtabWantsListening ? 'Stop listening' : 'Start listening';
-  status.textContent = newtabWantsListening ? 'Listening…' : 'Not listening.';
-}
-
-function setNewtabMicMessage(text, mode = 'polite') {
-  const msg = String(text || '').trim();
-  const { status } = getVoiceStatusEls();
-  if (status) status.textContent = msg || (newtabWantsListening ? 'Listening…' : 'Not listening.');
-  announce(msg, mode);
-}
-
-async function loadNewtabVoiceSettings() {
-  return new Promise((resolve) => {
-    try {
-      if (!chrome?.storage?.sync?.get) return resolve({ language: 'en-US' });
-      chrome.storage.sync.get({ navable_settings: {} }, (res) => {
-        const s = (res && res.navable_settings) || {};
-        resolve({ language: s.language || 'en-US' });
-      });
-    } catch (_err) {
-      resolve({ language: 'en-US' });
-    }
-  });
-}
-
-async function ensureNewtabRecognizer() {
-  if (newtabRecognizer) return newtabRecognizer;
-  if (!isVoiceSupported()) return null;
-
-  const settings = await loadNewtabVoiceSettings();
-  newtabVoiceLang = settings.language || 'en-US';
-
-  try {
-    newtabRecognizer = window.NavableSpeech.createRecognizer({
-      lang: newtabVoiceLang,
-      interimResults: false,
-      continuous: true,
-      autoRestart: true
-    });
-
-    newtabRecognizer.on('result', (ev) => {
-      if (!ev?.transcript) return;
-      handleNewtabTranscript(ev.transcript);
-    });
-
-    newtabRecognizer.on('error', (e) => {
-      const code = String(e?.error || 'unknown');
-      if (code === 'no-speech') return;
-
-      if (code === 'not-allowed' || code === 'service-not-allowed') {
-        newtabWantsListening = false;
-        refreshNewtabMicUi();
-        setNewtabMicMessage('Microphone access is blocked. Allow microphone for this extension to use voice.', 'assertive');
-        return;
-      }
-
-      if (code === 'audio-capture' || code === 'aborted' || code === 'start-failed') {
-        setNewtabMicMessage('Microphone is busy. Close other apps/tabs using the mic, then try again.', 'polite');
-        return;
-      }
-
-      if (code === 'network') {
-        newtabWantsListening = false;
-        refreshNewtabMicUi();
-        setNewtabMicMessage('Speech recognition is unavailable due to a network issue.', 'assertive');
-        return;
-      }
-
-      setNewtabMicMessage('Speech recognition had a problem. Please try again.', 'assertive');
-    });
-
-    newtabRecognizer.on('start', () => {
-      refreshNewtabMicUi();
-    });
-
-    newtabRecognizer.on('end', () => {
-      refreshNewtabMicUi();
-    });
-  } catch (_err) {
-    newtabRecognizer = null;
-    return null;
-  }
-
-  return newtabRecognizer;
 }
 
 async function openSiteFromVoice(query) {
@@ -264,12 +218,10 @@ async function openSiteFromVoice(query) {
   if (!q) return;
 
   try {
-    if (chrome?.runtime?.sendMessage) {
-      const res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: false });
-      if (res?.ok) return;
-      setNewtabMicMessage(res?.error || 'Could not open that website.', 'assertive');
-      return;
-    }
+    const res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: false });
+    if (res?.ok) return;
+    setNewtabMicMessage(res?.error || 'Could not open that website.', 'assertive');
+    return;
   } catch (_err) {
     // fall through
   }
@@ -282,75 +234,47 @@ async function openSiteFromVoice(query) {
   await openUrl(url);
 }
 
-async function handleNewtabTranscript(transcript) {
-  const cmd = parseVoiceCommand(transcript);
+async function handleNewtabVoiceCommand(text) {
+  const cmd = parseVoiceCommand(text);
   if (!cmd) {
-    setNewtabMicMessage('I did not catch that. Try: “Open YouTube”.', 'polite');
+    setNewtabMicMessage('I did not catch that. Try: "Open YouTube".', 'polite');
     return;
   }
 
   if (cmd.type === 'help') {
-    setNewtabMicMessage('Try: “Open YouTube”, “Open example dot com”, “Search for weather”.', 'assertive');
+    setNewtabMicMessage('Try: "Open YouTube", "Open example dot com", "Search for weather".', 'assertive');
     return;
   }
 
   if (cmd.type === 'stop') {
-    stopNewtabListening({ announce: true });
+    await chrome.runtime.sendMessage({ type: 'voice:stop' }).catch(() => {});
+    await refreshNewtabMicStatus();
     return;
   }
 
   if (cmd.type === 'open_site') {
-    setNewtabMicMessage(`Opening ${cmd.query}…`, 'assertive');
+    setNewtabMicMessage(`Opening ${cmd.query}...`, 'assertive');
     await openSiteFromVoice(cmd.query);
   }
 }
 
-async function startNewtabListening() {
-  newtabWantsListening = true;
-  refreshNewtabMicUi();
-
-  const recognizer = await ensureNewtabRecognizer();
-  if (!recognizer) {
-    newtabWantsListening = false;
-    newtabVoiceReady = true;
-    refreshNewtabMicUi();
-    setNewtabMicMessage('Voice input is not available in this browser.', 'assertive');
-    return;
-  }
-
-  recognizer.start();
-  setNewtabMicMessage('Listening… Say “Open YouTube”.', 'polite');
-}
-
-function stopNewtabListening(opts = {}) {
-  newtabWantsListening = false;
-  refreshNewtabMicUi();
-  try {
-    newtabRecognizer && newtabRecognizer.stop();
-  } catch (_err) {
-    // ignore
-  }
-  if (opts.announce) setNewtabMicMessage('Stopped listening.', 'polite');
-}
-
-async function toggleNewtabListening() {
-  if (newtabWantsListening) {
-    stopNewtabListening({ announce: true });
-    return;
-  }
-  await startNewtabListening();
-}
-
 function wireNewtabVoice() {
-  newtabVoiceReady = true;
-  refreshNewtabMicUi();
-
   const { btn } = getVoiceStatusEls();
   if (btn) {
-    btn.addEventListener('click', () => {
-      toggleNewtabListening().catch((err) => {
-        console.warn('[Navable] newtab voice toggle failed', err);
-      });
+    btn.addEventListener('click', async () => {
+      try {
+        const { status } = getVoiceStatusEls();
+        if (status) status.textContent = 'Updating microphone...';
+        const current = lastVoiceStatus || (await requestVoiceStatus());
+        const action = (current && current.permissionGranted) ? 'voice:toggle' : 'voice:requestPermission';
+        const res = await chrome.runtime.sendMessage({ type: action });
+        lastVoiceStatus = res || current || null;
+        updateNewtabMicUiFromStatus(lastVoiceStatus);
+      } catch (err) {
+        updateNewtabMicUiFromStatus({ ok: false, error: String(err || 'voice-toggle-failed') });
+      } finally {
+        setTimeout(refreshNewtabMicStatus, 200);
+      }
     });
   }
 
@@ -359,35 +283,27 @@ function wireNewtabVoice() {
     (e) => {
       if (e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault();
-        toggleNewtabListening().catch(() => {});
+        if (!chrome?.runtime?.sendMessage) return;
+        chrome.runtime.sendMessage({ type: 'voice:toggle' }).catch(() => {});
+        setTimeout(refreshNewtabMicStatus, 200);
       }
     },
     { capture: true }
   );
 
-  document.addEventListener(
-    'visibilitychange',
-    () => {
-      if (document.visibilityState !== 'visible' && newtabWantsListening) {
-        stopNewtabListening({ announce: false });
+  if (chrome?.runtime?.onMessage?.addListener) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'voice:status') {
+        lastVoiceStatus = msg.status || lastVoiceStatus;
+        updateNewtabMicUiFromStatus(lastVoiceStatus);
       }
-    },
-    { capture: true }
-  );
-
-  window.addEventListener(
-    'pagehide',
-    () => {
-      if (newtabWantsListening) stopNewtabListening({ announce: false });
-    },
-    { capture: true }
-  );
-
-  if (!isVoiceSupported()) {
-    const { btn: btn2 } = getVoiceStatusEls();
-    if (btn2) btn2.disabled = true;
-    setNewtabMicMessage('Voice input is not available in this browser.', 'polite');
+      if (msg && (msg.type === 'VOICE_COMMAND' || msg.type === 'navable:voiceTranscript')) {
+        handleNewtabVoiceCommand(msg.text || '').catch(() => {});
+      }
+    });
   }
+
+  refreshNewtabMicStatus();
 }
 
 function wireNewtab() {
