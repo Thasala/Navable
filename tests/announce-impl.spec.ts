@@ -14,8 +14,8 @@ test('announce.js updates polite/assertive live regions', async ({ page }) => {
 
   await expect(page.locator('#navable-live-region-polite')).toHaveText('Hello from Navable.');
   await expect(page.locator('#navable-live-region-assertive')).toHaveText('Important message.');
+  await expect(page.locator('#navable-output-text')).toHaveValue('Important message.');
 
   const role = await page.getAttribute('#navable-live-region-assertive', 'role');
   expect(role).toBe('alert');
 });
-

@@ -1,15 +1,15 @@
 import { test, expect } from '@playwright/test';
 
 test('content script executes VOICE_COMMAND messages on the page', async ({ page }) => {
-  await page.addInitScript(() => {
+  const installContentChromeMock = () => {
     // @ts-ignore
-    (window as any).chrome = {
+    const chromeMock = {
       runtime: {
         _listeners: [] as any[],
         onMessage: {
           addListener(fn: any) {
             // @ts-ignore
-            (window as any).chrome.runtime._listeners.push(fn);
+            chromeMock.runtime._listeners.push(fn);
           }
         },
         sendMessage() {
@@ -29,7 +29,13 @@ test('content script executes VOICE_COMMAND messages on the page', async ({ page
         }
       }
     };
-  });
+    // @ts-ignore
+    (window as any).chrome = chromeMock;
+    // @ts-ignore
+    (globalThis as any).chrome = chromeMock;
+  };
+
+  await page.addInitScript(installContentChromeMock);
 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.setContent(`
@@ -38,6 +44,7 @@ test('content script executes VOICE_COMMAND messages on the page', async ({ page
       <p>Scrollable content for voice command execution.</p>
     </main>
   `);
+  await page.evaluate(installContentChromeMock);
   await page.addScriptTag({ path: 'src/common/announce.js' });
   await page.addScriptTag({ path: 'src/content.js' });
 
@@ -64,11 +71,11 @@ test('content script executes VOICE_COMMAND messages on the page', async ({ page
 });
 
 test('background forwards recognized transcripts as VOICE_COMMAND messages', async ({ page }) => {
-  await page.addInitScript(() => {
+  const installBackgroundChromeMock = () => {
     // @ts-ignore
     (window as any).__sentMessage = null;
     // @ts-ignore
-    (window as any).chrome = {
+    const chromeMock = {
       commands: {
         onCommand: {
           addListener(_fn: any) {
@@ -104,7 +111,7 @@ test('background forwards recognized transcripts as VOICE_COMMAND messages', asy
         onMessage: {
           addListener(fn: any) {
             // @ts-ignore
-            (window as any).chrome.runtime._listeners.push(fn);
+            chromeMock.runtime._listeners.push(fn);
           }
         },
         onInstalled: { addListener() {} },
@@ -134,7 +141,14 @@ test('background forwards recognized transcripts as VOICE_COMMAND messages', asy
         }
       }
     };
-  });
+    // @ts-ignore
+    (window as any).chrome = chromeMock;
+    // @ts-ignore
+    (globalThis as any).chrome = chromeMock;
+  };
+
+  await page.addInitScript(installBackgroundChromeMock);
+  await page.evaluate(installBackgroundChromeMock);
 
   await page.addScriptTag({ path: 'src/background.js' });
 

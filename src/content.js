@@ -23,21 +23,87 @@
         window.NavableAnnounce(text, options);
         return;
       }
-      if (
-        options &&
-        options.priority &&
-        window.NavableAnnounce &&
-        typeof window.NavableAnnounce.output === 'function'
-      ) {
-        window.NavableAnnounce.output(text, options);
-        return;
-      }
       if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
         window.NavableAnnounce.speak(text, options);
+        return;
+      }
+      if (window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
+        window.NavableAnnounce.output(text, options);
       }
     } catch (_e) {
       // no-op
     }
+  }
+
+  var i18n = window.NavableI18n || null;
+
+  function normalizeOutputLanguage(lang) {
+    if (i18n && typeof i18n.normalizeLanguage === 'function') {
+      return i18n.normalizeLanguage(lang);
+    }
+    return String(lang || 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+  }
+
+  function outputLocale(lang) {
+    if (i18n && typeof i18n.localeForLanguage === 'function') {
+      return i18n.localeForLanguage(lang);
+    }
+    return String(lang || 'en-US');
+  }
+
+  function currentOutputLanguage() {
+    return normalizeOutputLanguage(outputLanguage || settings.language || recogLang || 'en-US');
+  }
+
+  function translate(key, params, lang) {
+    var resolvedLang = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (i18n && typeof i18n.t === 'function') {
+      return i18n.t(key, resolvedLang, params);
+    }
+    return key;
+  }
+
+  function ensureOutputLanguageReady(lang) {
+    var resolvedLang = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (i18n && typeof i18n.ensureLanguage === 'function') {
+      return i18n.ensureLanguage(resolvedLang);
+    }
+    return Promise.resolve();
+  }
+
+  function resolveTranscriptLanguage(text) {
+    if (i18n && typeof i18n.resolveOutputLanguage === 'function') {
+      return i18n.resolveOutputLanguage({
+        transcript: text,
+        fallbackLanguage: currentOutputLanguage()
+      });
+    }
+    return currentOutputLanguage();
+  }
+
+  function localizeTarget(target, lang) {
+    var resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+    if (target === 'link') return translate('target_link', null, resolved);
+    if (target === 'button') return translate('target_button', null, resolved);
+    if (target === 'heading') return translate('target_heading', null, resolved);
+    if (target === 'input') return translate('target_input', null, resolved);
+    return translate('target_element', null, resolved);
+  }
+
+  function setOutputLanguageFromTranscript(text, detectedLanguage) {
+    if (detectedLanguage) {
+      outputLanguage = normalizeOutputLanguage(detectedLanguage);
+      return outputLanguage;
+    }
+    outputLanguage = resolveTranscriptLanguage(text);
+    return outputLanguage;
+  }
+
+  function recognitionLocaleFor(lang) {
+    var raw = String(lang || '').trim();
+    if (!raw) return String(recogLang || settings.language || 'en-US');
+    if (raw.indexOf('-') >= 0 || raw.indexOf('_') >= 0) return raw.replace(/_/g, '-');
+    return outputLocale(raw);
   }
 
   // Fallback hotkey: Alt+Shift+;
@@ -45,7 +111,10 @@
     'keydown',
     (e) => {
       if (e.altKey && e.shiftKey && e.key === ';') {
-        announce('Navable: test announcement (fallback hotkey).', { mode: 'polite' });
+        announce(translate('navable_test_announcement'), {
+          mode: 'polite',
+          lang: outputLocale(currentOutputLanguage())
+        });
       }
     },
     { capture: true }
@@ -55,12 +124,23 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg && msg.type === 'announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
+        announce(msg.text || translate('generic_announcement'), {
+          mode: msg.mode || 'polite',
+          priority: !!msg.priority,
+          lang: msg.lang || outputLocale(currentOutputLanguage())
+        });
         return;
       }
       if (msg && msg.type === 'navable:announce') {
-        announce(msg.text || 'Navable: announcement.', { mode: msg.mode || 'polite', priority: !!msg.priority });
-        sendResponse && sendResponse({ ok: true });
+        if (msg.lang) outputLanguage = normalizeOutputLanguage(msg.lang);
+        ensureOutputLanguageReady(outputLanguage).finally(function () {
+          announce(msg.text || translate('generic_announcement'), {
+            mode: msg.mode || 'polite',
+            priority: !!msg.priority,
+            lang: msg.lang || outputLocale(currentOutputLanguage())
+          });
+          sendResponse && sendResponse({ ok: true });
+        });
         return true;
       }
       if (msg && msg.type === 'navable:getStructure') {
@@ -73,7 +153,7 @@
         return true;
       }
       if (msg && msg.type === 'navable:executePlan') {
-        runPlan(msg.plan || { steps: [] }).then(function (res) {
+        runPlan(msg.plan || { steps: [] }, { silentOutput: !!msg.silentOutput }).then(function (res) {
           sendResponse && sendResponse(res);
         }).catch(function (err) {
           sendResponse && sendResponse({ ok: false, error: String(err || 'plan failed') });
@@ -126,7 +206,10 @@
   // Speak on activation (top window only)
   try {
     if (window.top === window) {
-      announce('Navable is ready. Say “help” to hear example commands.', { mode: 'polite' });
+      announce(translate('navable_ready'), {
+        mode: 'polite',
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   } catch (_e) {
     // ignore cross-origin frame access errors
@@ -223,6 +306,22 @@
     return 'other';
   }
 
+  function isNavableUiElement(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var node = el;
+    if (node.id === 'navable-marker') return true;
+    if (node.id === 'navable-output-panel' || node.id === 'navable-output-box' || node.id === 'navable-output-title' || node.id === 'navable-output-text' || node.id === 'navable-output-close') {
+      return true;
+    }
+    if (typeof node.id === 'string' && node.id.indexOf('navable-live-region-') === 0) {
+      return true;
+    }
+    if (node.closest && node.closest('#navable-output-panel, [id^="navable-live-region-"], #navable-marker')) {
+      return true;
+    }
+    return false;
+  }
+
   function buildIndex(doc) {
     var d = doc || document;
     var items = [];
@@ -242,6 +341,7 @@
       if (seen.has(el)) return;
       seen.add(el);
       if (isHidden(el)) return;
+      if (isNavableUiElement(el)) return;
       var label = textOf(el);
       if (!label) return; // skip unlabeled entries for now
       if (!el.dataset.navableId) el.dataset.navableId = nextId();
@@ -325,7 +425,7 @@
     var seen = new Set();
     var landmarks = [];
     nodes.forEach(function (el) {
-      if (seen.has(el) || isHidden(el)) return;
+      if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
       seen.add(el);
       var role = el.getAttribute && el.getAttribute('role');
       var tag = (el.tagName || '').toLowerCase();
@@ -349,7 +449,7 @@
     for (var i = 0; i < nodes.length; i++) {
       if (parts.length >= 24) break;
       var el = nodes[i];
-      if (isHidden(el)) continue;
+      if (isHidden(el) || isNavableUiElement(el)) continue;
       var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text || text.length < 12) continue;
       var remaining = maxChars - total;
@@ -364,6 +464,7 @@
   function buildPageStructure() {
     rescan();
     var active = document.activeElement;
+    if (isNavableUiElement(active)) active = null;
     var activeId = active && active.dataset ? active.dataset.navableId : null;
     var activeLabel = '';
     if (active) activeLabel = textOf(active);
@@ -556,21 +657,35 @@
       return { ok: true, message: 'Moved heading ' + (dir === 'prev' ? 'previous' : 'next') };
     }
     if (action === 'wait_for_user_input') {
-      speak(step.prompt || 'Please provide input, then tell me to continue.');
+      speak(step.prompt || translate('wait_for_user_input'));
       return { ok: true, message: 'Waiting for user input' };
     }
     return { ok: false, message: 'Unknown action ' + action };
   }
 
-  async function runPlan(plan) {
+  function buildPageContextSnapshot() {
+    try {
+      return buildPageStructure();
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async function runPlan(plan, opts) {
     if (!plan || !Array.isArray(plan.steps)) return { ok: false, error: 'Invalid plan' };
-    for (var i = 0; i < plan.steps.length; i++) {
-      var step = plan.steps[i];
-      var res = runToolStep(step);
-      if (!res.ok) return { ok: false, error: res.message || 'Step failed', step: step };
-      if (step.pauseMs) {
-        await new Promise(function (resolve) { setTimeout(resolve, step.pauseMs); });
+    var silentOutput = !!(opts && opts.silentOutput);
+    if (silentOutput) suppressedSpeechDepth += 1;
+    try {
+      for (var i = 0; i < plan.steps.length; i++) {
+        var step = plan.steps[i];
+        var res = runToolStep(step);
+        if (!res.ok) return { ok: false, error: res.message || 'Step failed', step: step };
+        if (step.pauseMs) {
+          await new Promise(function (resolve) { setTimeout(resolve, step.pauseMs); });
+        }
       }
+    } finally {
+      if (silentOutput) suppressedSpeechDepth = Math.max(0, suppressedSpeechDepth - 1);
     }
     return { ok: true };
   }
@@ -587,7 +702,12 @@
 
   var lastSpoken = '';
   var lastUnknownCmdAt = 0;
+  var recogLang = 'en-US';
+  var outputLanguage = 'en';
   var transientRestoreTimer = null;
+  var voiceTurnInFlight = false;
+  var voiceTurnResumeTimer = null;
+  var suppressedSpeechDepth = 0;
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -595,6 +715,11 @@
     transientRestoreTimer = null;
   }
 
+  function clearVoiceTurnResumeTimer() {
+    if (!voiceTurnResumeTimer) return;
+    try { clearTimeout(voiceTurnResumeTimer); } catch (_err) { /* ignore */ }
+    voiceTurnResumeTimer = null;
+  }
   function getLiveRegion(mode) {
     var m = mode === 'assertive' ? 'assertive' : 'polite';
     return document.getElementById('navable-live-region-' + m);
@@ -602,16 +727,18 @@
 
   function speak(text, opts) {
     opts = opts || {};
+    if (suppressedSpeechDepth > 0) return;
     var mode = opts && opts.mode === 'assertive' ? 'assertive' : 'polite';
     var msg = String(text || '');
     var isTransient = !!opts.transient;
     var restoreMs = typeof opts.restoreMs === 'number' ? opts.restoreMs : 2500;
+    var lang = opts && opts.lang ? String(opts.lang) : outputLocale(currentOutputLanguage());
 
     if (!isTransient) {
       lastSpoken = msg;
       clearTransientRestoreTimer();
       // Rely on the ARIA live region + screen reader; do not use browser text-to-speech.
-      announce(lastSpoken, { mode: mode });
+      announce(lastSpoken, { mode: mode, lang: lang });
       return;
     }
 
@@ -623,7 +750,7 @@
     } catch (_err) {
       previousText = '';
     }
-    announce(msg, { mode: mode });
+    announce(msg, { mode: mode, lang: lang });
 
     clearTransientRestoreTimer();
     transientRestoreTimer = setTimeout(function () {
@@ -643,14 +770,58 @@
     speak(text, { transient: true, restoreMs: restoreMs });
   }
 
+  function beginVoiceTurn() {
+    if (voiceTurnInFlight) return false;
+    clearVoiceTurnResumeTimer();
+    voiceTurnInFlight = true;
+    return true;
+  }
+
+  function finishVoiceTurn(opts) {
+    opts = opts || {};
+    clearVoiceTurnResumeTimer();
+    var delayMs = typeof opts.delayMs === 'number' ? opts.delayMs : 900;
+    if (delayMs <= 0) {
+      voiceTurnInFlight = false;
+      return;
+    }
+    voiceTurnResumeTimer = setTimeout(function () {
+      voiceTurnResumeTimer = null;
+      voiceTurnInFlight = false;
+    }, Math.max(0, delayMs));
+  }
+
   function toggleListening() {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speakTransient('Voice controls are unavailable on this page.', 2500);
+      speakTransient(translate('speech_not_available'), 2500);
       return;
     }
     chrome.runtime.sendMessage({ type: 'voice:toggle' }).catch(function () {
-      speakTransient('Voice action failed. Open Navable popup and try again.', 3000);
+      speakTransient(translate('speech_problem_retry'), 3000);
     });
+  }
+
+  function matchesAnyPattern(text, patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      if (patterns[i].test(text)) return true;
+    }
+    return false;
+  }
+
+  function extractSearchSiteQuery(t) {
+    var s = String(t || '').trim().toLowerCase();
+    if (!s) return null;
+
+    var en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+    if (en && en[3]) return 'search for ' + String(en[3]).trim();
+
+    var fr = s.match(/^(cherche|recherche)\s+(.+)$/);
+    if (fr && fr[2]) return 'search for ' + String(fr[2]).trim();
+
+    var ar = s.match(/^(ابحث|فتش)(\s+عن)?\s+(.+)$/);
+    if (ar && ar[3]) return 'search for ' + String(ar[3]).trim();
+
+    return null;
   }
 
   function extractOpenSiteQuery(t) {
@@ -658,17 +829,28 @@
     if (!s) return null;
 
     // Avoid conflicting with in-page intents like "open first link" or "press button".
-    if (/\b(link|button|heading)\b/.test(s)) return null;
+    if (/\b(link|button|heading|lien|bouton|titre)\b|رابط|زر|عنوان/.test(s)) return null;
 
-    // Arabic: "افتح <شيء>"
-    var ar = s.match(/^افتح\s+(.+)$/);
-    if (ar && ar[1]) return String(ar[1]).trim();
+    // Arabic website intents.
+    var ar = s.match(/^(افتح|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى)\s+(.+)$/);
+    if (ar && ar[2]) return String(ar[2]).trim();
 
-    // English: "open (me) <site>"
-    if (!/^(open|navigate to|take me to)\b/.test(s)) return null;
+    // French website intents.
+    var fr = s.match(/^(ouvre|va(?:s)?\s+(?:a|à)|aller?\s+(?:a|à)|visite|lance)\s+(.+)$/);
+    if (fr && fr[2]) {
+      return String(fr[2])
+        .trim()
+        .replace(/^(le|la|les|un|une)\b/, '')
+        .trim()
+        .replace(/^(site|page|onglet)\b/, '')
+        .trim();
+    }
+
+    // English: flexible website intents.
+    if (!/^(open|navigate to|take me to|go to|visit|bring up|launch)\b/.test(s)) return null;
 
     var q = s
-      .replace(/^(open(\s+up)?|navigate to|take me to)\b/, '')
+      .replace(/^(open(\s+up)?|navigate to|take me to|go to|visit|bring up|launch)\b/, '')
       .trim()
       .replace(/^(me|for me)\b/, '')
       .trim()
@@ -712,11 +894,14 @@
     var label;
 
     // Help / examples.
-    if (/^(help|help me|commands|show commands|what can i say\??)$/.test(t) || /مساعدة/.test(t)) {
+    if (
+      /^(help|help me|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(t) ||
+      /مساعدة/.test(t)
+    ) {
       return { type: 'help' };
     }
 
-    // English summary triggers + common Arabic phrasing.
+    // Summary/orientation triggers in English, French, and Arabic.
     if (
       t.includes('summarize') ||
       t.includes('summary') ||
@@ -725,6 +910,10 @@
       t.includes("what's on this page") ||
       t.includes('what is on this page') ||
       t.includes("what's this page") ||
+      /r[ée]sum[ée]?.*cette page/.test(t) ||
+      /d[ée]cri(s|re).*cette page/.test(t) ||
+      /c[' ]?est quoi cette page/.test(t) ||
+      /qu[' ]?est[- ]ce que cette page/.test(t) ||
       /ما هذه الصفحه/.test(t) ||
       /ما هذه الصفحة/.test(t) ||
       /ما هو محتوى الصفحة/.test(t) ||
@@ -739,21 +928,20 @@
       return { type: 'open_site', query: compoundSiteSearchQuery, newTab: true };
     }
 
-    if (/^(search|google)\b/.test(t)) {
-      return { type: 'open_site', query: original, newTab: true };
-    }
+    var searchQuery = extractSearchSiteQuery(t);
+    if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
 
     // Open a new website (dynamic) in a new tab.
     var siteQuery = extractOpenSiteQuery(t);
     if (siteQuery) return { type: 'open_site', query: siteQuery, newTab: true };
 
-    if (/(scroll )?down/.test(t) || /scroll down/.test(t)) return { type: 'scroll', dir: 'down' };
-    if (/(scroll )?up/.test(t) || /scroll up/.test(t)) return { type: 'scroll', dir: 'up' };
-    if (/top/.test(t) || /scroll (to )?top/.test(t)) return { type: 'scroll', dir: 'top' };
-    if (/bottom/.test(t) || /scroll (to )?bottom/.test(t)) return { type: 'scroll', dir: 'bottom' };
-    if (/read (the )?title/.test(t) || /read title/.test(t)) return { type: 'read', what: 'title' };
-    if (/^read (the )?selection/.test(t) || /^read selected/.test(t)) return { type: 'read', what: 'selection' };
-    if (/^read (the )?(focus|focused|this)$/.test(t)) return { type: 'read', what: 'focused' };
+    if (matchesAnyPattern(t, [/(scroll )?down/, /scroll down/, /\bdescend(s)?\b/, /plus bas/, /انزل|نز[ّل]|مرر.*(للأسفل|للاسفل)/])) return { type: 'scroll', dir: 'down' };
+    if (matchesAnyPattern(t, [/(scroll )?up/, /scroll up/, /\bmonte\b/, /plus haut/, /اطلع|اصعد|مرر.*(للأعلى|للاعلى)/])) return { type: 'scroll', dir: 'up' };
+    if (matchesAnyPattern(t, [/\btop\b/, /scroll (to )?top/, /en haut/, /أعلى الصفحة|اعلى الصفحة/])) return { type: 'scroll', dir: 'top' };
+    if (matchesAnyPattern(t, [/\bbottom\b/, /scroll (to )?bottom/, /en bas/, /أسفل الصفحة|اسفل الصفحة/])) return { type: 'scroll', dir: 'bottom' };
+    if (matchesAnyPattern(t, [/read (the )?title/, /read title/, /lis le titre/, /quel est le titre/, /اقر[أا] العنوان|ما عنوان الصفحة/])) return { type: 'read', what: 'title' };
+    if (matchesAnyPattern(t, [/^read (the )?selection/, /^read selected/, /lis la s[ée]lection/, /اقر[أا] التحديد/])) return { type: 'read', what: 'selection' };
+    if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا/])) return { type: 'read', what: 'focused' };
 
     // Explicit label-based intents first
     if ((/^open/.test(t) || /^click/.test(t)) && /link/.test(t) && (label = extractLabel(t, 'link'))) return { type: 'open', target: 'link', label: label };
@@ -793,8 +981,8 @@
     if (/next .*heading/.test(t) || /^next heading/.test(t)) return { type: 'move', target: 'heading', dir: 'next' };
     if (/previous .*heading/.test(t) || /^previous heading/.test(t) || /prev .*heading/.test(t)) return { type: 'move', target: 'heading', dir: 'prev' };
 
-    if (/repeat/.test(t)) return { type: 'repeat' };
-    if (/stop/.test(t)) return { type: 'stop' };
+    if (/repeat|r[ée]p[èe]te|كرر/.test(t)) return { type: 'repeat' };
+    if (/stop|arr[êe]te|stoppe|توقف|قف|اسكت/.test(t)) return { type: 'stop' };
     return null;
   }
 
@@ -903,7 +1091,7 @@
       var now = Date.now();
       if (now - lastUnknownCmdAt < 5000) return;
       lastUnknownCmdAt = now;
-      speakTransient('I did not catch that. Say “help” to hear example commands.', 3200);
+      speakTransient(translate('unknown_command'), 3200);
       return;
     }
     if (cmd.type === 'help') { speakHelp(); return; }
@@ -915,19 +1103,19 @@
       var amount = Math.floor(window.innerHeight * 0.8);
       if (cmd.dir === 'down') {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
+        speak(translate('scrolled_down'));
       } else if (cmd.dir === 'up') {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak('Scrolled up.');
+        speak(translate('scrolled_up'));
       } else if (cmd.dir === 'top') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak('Scrolled to top.');
+        speak(translate('scrolled_top'));
       } else if (cmd.dir === 'bottom') {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak('Scrolled to bottom.');
+        speak(translate('scrolled_bottom'));
       } else {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak('Scrolled down.');
+        speak(translate('scrolled_down'));
       }
       console.log('[Navable] Action: scroll', cmd.dir);
       return;
@@ -935,14 +1123,14 @@
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
-      speak('Title: ' + (title || 'not found'));
+      speak(translate('title_value', { value: title || translate('value_not_found') }));
       console.log('[Navable] Action: read title');
       return;
     }
     if (cmd.type === 'read' && cmd.what === 'selection') {
       var sel = '';
       try { sel = String(window.getSelection && window.getSelection().toString() || '').trim(); } catch (_err) { /* selection failed */ }
-      if (sel) { speak('Selection: ' + sel); } else { speak('No selection.'); }
+      if (sel) { speak(translate('selection_value', { value: sel })); } else { speak(translate('no_selection')); }
       console.log('[Navable] Action: read selection');
       return;
     }
@@ -951,43 +1139,43 @@
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
-        speak(fl || 'No focused element text.');
+        speak(fl || translate('no_focused_text'));
       } else {
-        speak('No focused element.');
+        speak(translate('no_focused_element'));
       }
       console.log('[Navable] Action: read focused');
       return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var elhL = findByLabel('heading', cmd.label);
-      if (!elhL) { speak('I did not find that heading.'); return; }
+      if (!elhL) { speak(translate('not_found_heading')); return; }
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
-      speak('Heading: ' + (lblhL.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
       console.log('[Navable] Action: read heading by label', cmd.label);
       return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && !cmd.label) {
       var elh = pickNth('heading', cmd.n || 1);
-      if (!elh) { speak('I did not find a heading.'); return; }
+      if (!elh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
       var lblh = elh.dataset.navableLabel || elh.innerText || elh.textContent || '';
-      speak('Heading: ' + (lblh.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblh.trim() || translate('unnamed') }));
       console.log('[Navable] Action: read heading', cmd.n);
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
       var ellL = findByLabel('link', cmd.label);
-      if (!ellL) { speak('I did not find that link.'); return; }
+      if (!ellL) { speak(translate('not_found_link')); return; }
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
-      speak('Opening ' + (lbllL.trim() || 'link'));
+      speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
       ellL.click();
       console.log('[Navable] Action: open link by label', cmd.label);
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
       var ell = pickNth('link', cmd.n || 1);
-      if (!ell) { speak('I did not find a link.'); return; }
+      if (!ell) { speak(translate('not_found_generic', { target: localizeTarget('link') })); return; }
       var lbll = ell.dataset.navableLabel || ell.innerText || ell.textContent || '';
-      speak('Opening ' + (lbll.trim() || 'link'));
+      speak(translate('opening_value', { value: lbll.trim() || translate('target_link') }));
       // Prefer click to follow anchors and SPA handlers
       ell.click();
       console.log('[Navable] Action: open link', cmd.n);
@@ -995,70 +1183,70 @@
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
       var elbL = findByLabel('button', cmd.label);
-      if (!elbL) { speak('I did not find that button.'); return; }
+      if (!elbL) { speak(translate('not_found_button')); return; }
       try { elbL.focus(); } catch (_err) { /* focus failed */ }
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
-      speak('Focused ' + (lblbL.trim() || 'button'));
+      speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button by label', cmd.label);
       return;
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
-      if (!elb) { speak('I did not find a button.'); return; }
+      if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
       try { elb.focus(); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
-      speak('Focused ' + (lblb.trim() || 'button'));
+      speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button', cmd.n);
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
       var aef = document.activeElement;
-      if (!aef) { speak('No focused element.'); return; }
+      if (!aef) { speak(translate('no_focused_element')); return; }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
       try { aef.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (labf || 'element'));
+      speak(translate('activated_value', { value: labf || translate('target_element') }));
       console.log('[Navable] Action: activate focused');
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
       var ab = findByLabel('button', cmd.label);
-      if (!ab) { speak('I did not find that button.'); return; }
+      if (!ab) { speak(translate('not_found_button')); return; }
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
       try { ab.focus(); } catch (_err) { /* focus failed */ }
       try { ab.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (String(labb || 'button').trim()));
+      speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
       console.log('[Navable] Action: activate button by label', cmd.label);
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
       var abin = pickNth('button', cmd.n);
-      if (!abin) { speak('I did not find a button.'); return; }
+      if (!abin) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
       var labbn = abin.dataset.navableLabel || abin.innerText || abin.textContent || '';
       try { abin.focus(); } catch (_err) { /* focus failed */ }
       try { abin.click(); } catch (_err) { /* click failed */ }
-      speak('Activated ' + (String(labbn || 'button').trim()));
+      speak(translate('activated_value', { value: String(labbn || translate('target_button')).trim() }));
       console.log('[Navable] Action: activate button', cmd.n);
       return;
     }
     if (cmd.type === 'move' && (cmd.target === 'link' || cmd.target === 'button')) {
       var elmv = moveBy(cmd.target, cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmv) { speak('I did not find a ' + cmd.target + '.'); return; }
+      if (!elmv) { speak(translate('not_found_generic', { target: localizeTarget(cmd.target) })); return; }
       try { elmv.focus(); } catch (_err) { /* focus failed */ }
       var lblmv = elmv.dataset.navableLabel || elmv.innerText || elmv.textContent || '';
-      speak('Focused ' + (lblmv.trim() || cmd.target));
+      speak(translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }));
       console.log('[Navable] Action: move ' + cmd.target, cmd.dir);
       return;
     }
     if (cmd.type === 'move' && cmd.target === 'heading') {
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmh) { speak('I did not find a heading.'); return; }
+      if (!elmh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
       if (!elmh.hasAttribute('tabindex')) {
         try { elmh.setAttribute('tabindex', '-1'); } catch (_err) { /* ignore */ }
       }
       try { elmh.focus(); } catch (_err) { /* focus failed */ }
-      speak('Heading: ' + (lblmh.trim() || 'unnamed'));
+      speak(translate('heading_value', { value: lblmh.trim() || translate('unnamed') }));
       console.log('[Navable] Action: move heading', cmd.dir);
       return;
     }
@@ -1066,55 +1254,182 @@
     if (cmd.type === 'stop') { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ } return; }
   }
 
-  async function runSummaryRequest(commandText) {
+  async function runSummaryRequest(commandText, pageStructure) {
     var cmdText = (commandText && String(commandText).trim()) || 'Summarize this page';
-    announce('Summarizing this page… please wait.', { mode: 'assertive', priority: true });
+    announce(translate('summarizing_wait'), {
+      mode: 'assertive',
+      lang: outputLocale(currentOutputLanguage())
+    });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      announce('Sorry — summarization is unavailable on this page.', { mode: 'assertive', priority: true });
+      announce(translate('summarize_unavailable_page'), {
+        mode: 'assertive',
+        lang: outputLocale(currentOutputLanguage())
+      });
       return;
     }
     try {
-      var res = await chrome.runtime.sendMessage({ type: 'planner:run', command: cmdText });
+      var res = await chrome.runtime.sendMessage({
+        type: 'planner:run',
+        command: cmdText,
+        outputLanguage: currentOutputLanguage(),
+        pageStructure: pageStructure || buildPageContextSnapshot()
+      });
       if (!res || res.ok !== true) {
-        announce((res && res.error) ? String(res.error) : 'Sorry — I could not summarize this page.', { mode: 'assertive', priority: true });
+        announce((res && res.error) ? String(res.error) : translate('summarize_failed'), {
+          mode: 'assertive',
+          lang: outputLocale(currentOutputLanguage())
+        });
       }
       // On success, the background will announce the summary via the live region.
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      announce('Sorry — the summary request failed. Please try again.', { mode: 'assertive', priority: true });
+      announce(translate('summarize_request_failed'), {
+        mode: 'assertive',
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   }
 
   async function openSiteRequest(query, newTab) {
     var q = String(query || '').trim();
     if (!q) {
-      speak('Tell me which website to open.');
+      speak(translate('tell_website_to_open'));
       return;
     }
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak('Opening a website is unavailable.');
+      speak(translate('open_site_unavailable'));
       return;
     }
     try {
-      var res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: newTab !== false });
+      var res = await chrome.runtime.sendMessage({
+        type: 'navable:openSite',
+        query: q,
+        newTab: newTab !== false,
+        outputLanguage: currentOutputLanguage()
+      });
       if (!res || res.ok !== true) {
-        speak((res && res.error) ? String(res.error) : 'Could not open that site.');
+        speak((res && res.error) ? String(res.error) : translate('open_site_failed'));
       }
     } catch (err) {
       console.warn('[Navable] open site via background failed', err);
-      speak('Could not open that site.');
+      speak(translate('open_site_failed'));
     }
   }
 
   function handleVoiceCommandText(text) {
-    console.log('[Navable] Recognized:', text);
-    var cmd = parseCommand(text);
-    if (cmd && cmd.type === 'summarize') {
-      runSummaryRequest(cmd.command);
-      return;
-    }
-    execCommand(cmd);
+    handleTranscript(text, '', '').catch(function (err) {
+      console.warn('[Navable] voice command handling failed', err);
+    });
   }
+
+  async function assistantRequest(questionText, pageStructure) {
+    var q = String(questionText || '').trim();
+    if (!q) return false;
+    var structure = pageStructure || buildPageContextSnapshot();
+
+    await ensureOutputLanguageReady();
+    speakTransient(translate('answering_question'), 2500);
+
+    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        var res = await chrome.runtime.sendMessage({
+          type: 'navable:assistant',
+          input: q,
+          outputLanguage: currentOutputLanguage(),
+          pageContext: true,
+          pageStructure: structure,
+          autoExecutePlan: true
+        });
+        if (res && res.ok === true && res.speech) {
+          speak(String(res.speech), { mode: 'assertive' });
+          return true;
+        }
+        if (res && res.error) {
+          console.warn('[Navable] assistant background request returned error', res.error);
+        }
+      } catch (err) {
+        console.warn('[Navable] assistant message request failed', err);
+      }
+    }
+
+    try {
+      var directResponse = await window.fetch('http://localhost:3000/api/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: q,
+          outputLanguage: currentOutputLanguage(),
+          pageStructure: structure
+        })
+      });
+      var directData = await directResponse.json().catch(function () { return {}; });
+      if (directResponse.ok && directData && directData.speech) {
+        if (directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
+          await runPlan(directData.plan);
+        }
+        speak(String(directData.speech), { mode: 'assertive' });
+        return true;
+      }
+      if (directData && directData.error) {
+        speak(String(directData.error), { mode: 'assertive' });
+        return true;
+      }
+    } catch (err2) {
+      console.warn('[Navable] assistant direct request failed', err2);
+    }
+
+    speak(translate('answer_failed'), { mode: 'assertive' });
+    return true;
+  }
+
+  async function tryIntentFallback(commandText, pageStructure) {
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
+    try {
+      var res = await chrome.runtime.sendMessage({
+        type: 'planner:run',
+        command: commandText,
+        outputLanguage: currentOutputLanguage(),
+        preferIntentFallback: true,
+        pageStructure: pageStructure || buildPageContextSnapshot()
+      });
+      return !!(res && res.ok === true && (
+        (res.plan && res.plan.steps && res.plan.steps.length) ||
+        res.description ||
+        res.summary
+      ));
+    } catch (err) {
+      console.warn('[Navable] intent fallback failed', err);
+      return false;
+    }
+  }
+
+  async function handleTranscript(text, detectedLanguage, _provider) {
+    if (!beginVoiceTurn()) return false;
+    console.log('[Navable] Recognized:', text);
+    try {
+      setOutputLanguageFromTranscript(text, detectedLanguage);
+      var languageReady = ensureOutputLanguageReady();
+      var cmd = parseCommand(text);
+      var pageStructure = buildPageContextSnapshot();
+      if (cmd && cmd.type === 'summarize') {
+        await runSummaryRequest(cmd.command, pageStructure);
+        return true;
+      }
+      if (cmd) {
+        execCommand(cmd);
+        return true;
+      }
+      if (await tryIntentFallback(text, pageStructure)) return true;
+      if (await assistantRequest(text, pageStructure)) return true;
+      await languageReady;
+      execCommand(null);
+      return true;
+    } finally {
+      finishVoiceTurn({ delayMs: 900 });
+    }
+  }
+
+  window.NavableTools.handleTranscript = handleTranscript;
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
   document.addEventListener('keydown', function (e) {
@@ -1127,14 +1442,20 @@
 	      chrome.storage.sync.get({ navable_settings: settings }, (res) => {
 	        var s = res && res.navable_settings ? res.navable_settings : settings;
 	        var autostart = typeof s.autostart === 'boolean' ? s.autostart : true;
+	        var nextRecogLang = recognitionLocaleFor(s.language || 'en-US');
 	        settings = { language: s.language || 'en-US', overlay: !!s.overlay, autostart: autostart };
+	        recogLang = nextRecogLang;
+	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	      });
 	      chrome.storage.onChanged && chrome.storage.onChanged.addListener((changes, area) => {
 	        if (area !== 'sync' || !changes.navable_settings) return;
 	        var s2 = changes.navable_settings.newValue || settings;
 	        var autostart2 = typeof s2.autostart === 'boolean' ? s2.autostart : true;
+	        var nextRecogLang2 = recognitionLocaleFor(s2.language || 'en-US');
 	        settings = { language: s2.language || 'en-US', overlay: !!s2.overlay, autostart: autostart2 };
+	        recogLang = nextRecogLang2;
+	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	      });
 	    } catch (_e) { /* storage not available in tests */ }
@@ -1142,7 +1463,7 @@
 
   // Help voice command + hotkey
   function speakHelp() {
-    speak('Try: summarize this page, scroll down, read title, next heading, open first link, activate focused, read selection. Press Alt+Shift+M to toggle listening.');
+    speak(translate('help_examples'));
   }
 
   document.addEventListener('keydown', function (e) {

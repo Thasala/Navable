@@ -67,6 +67,38 @@ test('buildPageStructure excludes sensitive inputs from snapshot', async ({ page
   expect(names).toEqual(['city']);
 });
 
+test('buildPageStructure ignores Navable injected output UI', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Real Page Title</h1>
+      <p>This is the real page content.</p>
+      <button>Actual page action</button>
+    </main>
+  `);
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.buildPageStructure);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    (window as any).NavableAnnounce.speak('Summarizing the page now.', { mode: 'assertive', priority: true });
+  });
+
+  const structure = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).NavableTools.buildPageStructure();
+  });
+
+  expect(structure.title).not.toContain('Navable');
+  expect(structure.activeLabel).toBe('');
+  expect(structure.headings.map((h: any) => h.label)).toContain('Real Page Title');
+  expect(structure.buttons.map((b: any) => b.label)).toContain('Actual page action');
+  expect(structure.buttons.map((b: any) => b.label)).not.toContain('Close');
+  expect(structure.excerpt).toContain('real page content');
+  expect(structure.excerpt).not.toContain('Summarizing the page now.');
+});
+
 test('runPlan executes focus/click/fill steps via tools', async ({ page }) => {
   await page.setContent(`
     <main>
