@@ -302,11 +302,12 @@
     var emitter = createEmitter(['unavailable']);
     var transcribeUrl = options.transcribeUrl || DEFAULT_TRANSCRIBE_URL;
     var healthUrl = options.healthUrl || DEFAULT_HEALTH_URL;
-    var levelThreshold = typeof options.levelThreshold === 'number' ? options.levelThreshold : 0.018;
-    var silenceMs = typeof options.silenceMs === 'number' ? options.silenceMs : 1100;
-    var minSpeechMs = typeof options.minSpeechMs === 'number' ? options.minSpeechMs : 600;
+    var levelThreshold = typeof options.levelThreshold === 'number' ? options.levelThreshold : 0.012;
+    var silenceMs = typeof options.silenceMs === 'number' ? options.silenceMs : 900;
+    var minSpeechMs = typeof options.minSpeechMs === 'number' ? options.minSpeechMs : 250;
     var maxRecordingMs = typeof options.maxRecordingMs === 'number' ? options.maxRecordingMs : 12000;
-    var checkIntervalMs = typeof options.checkIntervalMs === 'number' ? options.checkIntervalMs : 100;
+    var checkIntervalMs = typeof options.checkIntervalMs === 'number' ? options.checkIntervalMs : 60;
+    var forceTranscribeMs = typeof options.forceTranscribeMs === 'number' ? options.forceTranscribeMs : 2200;
     var AudioContextCtor = getAudioContextCtor();
     var MediaRecorderCtor = getMediaRecorderCtor();
 
@@ -517,7 +518,7 @@
       };
 
       recorder.onstop = function () {
-        var shouldDiscard = discardPendingBlob || !shouldRun || !sawSpeech;
+        var shouldDiscard = discardPendingBlob || !shouldRun;
         var blob = new window.Blob(recordedChunks, { type: recorder && recorder.mimeType ? recorder.mimeType : mimeType || 'audio/webm' });
         resetRecordingState();
         if (shouldDiscard || blob.size === 0) {
@@ -538,7 +539,7 @@
       };
 
       try {
-        recorder.start(250);
+        recorder.start(100);
       } catch (err2) {
         recorder = null;
         emitter.emit('error', { error: 'start-failed', message: String(err2 || ''), raw: err2, provider: 'backend' });
@@ -557,6 +558,11 @@
       if (level >= levelThreshold) {
         lastSpeechAt = now;
         sawSpeech = true;
+        return;
+      }
+
+      if (!sawSpeech && now - recordingStartedAt >= forceTranscribeMs) {
+        stopRecorder();
         return;
       }
 

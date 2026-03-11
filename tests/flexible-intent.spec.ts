@@ -69,3 +69,29 @@ test('planner fallback understands French and Arabic intent phrases', async ({ p
   expect(arabicHeading.ok).toBe(true);
   await page.waitForFunction(() => document.activeElement && document.activeElement.tagName === 'H2');
 });
+
+test('planner fallback leaves informational questions unhandled', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Pricing</h1>
+      <p>Plans and billing.</p>
+      <a href="#pricing">Pricing details</a>
+    </main>
+  `);
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.buildPageStructure);
+
+  const result = await page.evaluate(async () => {
+    // @ts-ignore
+    return await (window as any).runPlanner('what is pricing', 'en', true);
+  });
+
+  expect(result.ok).toBe(false);
+  expect(result.unhandled).toBe(true);
+});

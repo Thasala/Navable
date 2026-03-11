@@ -63,6 +63,29 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
         addListener(fn) {
           chrome.runtime._listeners.push(fn);
         }
+      },
+      sendMessage(payload) {
+        return new Promise((resolve) => {
+          const listeners = chrome.runtime._listeners || [];
+          let responded = false;
+          const sendResponse = (res) => {
+            responded = true;
+            resolve(res);
+          };
+          listeners.forEach((fn) => {
+            try {
+              const maybeAsync = fn(payload, {}, sendResponse);
+              if (maybeAsync === true) {
+                // async response allowed
+              }
+            } catch (_e) {
+              // ignore listener errors
+            }
+          });
+          if (!responded) {
+            setTimeout(() => resolve(undefined), 0);
+          }
+        });
       }
     },
     storage: {
@@ -108,7 +131,9 @@ const OUTPUT_MESSAGES = {
     suggestion_open_link: 'Try: open first link.',
     opening_value: 'Opening {value}.',
     open_website_failed: 'Could not open that website.',
-    missing_url: 'Missing website name or URL.'
+    missing_url: 'Missing website name or URL.',
+    ai_answers_off: 'AI answers are off. Enable AI in options to ask general questions.',
+    answer_unavailable: 'I could not answer that right now.'
   },
   fr: {
     summary_unavailable: 'Le resume de la page n est pas disponible.',
@@ -125,7 +150,9 @@ const OUTPUT_MESSAGES = {
     suggestion_open_link: 'Essayez : ouvre le premier lien.',
     opening_value: 'Ouverture de {value}.',
     open_website_failed: 'Impossible d ouvrir ce site.',
-    missing_url: 'Nom du site ou URL manquant.'
+    missing_url: 'Nom du site ou URL manquant.',
+    ai_answers_off: 'Les reponses IA sont desactivees. Activez l IA dans les options pour poser des questions generales.',
+    answer_unavailable: 'Je n ai pas pu repondre a cela pour le moment.'
   },
   ar: {
     summary_unavailable: 'ملخص الصفحة غير متاح.',
@@ -142,7 +169,9 @@ const OUTPUT_MESSAGES = {
     suggestion_open_link: 'جرّب: افتح أول رابط.',
     opening_value: 'جارٍ فتح {value}.',
     open_website_failed: 'تعذر فتح هذا الموقع.',
-    missing_url: 'اسم الموقع أو الرابط مفقود.'
+    missing_url: 'اسم الموقع أو الرابط مفقود.',
+    ai_answers_off: 'إجابات الذكاء الاصطناعي متوقفة. فعّل الذكاء الاصطناعي من الإعدادات لطرح أسئلة عامة.',
+    answer_unavailable: 'تعذر عليّ الإجابة عن ذلك الآن.'
   }
 };
 
@@ -353,6 +382,19 @@ function chooseIntentTarget(text, structure) {
   return best;
 }
 
+function isTargetSelectionIntent(text) {
+  const normalized = String(text || '').toLowerCase();
+  if (!normalized) return false;
+  return hasIntent(normalized, [
+    /\bopen\b/, /\bgo to\b/, /\btake me to\b/, /\bbring me to\b/, /\bshow me\b/,
+    /\bfocus\b/, /\bclick\b/, /\bpress\b/, /\bactivate\b/, /\bvisit\b/, /\blaunch\b/,
+    /\bouvre\b/, /\bva(?:s)?\s+à\b/, /\bva(?:s)?\s+a\b/, /\bmontre(?:-moi)?\b/,
+    /\bclique\b/, /\bactive\b/, /\bvisite\b/, /\blance\b/,
+    /افتح/, /اذهب\s+إلى/, /اذهب\s+الى/, /روح\s+على/, /روح\s+إلى/, /روح\s+الى/,
+    /انتقل\s+إلى/, /انتقل\s+الى/, /خذني\s+إلى/, /خذني\s+الى/, /اضغط/, /فعّل|فعل/
+  ]);
+}
+
 function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
   const text = String(command || '').toLowerCase();
   const steps = [];
@@ -432,7 +474,7 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     steps.push({ action: 'move_heading', direction: 'prev' });
     matched = true;
   } else {
-    const target = chooseIntentTarget(text, structure);
+    const target = isTargetSelectionIntent(text) ? chooseIntentTarget(text, structure) : null;
     if (target) {
       matched = true;
       if (target.target === 'heading') {
@@ -511,10 +553,75 @@ async function loadSettings() {
   });
 }
 
+function normalizeAssistantResult(data) {
+  const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';
+  const answer = data && typeof data.answer === 'string' ? data.answer.trim() : '';
+  const speech = data && typeof data.speech === 'string' ? data.speech.trim() : '';
+  const suggestions = Array.isArray(data && data.suggestions) ? data.suggestions : [];
+  const plan = data && data.plan && Array.isArray(data.plan.steps) ? data.plan : { steps: [] };
+  const description = speech || [summary, suggestions.join(' ')].filter(Boolean).join(' ').trim();
+  return {
+    mode: data && typeof data.mode === 'string' ? data.mode : 'answer',
+    speech: description,
+    description,
+    summary,
+    answer,
+    suggestions,
+    plan
+  };
+}
+
+async function requestAssistant(input, requestedOutputLanguage, options = {}) {
+  const settings = options.settings || await loadSettings();
+  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
+  const outputMessagesReady = ensureOutputMessages(outputLanguage);
+  const text = String(input || '').trim();
+
+  if (!text) {
+    await outputMessagesReady;
+    return { ok: false, error: outputMessage('answer_unavailable', outputLanguage) };
+  }
+
+  let structure = options.pageStructure || null;
+  if (!structure && options.includePageContext) {
+    try {
+      const structureRes = await sendToActiveTab({ type: 'navable:getStructure' });
+      structure = structureRes && structureRes.structure ? structureRes.structure : null;
+    } catch (_err) {
+      structure = null;
+    }
+  }
+
+  try {
+    const response = await fetch('http://localhost:3000/api/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: text,
+        outputLanguage,
+        pageStructure: structure,
+        purpose: options.purpose || 'auto'
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return { ok: true, structure, ...normalizeAssistantResult(data) };
+    }
+    if (data && typeof data.error === 'string' && data.error.trim()) {
+      return { ok: false, structure, error: data.error.trim() };
+    }
+  } catch (err) {
+    console.warn('[Navable] assistant backend failed', err);
+  }
+
+  await outputMessagesReady;
+  return { ok: false, structure, error: outputMessage('answer_unavailable', outputLanguage) };
+}
+
 async function runPlanner(command, requestedOutputLanguage, preferIntentFallback) {
   const settings = await loadSettings();
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
-  await ensureOutputMessages(outputLanguage);
+  const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const structureRes = await sendToActiveTab({ type: 'navable:getStructure' });
   const structure = structureRes && structureRes.structure ? structureRes.structure : null;
   const text = String(command || '').toLowerCase();
@@ -522,7 +629,6 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
 
   // If the user asks to summarize/summary, prefer backend AI + plan where allowed by settings.
   if (isSummaryRequest) {
-    const aiEnabled = !!settings.aiEnabled;
     const aiMode = settings.aiMode || 'off';
     const canUseCache =
       summaryCache.url &&
@@ -532,7 +638,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       summaryCache.outputLanguage === outputLanguage &&
       Date.now() - summaryCache.ts < 2 * 60 * 1000;
 
-    if (aiEnabled && aiMode !== 'off') {
+    if (!!settings.aiEnabled && aiMode !== 'off') {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
         if (cached.description) {
@@ -547,40 +653,24 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
         if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
           await sendToActiveTab({
             type: 'navable:executePlan',
-            plan: cached.plan
+            plan: cached.plan,
+            silentOutput: true
           });
         }
         return { ...cached, structure, cached: true, ok: true };
       }
 
-      let aiResult = null;
-      try {
-        const response = await fetch('http://localhost:3000/api/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            command: command || 'Summarize this page',
-            pageStructure: structure,
-            outputLanguage
-          })
-        });
-        if (response.ok) {
-          const data = await response.json();
-          aiResult = {
-            summary: data.friendlySummary || '',
-            suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
-            plan: data.plan && Array.isArray(data.plan.steps) ? data.plan : { steps: [] }
-          };
-        }
-      } catch (err) {
-        console.warn('[Navable] summarize backend failed', err);
-      }
+      const assistantResult = await requestAssistant(command || 'Summarize this page', outputLanguage, {
+        settings,
+        pageStructure: structure,
+        purpose: 'summary'
+      });
 
-      if (aiResult && aiResult.summary) {
-        const summaryText = aiResult.summary.trim();
+      if (assistantResult.ok && (assistantResult.summary || assistantResult.description)) {
+        const summaryText = assistantResult.summary ? assistantResult.summary.trim() : assistantResult.description.trim();
         const suggestionsText =
-          aiResult.suggestions && aiResult.suggestions.length
-            ? ' Suggestions: ' + aiResult.suggestions.join(' ')
+          assistantResult.suggestions && assistantResult.suggestions.length
+            ? ' Suggestions: ' + assistantResult.suggestions.join(' ')
             : '';
         const description = (summaryText + suggestionsText).trim();
 
@@ -593,20 +683,26 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             lang: outputLocale(outputLanguage)
           });
         }
-        if (aiMode === 'summary_plan' && aiResult.plan && aiResult.plan.steps && aiResult.plan.steps.length) {
+        if (
+          aiMode === 'summary_plan' &&
+          assistantResult.plan &&
+          assistantResult.plan.steps &&
+          assistantResult.plan.steps.length
+        ) {
           await sendToActiveTab({
             type: 'navable:executePlan',
-            plan: aiResult.plan
+            plan: assistantResult.plan,
+            silentOutput: true
           });
         }
 
         const result = {
           ok: true,
-          plan: aiResult.plan,
+          plan: assistantResult.plan,
           structure,
           description,
-          summary: aiResult.summary,
-          suggestions: aiResult.suggestions
+          summary: summaryText,
+          suggestions: assistantResult.suggestions
         };
         summaryCache.url = structure && structure.url ? structure.url : null;
         summaryCache.outputLanguage = outputLanguage;
@@ -617,6 +713,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       // If AI path fails, fall back to local stub planner.
     } else {
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
+      await outputMessagesReady;
       const description = `${buildFriendlyOrientation(structure, outputLanguage)} ${outputMessage('ai_summaries_off', outputLanguage)}`;
       await sendToActiveTab({
         type: 'navable:announce',
@@ -643,6 +740,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
   }
 
   if (plan.description) {
+    await outputMessagesReady;
     await sendToActiveTab({
       type: 'navable:announce',
       text: plan.description,
@@ -869,20 +967,20 @@ function friendlyUrlForSpeech(url) {
 
 async function openSiteInBrowser(query, newTab, requestedOutputLanguage) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
-  await ensureOutputMessages(outputLanguage);
+  const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const url = resolveOpenQueryToUrl(query);
   if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
 
-  try {
-    await sendToActiveTab({
+  outputMessagesReady.then(() => (
+    sendToActiveTab({
       type: 'navable:announce',
       text: outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) }),
       mode: 'assertive',
       lang: outputLocale(outputLanguage)
-    });
-  } catch (_e) {
+    })
+  )).catch(() => {
     // ignore announce failures (e.g., unsupported active tab)
-  }
+  });
 
   try {
     if (newTab === false) {
@@ -967,6 +1065,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'open site failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:assistant') {
+    requestAssistant(msg.input || '', msg.outputLanguage, {
+      includePageContext: !!msg.pageContext
+    }).then(async (res) => {
+      if (
+        res &&
+        res.ok === true &&
+        msg.autoExecutePlan !== false &&
+        msg.pageContext &&
+        res.plan &&
+        res.plan.steps &&
+        res.plan.steps.length
+      ) {
+        try {
+          await sendToActiveTab({ type: 'navable:executePlan', plan: res.plan });
+        } catch (err) {
+          console.warn('[Navable] assistant plan execution failed', err);
+        }
+      }
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'assistant failed') });
     });
     return true;
   }

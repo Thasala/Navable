@@ -20,12 +20,12 @@ const baseSpec = {
     title: 'Navable Backend API',
     version: '0.1.0',
     description:
-      'Local backend API for the Navable browser extension (page snapshot summarization + suggested actions).'
+      'Local backend API for the Navable browser extension (unified assistant, speech, and translation services).'
   },
   tags: [
     { name: 'Health', description: 'Service status endpoints' },
     { name: 'Settings', description: 'Runtime backend settings' },
-    { name: 'Summarization', description: 'Page summarization endpoints' },
+    { name: 'Assistant', description: 'Unified AI assistant endpoint' },
     { name: 'Speech', description: 'Voice transcription endpoints' }
   ],
   paths: {
@@ -106,31 +106,39 @@ const baseSpec = {
         }
       }
     },
-    '/api/summarize': {
+    '/api/assistant': {
       post: {
-        tags: ['Summarization'],
-        summary: 'Summarize a page snapshot',
+        tags: ['Assistant'],
+        summary: 'Run the unified assistant',
         description:
-          'Accepts a structured page snapshot and returns a friendly summary, next suggestions, and an optional tool plan.',
+          'Accepts a spoken or typed user input string, optionally with page structure, and returns a concise spoken reply plus any suggested extension tool plan.',
         requestBody: {
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: '#/components/schemas/SummarizeRequest' }
+              schema: { $ref: '#/components/schemas/AssistantRequest' }
             }
           }
         },
         responses: {
           200: {
-            description: 'Summarization result',
+            description: 'Assistant result',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/SummarizeResponse' }
+                schema: { $ref: '#/components/schemas/AssistantResponse' }
               }
             }
           },
           400: {
             description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          503: {
+            description: 'Assistant backend unavailable',
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -268,28 +276,41 @@ const baseSpec = {
           steps: { type: 'array', items: { $ref: '#/components/schemas/Step' } }
         }
       },
-      SummarizeRequest: {
+      AssistantRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['pageStructure'],
+        required: ['input'],
         properties: {
-          command: {
+          input: {
             type: 'string',
-            description: 'Optional user command (any language).'
+            description: 'User utterance or text input.'
           },
           outputLanguage: {
             type: 'string',
-            description: 'Preferred language for Navable-authored summary output.'
+            description: 'Preferred language for Navable-authored output.'
           },
-          pageStructure: { $ref: '#/components/schemas/PageStructure' }
+          purpose: {
+            type: 'string',
+            enum: ['auto', 'summary', 'page', 'answer'],
+            description: 'Optional routing hint for callers that already know the intent.'
+          },
+          pageStructure: {
+            $ref: '#/components/schemas/PageStructure'
+          }
         }
       },
-      SummarizeResponse: {
+      AssistantResponse: {
         type: 'object',
         additionalProperties: false,
-        required: ['friendlySummary', 'suggestions', 'plan'],
+        required: ['mode', 'speech', 'summary', 'answer', 'suggestions', 'plan'],
         properties: {
-          friendlySummary: { type: 'string' },
+          mode: {
+            type: 'string',
+            enum: ['answer', 'page']
+          },
+          speech: { type: 'string' },
+          summary: { type: 'string' },
+          answer: { type: 'string' },
           suggestions: { type: 'array', items: { type: 'string' } },
           plan: { $ref: '#/components/schemas/Plan' }
         }
@@ -354,9 +375,9 @@ const baseSpec = {
           aiEnabled: {
             type: 'boolean',
             description:
-              'When false, /api/summarize skips OpenAI and uses local fallback.'
+              'When false, /api/assistant still returns local page-summary fallback for page context, but general answers are unavailable.'
           },
-          model: { type: 'string', description: 'OpenAI model ID for summaries.' },
+          model: { type: 'string', description: 'OpenAI model ID for assistant replies.' },
           transcriptionModel: { type: 'string', description: 'OpenAI model ID for voice transcription.' }
         }
       },

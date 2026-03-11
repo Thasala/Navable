@@ -1,6 +1,7 @@
 (function () {
   const timersByMode = { polite: null, assertive: null };
   let lastPriorityFocus = null;
+  let outputFocusLocked = false;
 
   function getRootNode() {
     return document.body || document.documentElement;
@@ -75,9 +76,8 @@
 
     panel = document.createElement('div');
     panel.id = 'navable-output-panel';
-    panel.setAttribute('role', 'alertdialog');
-    panel.setAttribute('aria-modal', 'true');
-    panel.setAttribute('tabindex', '-1');
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', 'Navable output');
 
     const title = document.createElement('div');
     title.id = 'navable-output-title';
@@ -106,19 +106,19 @@
     // Lightweight inline styling to avoid relying on page CSS.
     Object.assign(panel.style, {
       position: 'fixed',
-      inset: '0',
-      zIndex: '2147483647',
-      background: 'rgba(0,0,0,0.45)',
-      display: 'none'
-    });
-
-    Object.assign(box.style, {
-      boxSizing: 'border-box',
-      position: 'absolute',
       top: '12px',
       left: '50%',
       transform: 'translateX(-50%)',
       width: 'min(720px, calc(100vw - 24px))',
+      zIndex: '2147483647',
+      display: 'none',
+      pointerEvents: 'auto'
+    });
+
+    Object.assign(box.style, {
+      boxSizing: 'border-box',
+      position: 'relative',
+      width: '100%',
       maxHeight: 'min(70vh, 520px)',
       overflow: 'auto',
       padding: '14px 14px 12px',
@@ -127,7 +127,8 @@
       background: 'rgba(20,20,20,0.96)',
       color: '#fff',
       font: '14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-      boxShadow: '0 10px 30px rgba(0,0,0,0.45)'
+      boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+      pointerEvents: 'auto'
     });
 
     Object.assign(title.style, { fontWeight: '700', margin: '0 0 8px', fontSize: '15px' });
@@ -161,18 +162,17 @@
 
     function hidePanel() {
       panel.style.display = 'none';
+      outputFocusLocked = false;
       emitOutputOpen(false);
       if (lastPriorityFocus && lastPriorityFocus.isConnected) safeFocus(lastPriorityFocus);
       lastPriorityFocus = null;
     }
 
     closeBtn.addEventListener('click', hidePanel);
-    panel.addEventListener('click', (e) => {
-      if (e.target === panel) hidePanel();
-    });
     panel.addEventListener(
       'keydown',
       (e) => {
+        if (!outputFocusLocked) return;
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
@@ -209,40 +209,53 @@
     else node.removeAttribute('lang');
   }
 
-  function showPriorityOutput(text, opts) {
+  function showOutput(text, opts) {
     const panel = ensurePriorityPanel();
     if (!panel) return;
+    const box = document.getElementById('navable-output-box');
     const textarea = document.getElementById('navable-output-text');
     if (!textarea) return;
 
     const message = String(text || '');
     if (!message) {
       panel.style.display = 'none';
+      outputFocusLocked = false;
       emitOutputOpen(false);
       return;
     }
 
-    try {
-      lastPriorityFocus = document.activeElement;
-    } catch (_e) {
-      lastPriorityFocus = null;
+    const shouldFocus = !!(opts && (opts.focus === true || opts.priority === true));
+    if (shouldFocus) {
+      try {
+        lastPriorityFocus = document.activeElement;
+      } catch (_e) {
+        lastPriorityFocus = null;
+      }
     }
 
     panel.style.display = 'block';
-    emitOutputOpen(true);
+    outputFocusLocked = shouldFocus;
+    panel.style.background = shouldFocus ? 'rgba(0,0,0,0.45)' : 'transparent';
+    if (box) {
+      box.style.outline = shouldFocus ? '2px solid rgba(74, 144, 226, 0.9)' : 'none';
+      box.style.outlineOffset = shouldFocus ? '2px' : '0';
+    }
+    emitOutputOpen(shouldFocus);
     textarea.value = message;
     applyLanguageAttributes(panel, opts);
     applyLanguageAttributes(textarea, opts);
 
-    // Put the screen reader/keyboard cursor directly on the output text and select it.
-    setTimeout(() => {
-      safeFocus(textarea);
-      try {
-        textarea.setSelectionRange(0, textarea.value.length);
-      } catch (_e) {
-        // ignore
-      }
-    }, 0);
+    if (shouldFocus) {
+      // Put the screen reader/keyboard cursor directly on the output text and select it.
+      setTimeout(() => {
+        safeFocus(textarea);
+        try {
+          textarea.setSelectionRange(0, textarea.value.length);
+        } catch (_e) {
+          // ignore
+        }
+      }, 0);
+    }
   }
 
   function setAnnounceText(region, mode, text, opts) {
@@ -277,11 +290,12 @@
   window.NavableAnnounce = {
     speak(text, opts) {
       const mode = opts && opts.mode === 'assertive' ? 'assertive' : 'polite';
+      showOutput(text, opts);
       const region = ensureLiveRegion(mode);
       setAnnounceText(region, mode, text, opts);
     },
     output(text, opts) {
-      showPriorityOutput(text, opts);
+      showOutput(text, opts);
     }
   };
 })();
