@@ -24,7 +24,7 @@
               <div>
                 <h1 class="nv-options-title">Navable settings</h1>
                 <p class="nv-options-subtitle">
-                  Tune voice language, continuous listening, and AI summarization—without changing any of Navable’s core behavior.
+                  Tune voice fallback language, continuous listening, and AI features without changing Navable’s navigation behavior.
                 </p>
               </div>
             </div>
@@ -41,7 +41,7 @@
             <h2>Voice settings</h2>
             <div class="nv-form-grid">
               <div class="nv-field">
-                <label class="nv-label" for="language">Language</label>
+                <label class="nv-label" for="language">Fallback language</label>
                 <select id="language" class="nv-select">
                   <option value="en-US">English (United States)</option>
                   <option value="en-GB">English (United Kingdom)</option>
@@ -53,7 +53,7 @@
                 <span>Continuous listening (auto-start on pages)</span>
               </label>
             </div>
-            <p>Navable uses the browser’s built-in Web Speech API. Continuous listening may not be available on all sites.</p>
+            <p>Navable prefers backend multilingual transcription for automatic language detection, and falls back to the browser speech API if the backend is unavailable.</p>
           </div>
         </section>
 
@@ -63,7 +63,7 @@
             <div class="nv-form-grid">
               <label class="nv-inline" for="aiEnabled">
                 <input type="checkbox" id="aiEnabled" />
-                <span>Enable AI summarization</span>
+                <span>Enable AI answers and summarization</span>
               </label>
 
               <div class="nv-field">
@@ -85,7 +85,7 @@
                 <span>Do not summarize on sensitive sites</span>
               </label>
             </div>
-            <p>AI is only called when you explicitly run a “Summarize” command from the popup.</p>
+            <p>AI answers and summaries are on-demand. The AI mode controls page-summary behavior when AI is enabled. Voice transcription may also use the backend when multilingual command recognition is available.</p>
           </div>
         </section>
 
@@ -110,8 +110,8 @@
             <h2>Privacy</h2>
             <p>
               Navable collects a structured snapshot of the current page (titles, headings, links, buttons, and non-sensitive form field
-              labels). It <strong>does not</strong> collect passwords, credit card fields, or raw audio. When AI summarization is enabled,
-              this snapshot may be sent to your configured backend for summarization, and only when you ask Navable to summarize the page.
+              labels). It <strong>does not</strong> collect passwords or credit card fields. Short microphone clips for spoken commands may
+              be sent to your configured backend for transcription, and page snapshots may be sent for summarization when those features are enabled.
             </p>
           </div>
         </section>

@@ -69,12 +69,65 @@ async function openUrl(url) {
   window.location.assign(url);
 }
 
+const i18n = window.NavableI18n || null;
+
+function normalizeOutputLanguage(lang) {
+  if (i18n && typeof i18n.normalizeLanguage === 'function') return i18n.normalizeLanguage(lang);
+  return String(lang || 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+}
+
+function outputLocale(lang) {
+  if (i18n && typeof i18n.localeForLanguage === 'function') return i18n.localeForLanguage(lang);
+  return String(lang || 'en-US');
+}
+
+let newtabVoiceLang = 'en-US';
+let newtabOutputLanguage = 'en';
+
+function currentOutputLanguage() {
+  return normalizeOutputLanguage(newtabOutputLanguage || newtabVoiceLang || 'en-US');
+}
+
+function translate(key, params, lang) {
+  const resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+  if (i18n && typeof i18n.t === 'function') return i18n.t(key, resolved, params);
+  return key;
+}
+
+function ensureOutputLanguageReady(lang) {
+  const resolved = normalizeOutputLanguage(lang || currentOutputLanguage());
+  if (i18n && typeof i18n.ensureLanguage === 'function') return i18n.ensureLanguage(resolved);
+  return Promise.resolve();
+}
+
+function resolveTranscriptLanguage(text) {
+  if (i18n && typeof i18n.resolveOutputLanguage === 'function') {
+    return i18n.resolveOutputLanguage({
+      transcript: text,
+      fallbackLanguage: currentOutputLanguage()
+    });
+  }
+  return currentOutputLanguage();
+}
+
+function setNewtabOutputLanguage(transcript, detectedLanguage) {
+  if (detectedLanguage) {
+    newtabOutputLanguage = normalizeOutputLanguage(detectedLanguage);
+    return newtabOutputLanguage;
+  }
+  newtabOutputLanguage = resolveTranscriptLanguage(transcript);
+  return newtabOutputLanguage;
+}
+
 function announce(text, mode = 'polite') {
   const msg = String(text || '').trim();
   if (!msg) return;
   try {
     if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
-      window.NavableAnnounce.speak(msg, { mode: mode === 'assertive' ? 'assertive' : 'polite' });
+      window.NavableAnnounce.speak(msg, {
+        mode: mode === 'assertive' ? 'assertive' : 'polite',
+        lang: outputLocale(currentOutputLanguage())
+      });
     }
   } catch (_err) {
     // ignore
@@ -146,12 +199,23 @@ function extractOpenSiteQuery(transcript) {
   const s = String(transcript || '').trim().toLowerCase();
   if (!s) return null;
 
-  const ar = s.match(/^ط§ظپطھط­\s+(.+)$/);
-  if (ar && ar[1]) return String(ar[1]).trim();
-  if (!/^(open|navigate to|go to|take me to)\b/.test(s)) return null;
+  const ar = s.match(/^(ط§ظپطھط­|ط§ط°ظ‡ط¨\s+ط¥ظ„ظ‰|ط§ط°ظ‡ط¨\s+ط§ظ„ظ‰|ط±ظˆط­\s+ط¹ظ„ظ‰|ط±ظˆط­\s+ط¥ظ„ظ‰|ط±ظˆط­\s+ط§ظ„ظ‰|ط§ظ†طھظ‚ظ„\s+ط¥ظ„ظ‰|ط§ظ†طھظ‚ظ„\s+ط§ظ„ظ‰)\s+(.+)$/);
+  if (ar && ar[2]) return String(ar[2]).trim();
+
+  const fr = s.match(/^(ouvre|va(?:s)?\s+(?:a|à)|aller?\s+(?:a|à)|visite|lance)\s+(.+)$/);
+  if (fr && fr[2]) {
+    return String(fr[2])
+      .trim()
+      .replace(/^(le|la|les|un|une)\b/, '')
+      .trim()
+      .replace(/^(site|page|onglet)\b/, '')
+      .trim();
+  }
+
+  if (!/^(open|navigate to|go to|take me to|visit|bring up|launch)\b/.test(s)) return null;
 
   const q = s
-    .replace(/^(open(\s+up)?|navigate to|go to|take me to)\b/, '')
+    .replace(/^(open(\s+up)?|navigate to|go to|take me to|visit|bring up|launch)\b/, '')
     .trim()
     .replace(/^(me|for me)\b/, '')
     .trim()
@@ -184,16 +248,35 @@ function extractCompoundSiteSearchQuery(transcript) {
   return `search ${searchQuery} on ${siteQuery}`;
 }
 
+function extractSearchQuery(transcript) {
+  const s = String(transcript || '').trim().toLowerCase();
+  if (!s) return null;
+
+  const en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+  if (en && en[3]) return `search for ${String(en[3]).trim()}`;
+
+  const fr = s.match(/^(cherche|recherche)\s+(.+)$/);
+  if (fr && fr[2]) return `search for ${String(fr[2]).trim()}`;
+
+  const ar = s.match(/^(ط§ط¨ط­ط«|ظپطھط´)(\s+ط¹ظ†)?\s+(.+)$/);
+  if (ar && ar[3]) return `search for ${String(ar[3]).trim()}`;
+
+  return null;
+}
+
 function parseVoiceCommand(transcript) {
   const spokenText = String(transcript || '').trim();
   const low = spokenText.toLowerCase();
   if (!low) return null;
 
-  if (/^(help|commands|show commands|what can i say\??)$/.test(low) || /ظ…ط³ط§ط¹ط¯ط©/.test(low)) {
+  if (
+    /^(help|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(low) ||
+    /ظ…ط³ط§ط¹ط¯ط©/.test(low)
+  ) {
     return { type: 'help' };
   }
 
-  if (/^(stop|stop listening|cancel)$/.test(low)) {
+  if (/^(stop|stop listening|cancel|arr[êe]te|stoppe|طھظˆظ‚ظپ|ظ‚ظپ)$/.test(low)) {
     return { type: 'stop' };
   }
 
@@ -202,10 +285,8 @@ function parseVoiceCommand(transcript) {
     return { type: 'open_site', query: compoundSiteSearchQuery };
   }
 
-  const searchMatch = low.match(/^(search|google)\s+(for\s+)?(.+)$/);
-  if (searchMatch && searchMatch[3]) {
-    return { type: 'open_site', query: spokenText };
-  }
+  const searchQuery = extractSearchQuery(spokenText);
+  if (searchQuery) return { type: 'open_site', query: searchQuery };
 
   const q = extractOpenSiteQuery(spokenText);
   if (q) return { type: 'open_site', query: q };
@@ -218,31 +299,98 @@ async function openSiteFromVoice(query) {
   if (!q) return;
 
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'navable:openSite', query: q, newTab: false });
-    if (res?.ok) return;
-    setNewtabMicMessage(res?.error || 'Could not open that website.', 'assertive');
-    return;
+    if (chrome?.runtime?.sendMessage) {
+      const res = await chrome.runtime.sendMessage({
+        type: 'navable:openSite',
+        query: q,
+        newTab: false,
+        outputLanguage: currentOutputLanguage()
+      });
+      if (res?.ok) return;
+      setNewtabMicMessage(res?.error || translate('open_site_failed'), 'assertive');
+      return;
+    }
   } catch (_err) {
     // fall through
   }
 
   const url = resolveQueryToUrl(q);
   if (!url) {
-    setNewtabMicMessage('Missing website name or URL.', 'assertive');
+    setNewtabMicMessage(translate('missing_url'), 'assertive');
     return;
   }
   await openUrl(url);
 }
 
-async function handleNewtabVoiceCommand(text) {
+async function assistantQuestionFromVoice(questionText) {
+  const q = String(questionText || '').trim();
+  if (!q) return false;
+
+  await ensureOutputLanguageReady();
+  setNewtabMicMessage(translate('answering_question'), 'polite');
+
+  if (chrome?.runtime?.sendMessage) {
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'navable:assistant',
+        input: q,
+        outputLanguage: currentOutputLanguage(),
+        pageContext: false,
+        autoExecutePlan: false
+      });
+      if (res?.ok && res.speech) {
+        setNewtabMicMessage(String(res.speech), 'assertive');
+        return true;
+      }
+      if (res?.error) {
+        console.warn('[Navable] newtab assistant background request returned error', res.error);
+      }
+    } catch (err) {
+      console.warn('[Navable] newtab answer failed', err);
+    }
+  }
+
+  try {
+    const response = await window.fetch('http://localhost:3000/api/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: q,
+        outputLanguage: currentOutputLanguage()
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data?.speech) {
+      setNewtabMicMessage(String(data.speech), 'assertive');
+      return true;
+    }
+    if (data?.error) {
+      setNewtabMicMessage(String(data.error), 'assertive');
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Navable] newtab direct assistant request failed', err);
+  }
+
+  setNewtabMicMessage(translate('answer_failed'), 'assertive');
+  return true;
+}
+
+async function handleNewtabVoiceCommand(text, detectedLanguage) {
+  setNewtabOutputLanguage(text, detectedLanguage);
+  const languageReady = ensureOutputLanguageReady();
   const cmd = parseVoiceCommand(text);
+
   if (!cmd) {
-    setNewtabMicMessage('I did not catch that. Try: "Open YouTube".', 'polite');
+    if (await assistantQuestionFromVoice(text)) return;
+    await languageReady;
+    setNewtabMicMessage(translate('newtab_try_open'), 'polite');
     return;
   }
 
   if (cmd.type === 'help') {
-    setNewtabMicMessage('Try: "Open YouTube", "Open example dot com", "Search for weather".', 'assertive');
+    await languageReady;
+    setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
     return;
   }
 
@@ -253,9 +401,14 @@ async function handleNewtabVoiceCommand(text) {
   }
 
   if (cmd.type === 'open_site') {
-    setNewtabMicMessage(`Opening ${cmd.query}...`, 'assertive');
+    await languageReady;
+    setNewtabMicMessage(translate('opening_site', { value: cmd.query }), 'assertive');
     await openSiteFromVoice(cmd.query);
   }
+}
+
+async function handleNewtabTranscript(transcript, detectedLanguage) {
+  return handleNewtabVoiceCommand(transcript, detectedLanguage);
 }
 
 function wireNewtabVoice() {
@@ -298,7 +451,7 @@ function wireNewtabVoice() {
         updateNewtabMicUiFromStatus(lastVoiceStatus);
       }
       if (msg && (msg.type === 'VOICE_COMMAND' || msg.type === 'navable:voiceTranscript')) {
-        handleNewtabVoiceCommand(msg.text || '').catch(() => {});
+        handleNewtabVoiceCommand(msg.text || '', msg.language || '').catch(() => {});
       }
     });
   }
@@ -353,3 +506,8 @@ function wireNewtab() {
 }
 
 document.addEventListener('DOMContentLoaded', wireNewtab);
+
+window.NavableNewtabTools = {
+  handleTranscript: handleNewtabTranscript,
+  assistantQuestionFromVoice
+};
