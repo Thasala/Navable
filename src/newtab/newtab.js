@@ -148,9 +148,9 @@ function parseVoiceCommand(transcript) {
   return null;
 }
 
+let newtabVoiceReady = false;
 let newtabRecognizer = null;
 let newtabWantsListening = false;
-let newtabVoiceReady = false;
 let newtabVoiceLang = 'en-US';
 
 function refreshNewtabMicUi() {

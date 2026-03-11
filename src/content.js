@@ -107,12 +107,39 @@
         return true;
       }
       if (msg && msg.type === 'navable:getSpeechStatus') {
-        try {
-          var supports = !!(speech && speech.supportsRecognition && speech.supportsRecognition());
-          sendResponse && sendResponse({ ok: true, supports: supports, listening: !!listening });
-        } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'status failed') });
+        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+          sendResponse && sendResponse({ ok: false, error: 'runtime unavailable' });
+          return true;
         }
+        chrome.runtime.sendMessage({ type: 'voice:getStatus' }).then(function (res) {
+          sendResponse && sendResponse(res || { ok: false, error: 'status unavailable' });
+        }).catch(function (err) {
+          sendResponse && sendResponse({ ok: false, error: String(err || 'status failed') });
+        });
+        return true;
+      }
+      if (msg && msg.type === 'navable:voiceTranscript') {
+        try {
+          handleTranscript(msg.text || '');
+          sendResponse && sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse && sendResponse({ ok: false, error: String(err || 'transcript failed') });
+        }
+        return true;
+      }
+      if (msg && msg.type === 'speech') {
+        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+          sendResponse && sendResponse({ ok: false, error: 'runtime unavailable' });
+          return true;
+        }
+        var actionType = 'voice:toggle';
+        if (msg.action === 'start') actionType = 'voice:start';
+        if (msg.action === 'stop') actionType = 'voice:stop';
+        chrome.runtime.sendMessage({ type: actionType }).then(function (res2) {
+          sendResponse && sendResponse(res2 || { ok: false, error: 'voice action failed' });
+        }).catch(function (err2) {
+          sendResponse && sendResponse({ ok: false, error: String(err2 || 'voice action failed') });
+        });
         return true;
       }
     });
@@ -580,9 +607,11 @@
   // Voice input/output (prototype)
   // -------------------------------
 
+  // Note: microphone + speech recognition run in the extension (offscreen document),
+  // not in the webpage/content-script context.
   var speech = window.NavableSpeech || {};
   var recognizer = null;
-  var listening = false; // desired state for this tab (when active)
+  var listening = false; // legacy per-tab state (kept inert; voice runs in extension)
   var manualListening = null; // null = follow autostart; true = force on; false = force off
   var settingsLoaded = false;
   var lastSpoken = '';
@@ -655,7 +684,8 @@
   }
 
   function isVoiceSupported() {
-    return !!(speech && speech.supportsRecognition && speech.supportsRecognition());
+    // Voice capture is handled in the extension (offscreen document), not the webpage.
+    return false;
   }
 
   function isPageActiveForVoice() {
@@ -669,20 +699,7 @@
   }
 
   function computeShouldListen() {
-    if (outputOpen) return false;
-    if (!isPageActiveForVoice()) return false;
-    if (manualListening === true) return true;
-    if (manualListening === false) return false;
-    // Avoid auto-starting before we've checked stored settings.
-    if (
-      !settingsLoaded &&
-      typeof chrome !== 'undefined' &&
-      chrome.storage &&
-      chrome.storage.sync
-    ) {
-      return false;
-    }
-    return !!(settings && settings.autostart);
+    return false;
   }
 
   function ensureRecognizer() {
@@ -771,9 +788,13 @@
   }
 
   function toggleListening() {
-    var currentlyOn = computeShouldListen();
-    manualListening = currentlyOn ? false : true;
-    syncListening({ announce: true });
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+      speakTransient('Voice controls are unavailable on this page.', 2500);
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'voice:toggle' }).catch(function () {
+      speakTransient('Voice action failed. Open Navable popup and try again.', 3000);
+    });
   }
 
   // Pause listening while the Navable output overlay is open to avoid SR/TTS feedback loops.
@@ -1246,17 +1267,6 @@
     if (e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) { toggleListening(); }
   }, { capture: true });
 
-	  // Allow popup/background to toggle listening
-	  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-	    chrome.runtime.onMessage.addListener((msg) => {
-	      if (msg && msg.type === 'speech') {
-	        if (msg.action === 'toggle') toggleListening();
-	        if (msg.action === 'start') { manualListening = true; syncListening({ announce: true }); }
-	        if (msg.action === 'stop') { manualListening = false; syncListening({ announce: true }); }
-	      }
-	    });
-	  }
-
 	  // Settings: load and react to changes
 	  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
 	    try {
@@ -1264,20 +1274,14 @@
 	        var s = res && res.navable_settings ? res.navable_settings : settings;
 	        var autostart = typeof s.autostart === 'boolean' ? s.autostart : true;
 	        settings = { language: s.language || 'en-US', overlay: !!s.overlay, autostart: autostart };
-	        settingsLoaded = true;
-	        recogLang = settings.language || 'en-US';
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
-	        syncListening({ announce: false });
 	      });
 	      chrome.storage.onChanged && chrome.storage.onChanged.addListener((changes, area) => {
 	        if (area !== 'sync' || !changes.navable_settings) return;
 	        var s2 = changes.navable_settings.newValue || settings;
 	        var autostart2 = typeof s2.autostart === 'boolean' ? s2.autostart : true;
 	        settings = { language: s2.language || 'en-US', overlay: !!s2.overlay, autostart: autostart2 };
-	        settingsLoaded = true;
-	        recogLang = settings.language || 'en-US';
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
-	        syncListening({ announce: false });
 	      });
 	    } catch (_e) { /* storage not available in tests */ }
 	  }
