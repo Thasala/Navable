@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Navable Setup</title>
+    <link rel="stylesheet" href="../common/ui.css" />
+    <link rel="stylesheet" href="welcome.css" />
+  </head>
+  <body class="nv-ui nv-onboarding">
+    <main class="nv-container">
+      <section class="nv-card nv-onboarding-card" aria-labelledby="welcomeTitle">
+        <div class="nv-card-inner">
+          <h1 id="welcomeTitle">Welcome to Navable</h1>
+          <p>Enable microphone once to use voice commands across websites without repeated permission prompts.</p>
+
+          <ol class="nv-onboarding-steps" aria-label="Setup steps">
+            <li>Press the microphone setup button.</li>
+            <li>Approve microphone access in the browser prompt.</li>
+            <li>Use Navable voice commands on any webpage.</li>
+          </ol>
+
+          <div class="nv-onboarding-actions">
+            <button id="btnEnableMic" class="nv-btn nv-btn--primary" type="button">Enable microphone</button>
+            <button id="btnStartVoice" class="nv-btn" type="button">Start listening</button>
+            <a class="nv-btn nv-btn--ghost" href="../options/index.html" target="_blank" rel="noreferrer">Open settings</a>
+          </div>
+
+          <p id="statusText" class="nv-onboarding-status" role="status" aria-live="polite">
+            Checking voice status…
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script src="welcome.js"></script>
+  </body>
+</html>
