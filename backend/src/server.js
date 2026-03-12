@@ -232,12 +232,15 @@ function detectTranscriptLanguage(text) {
   const lower = raw.toLowerCase();
   let frenchScore = 0;
   let englishScore = 0;
+  let arabiziScore = 0;
 
   if (/[àâçéèêëîïôûùüÿœæ]/i.test(raw)) frenchScore += 3;
   frenchScore += (lower.match(/\b(bonjour|salut|merci|ouvre|ouvrir|recherche|cherche|resume|résume|résumé|decris|décris|titre|page|lien|bouton|suivant|precedent|précédent|aide|ecoute|écoute)\b/g) || []).length;
   englishScore += (lower.match(/\b(open|search|scroll|summary|summarize|describe|title|button|link|page|help|listen|stop|start|next|previous|focus|activate)\b/g) || []).length;
+  arabiziScore += (lower.match(/\b(ifta[h7]|efta[h7]|roo[h7]|rou[h7]|wayn|wein|shu|sho|khallas|waq[aei]f|inzil|inzal|itla[3a]|tal[ae]3|dawwer|dowwer|mosa[ae]da)\b/g) || []).length;
 
   if (frenchScore > englishScore && frenchScore > 0) return 'fr';
+  if (arabiziScore > 0) return 'ar';
   if (englishScore > frenchScore && englishScore > 0) return 'en';
   return '';
 }
@@ -313,6 +316,7 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
     '- Optionally propose a deterministic plan for the extension to execute via existing tools.',
     '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, non-English phrases like Arabic for “what is this page”). Infer intent to orient/summarize even without the word “summary.”',
     '- The command may be in any language; interpret intent from context and pageStructure.',
+    '- Arabic may be Modern Standard Arabic, dialectal Arabic, or Arabic-English code switching. Treat colloquial Arabic as valid input.',
     '',
     'Important rules:',
     '- Only use the information provided in pageStructure and command; do not hallucinate hidden content.',
@@ -382,6 +386,7 @@ async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, o
           'You are a concise voice-first assistant for a browser extension called Navable.',
           `Answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user explicitly requests another language.`,
           'The user asked a general informational question.',
+          'The spoken question may be colloquial Arabic, dialectal Arabic, informal English, or Arabic-English code switching.',
           'Reply with 1 to 3 short sentences that are useful when read aloud.',
           'Do not use markdown, lists, headings, or emojis.',
           'If the question is ambiguous, ask one short clarifying question instead of guessing.',
@@ -432,7 +437,7 @@ function isSummaryIntentText(text) {
     /ما هذه الصفحة/.test(t) ||
     /ما هو محتوى الصفحة/.test(t) ||
     /ملخص/.test(t) ||
-    /وصف الصفحة/.test(t)
+    /وصف الصفحة|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(t)
   );
 }
 
@@ -446,7 +451,7 @@ function isPageContextIntentText(text) {
     /\b(cette page|page|ici|site|site web|titre|section|lien|bouton|champ|selection|focus)\b/.test(t) ||
     /\b(fais defiler|lis|ouvre|clique|active|va|suivant|precedent|précédent|ou suis-je|où suis-je|que puis-je faire ici)\b/.test(t) ||
     /(هذه الصفحة|الصفحة|هنا|الموقع|العنوان|القسم|الرابط|الزر|الحقل|التحديد|العنصر المحدد)/.test(t) ||
-    /(مرر|اقر[أا]|افتح|اضغط|فعّل|فعل|انتقل|التالي|السابق|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا)/.test(t)
+    /(مرر|اقر[أا]|افتح|اضغط|فعّل|فعل|انتقل|التالي|السابق|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|وين انا|على شو انا)/.test(t)
   );
 }
 
@@ -461,7 +466,7 @@ function isGeneralKnowledgeQuestionText(text) {
     /^(qui|que|qu[' ]?est[- ]?ce que|qu[' ]?est-ce que|quand|où|ou|pourquoi|comment)\b/.test(t) ||
     /^(explique|definis|définis|compare|parle-moi de|dis-moi)\b/.test(t) ||
     /^(من|ما|متى|أين|اين|لماذا|كيف)\b/.test(t) ||
-    /^(اشرح|عر[ّ]ف|عرف|قارن|قل لي عن)\b/.test(t)
+    /^(اشرح|عر[ّ]ف|عرف|قارن|قل لي عن|احكيلي عن|خبرني عن)\b/.test(t)
   );
 }
 

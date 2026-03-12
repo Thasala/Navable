@@ -96,7 +96,34 @@ function outputLocale(lang) {
   return String(lang || 'en-US');
 }
 
+function normalizeLanguageMode(mode, fallbackLanguage) {
+  if (i18n && typeof i18n.normalizeLanguageMode === 'function') {
+    return i18n.normalizeLanguageMode(mode, fallbackLanguage);
+  }
+  if (!String(mode || '').trim()) return 'auto';
+  const normalized = normalizeOutputLanguage(mode || fallbackLanguage || 'en-US');
+  return normalized === 'ar' || normalized === 'en' ? normalized : 'auto';
+}
+
+function currentLanguageMode() {
+  return normalizeLanguageMode(newtabLanguageMode, newtabConfiguredVoiceLang || 'en-US');
+}
+
+function lockedOutputLanguage() {
+  const mode = currentLanguageMode();
+  return mode === 'auto' ? '' : mode;
+}
+
+function recognitionLocalesForLanguage(language, preferredLocale) {
+  if (i18n && typeof i18n.recognitionLocalesForLanguage === 'function') {
+    return i18n.recognitionLocalesForLanguage(language, preferredLocale);
+  }
+  return [newtabRecognitionLocaleFor(preferredLocale || outputLocale(language))];
+}
+
 function currentOutputLanguage() {
+  const locked = lockedOutputLanguage();
+  if (locked) return locked;
   return normalizeOutputLanguage(newtabOutputLanguage || newtabVoiceLang || 'en-US');
 }
 
@@ -123,6 +150,11 @@ function resolveTranscriptLanguage(text) {
 }
 
 function setNewtabOutputLanguage(transcript, detectedLanguage) {
+  const locked = lockedOutputLanguage();
+  if (locked) {
+    newtabOutputLanguage = locked;
+    return newtabOutputLanguage;
+  }
   if (detectedLanguage) {
     newtabOutputLanguage = normalizeOutputLanguage(detectedLanguage);
     return newtabOutputLanguage;
@@ -132,6 +164,8 @@ function setNewtabOutputLanguage(transcript, detectedLanguage) {
 }
 
 function detectNewtabRecognitionLanguage(transcript, detectedLanguage) {
+  const locked = lockedOutputLanguage();
+  if (locked) return locked;
   if (detectedLanguage) return normalizeOutputLanguage(detectedLanguage);
   if (i18n && typeof i18n.detectLanguage === 'function') {
     return i18n.detectLanguage(transcript, normalizeOutputLanguage(newtabVoiceLang || 'en-US'));
@@ -149,6 +183,7 @@ function newtabRecognitionLocaleFor(lang) {
 function newtabRecognitionCandidateLocales() {
   const seen = new Set();
   const list = [];
+  const mode = currentLanguageMode();
 
   function pushLocale(locale) {
     const normalized = newtabRecognitionLocaleFor(locale);
@@ -158,12 +193,26 @@ function newtabRecognitionCandidateLocales() {
     list.push(normalized);
   }
 
+  function pushLanguage(language, preferredLocale) {
+    recognitionLocalesForLanguage(language, preferredLocale).forEach(pushLocale);
+  }
+
   pushLocale(newtabVoiceLang || 'en-US');
   pushLocale(newtabConfiguredVoiceLang || 'en-US');
-  pushLocale(currentOutputLanguage());
-  pushLocale('ar-SA');
-  pushLocale('fr-FR');
-  pushLocale('en-US');
+
+  if (mode === 'auto') {
+    const primary = normalizeOutputLanguage(newtabVoiceLang || currentOutputLanguage() || newtabConfiguredVoiceLang || 'en-US');
+    const secondary = primary === 'ar' ? 'en' : 'ar';
+    pushLanguage(
+      secondary,
+      secondary === normalizeOutputLanguage(newtabConfiguredVoiceLang || '') ? newtabConfiguredVoiceLang : outputLocale(secondary)
+    );
+    pushLanguage(primary, newtabConfiguredVoiceLang || outputLocale(primary));
+    pushLanguage(currentOutputLanguage(), newtabVoiceLang || newtabConfiguredVoiceLang || 'en-US');
+  } else {
+    pushLanguage(mode, newtabConfiguredVoiceLang || outputLocale(mode));
+  }
+
   return list;
 }
 
@@ -187,7 +236,7 @@ function extractOpenSiteQuery(transcript) {
   if (!s) return null;
 
   // Arabic website intents.
-  const ar = s.match(/^(افتح|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى)\s+(.+)$/);
+  const ar = s.match(/^(افتح(?:\s+لي)?|خذني\s+على|خذني\s+إلى|خذني\s+الى|وديني\s+على|وديني\s+إلى|وديني\s+الى|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى|خليني\s+أروح\s+على|خليني\s+اروح\s+على|خلينا\s+نروح\s+على)\s+(.+)$/);
   if (ar && ar[2]) return String(ar[2]).trim();
 
   // French website intents.
@@ -202,10 +251,10 @@ function extractOpenSiteQuery(transcript) {
   }
 
   // English: flexible website intents.
-  if (!/^(open|navigate to|go to|take me to|visit|bring up|launch)\b/.test(s)) return null;
+  if (!/^(open|open up|navigate to|go to|take me to|visit|bring up|launch|pull up)\b/.test(s)) return null;
 
   const q = s
-    .replace(/^(open(\s+up)?|navigate to|go to|take me to|visit|bring up|launch)\b/, '')
+    .replace(/^(open(\s+up)?|navigate to|go to|take me to|visit|bring up|launch|pull up)\b/, '')
     .trim()
     .replace(/^(me|for me)\b/, '')
     .trim()
@@ -225,13 +274,13 @@ function extractSearchQuery(transcript) {
   const s = String(transcript || '').trim().toLowerCase();
   if (!s) return null;
 
-  const en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+  const en = s.match(/^(search|google|look up|find|search up|check)\s+(for\s+)?(.+)$/);
   if (en && en[3]) return `search for ${String(en[3]).trim()}`;
 
   const fr = s.match(/^(cherche|recherche)\s+(.+)$/);
   if (fr && fr[2]) return `search for ${String(fr[2]).trim()}`;
 
-  const ar = s.match(/^(ابحث|فتش)(\s+عن)?\s+(.+)$/);
+  const ar = s.match(/^(ابحث|فتش|دو[ّو]?ر|طل[ّ]?ع)(\s+عن)?\s+(.+)$/);
   if (ar && ar[3]) return `search for ${String(ar[3]).trim()}`;
 
   return null;
@@ -243,13 +292,13 @@ function parseVoiceCommand(transcript) {
   if (!low) return null;
 
   if (
-    /^(help|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(low) ||
-    /مساعدة/.test(low)
+    /^(help|commands|show commands|what can i say\??|what can you do\??|aide|montre les commandes|que puis-je dire\??)$/.test(low) ||
+    /مساعدة|شو الاوامر|ايش الاوامر|شو بقدر احكي|ايش بقدر احكي/.test(low)
   ) {
     return { type: 'help' };
   }
 
-  if (/^(stop|stop listening|cancel|arr[êe]te|stoppe|توقف|قف)$/.test(low)) {
+  if (/^(stop|stop listening|cancel|arr[êe]te|stoppe|توقف|قف|وقف|خلاص|اسكت)$/.test(low)) {
     return { type: 'stop' };
   }
 
@@ -267,6 +316,7 @@ let newtabWantsListening = false;
 let newtabVoiceReady = false;
 let newtabVoiceLang = 'en-US';
 let newtabConfiguredVoiceLang = 'en-US';
+let newtabLanguageMode = 'auto';
 let newtabOutputLanguage = 'en';
 let newtabRecognizerRefreshTimer = null;
 let newtabLastRecognitionResultAt = 0;
@@ -377,13 +427,16 @@ function setNewtabMicMessage(text, mode = 'polite') {
 async function loadNewtabVoiceSettings() {
   return new Promise((resolve) => {
     try {
-      if (!chrome?.storage?.sync?.get) return resolve({ language: 'en-US' });
+      if (!chrome?.storage?.sync?.get) return resolve({ language: 'en-US', languageMode: 'auto' });
       chrome.storage.sync.get({ navable_settings: {} }, (res) => {
         const s = (res && res.navable_settings) || {};
-        resolve({ language: s.language || 'en-US' });
+        resolve({
+          language: s.language || 'en-US',
+          languageMode: normalizeLanguageMode(s.languageMode, s.language || 'en-US')
+        });
       });
     } catch (_err) {
-      resolve({ language: 'en-US' });
+      resolve({ language: 'en-US', languageMode: 'auto' });
     }
   });
 }
@@ -391,8 +444,15 @@ async function loadNewtabVoiceSettings() {
 async function ensureNewtabRecognizer() {
   const settings = await loadNewtabVoiceSettings();
   const previousConfiguredVoiceLang = newtabConfiguredVoiceLang;
-  const previousConfiguredOutputLanguage = normalizeOutputLanguage(previousConfiguredVoiceLang || 'en-US');
-  newtabConfiguredVoiceLang = newtabRecognitionLocaleFor(settings.language || 'en-US');
+  const previousConfiguredOutputLanguage = lockedOutputLanguage() || normalizeOutputLanguage(previousConfiguredVoiceLang || 'en-US');
+  newtabLanguageMode = normalizeLanguageMode(settings.languageMode, settings.language || 'en-US');
+  newtabConfiguredVoiceLang = (() => {
+    const configured = newtabRecognitionLocaleFor(settings.language || 'en-US');
+    if (newtabLanguageMode === 'auto') return configured;
+    if (normalizeOutputLanguage(configured) === newtabLanguageMode) return configured;
+    const candidates = recognitionLocalesForLanguage(newtabLanguageMode, configured);
+    return candidates[0] || outputLocale(newtabLanguageMode);
+  })();
   if (
     !newtabVoiceLang ||
     String(newtabVoiceLang).toLowerCase() === String(previousConfiguredVoiceLang || '').toLowerCase() ||
@@ -405,7 +465,7 @@ async function ensureNewtabRecognizer() {
     normalizeOutputLanguage(newtabOutputLanguage) === previousConfiguredOutputLanguage ||
     !newtabWantsListening
   ) {
-    newtabOutputLanguage = normalizeOutputLanguage(newtabVoiceLang);
+    newtabOutputLanguage = lockedOutputLanguage() || normalizeOutputLanguage(newtabVoiceLang);
   }
 
   if (newtabRecognizer) return newtabRecognizer;
@@ -502,7 +562,12 @@ function refreshNewtabRecognizer(opts = {}) {
 
 function maybeRefreshNewtabRecognizerLanguage(transcript, detectedLanguage, provider) {
   if (String(provider || '').toLowerCase() !== 'native') return;
-  const nextVoiceLang = newtabRecognitionLocaleFor(detectNewtabRecognitionLanguage(transcript, detectedLanguage));
+  const nextLanguage = detectNewtabRecognitionLanguage(transcript, detectedLanguage);
+  const nextVoiceLang = recognitionLocalesForLanguage(
+    nextLanguage,
+    newtabConfiguredVoiceLang || newtabVoiceLang || outputLocale(nextLanguage)
+  )[0] || newtabRecognitionLocaleFor(nextLanguage);
+  if (currentLanguageMode() !== 'auto' && normalizeOutputLanguage(nextVoiceLang) !== currentLanguageMode()) return;
   if (!nextVoiceLang) return;
   if (String(nextVoiceLang).toLowerCase() === String(newtabVoiceLang || '').toLowerCase()) return;
   newtabVoiceLang = nextVoiceLang;

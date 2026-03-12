@@ -186,6 +186,23 @@ function normalizeOutputLanguage(lang) {
   }
 }
 
+function normalizeLanguageMode(mode, fallbackLanguage) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'auto') return 'auto';
+  if (!raw) return 'auto';
+  const normalized = normalizeOutputLanguage(raw || fallbackLanguage || 'en-US');
+  if (normalized === 'ar' || normalized === 'en') return normalized;
+  return 'auto';
+}
+
+function configuredOutputLanguage(settings = {}, requestedOutputLanguage = '') {
+  const rawRequested = String(requestedOutputLanguage || '').trim();
+  if (rawRequested && rawRequested.toLowerCase() !== 'auto') return normalizeOutputLanguage(rawRequested);
+  const mode = normalizeLanguageMode(settings.languageMode, settings.language || 'en-US');
+  if (mode !== 'auto') return mode;
+  return normalizeOutputLanguage(settings.language || 'en-US');
+}
+
 function canonicalizeLocale(lang) {
   const raw = String(lang || '').trim().replace(/_/g, '-');
   if (!raw) return '';
@@ -323,7 +340,8 @@ const INTENT_STOPWORDS = new Set([
   'ouvre', 'lis', 'montre', 'titre', 'lien', 'bouton', 'champ',
   'من', 'على', 'في', 'إلى', 'الى', 'هذا', 'هذه', 'ذلك', 'تلك', 'لي', 'لو', 'ممكن',
   'افتح', 'اذهب', 'روح', 'انتقل', 'اقرأ', 'مرر', 'انزل', 'اطلع', 'العنوان', 'الرابط',
-  'الزر', 'الصفحة', 'القسم', 'التالي', 'السابق'
+  'الزر', 'الصفحة', 'القسم', 'التالي', 'السابق', 'شو', 'ايش', 'وين', 'على', 'وديني', 'خذني',
+  'خلي', 'خليني', 'خلينا', 'لفوق', 'لتحت'
 ]);
 
 function hasIntent(text, patterns) {
@@ -377,10 +395,10 @@ function chooseIntentTarget(text, structure) {
   if (!tokens.length || !structure) return null;
 
   let targetTypes = ['link', 'button', 'heading', 'input'];
-  if (/\b(button|press|tap|activate|bouton)\b|زر/.test(normalized)) targetTypes = ['button', 'link'];
-  else if (/\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح/.test(normalized)) targetTypes = ['link', 'heading', 'button'];
-  else if (/\b(section|heading|part|titre)\b|عنوان|قسم/.test(normalized)) targetTypes = ['heading', 'link'];
-  else if (/\b(field|input|box|search|champ)\b|حقل|بحث/.test(normalized)) targetTypes = ['input', 'button', 'link'];
+  if (/\b(button|press|tap|activate|bouton)\b|زر|اضغط|فع[ّ]?ل/.test(normalized)) targetTypes = ['button', 'link'];
+  else if (/\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح|وديني|خذني|روح/.test(normalized)) targetTypes = ['link', 'heading', 'button'];
+  else if (/\b(section|heading|part|titre)\b|عنوان|قسم|جزء/.test(normalized)) targetTypes = ['heading', 'link'];
+  else if (/\b(field|input|box|search|champ)\b|حقل|بحث|ابحث|دو[ّو]?ر/.test(normalized)) targetTypes = ['input', 'button', 'link'];
 
   const candidates = collectIntentCandidates(structure, targetTypes);
   let best = null;
@@ -401,7 +419,8 @@ function isTargetSelectionIntent(text) {
     /\bouvre\b/, /\bva(?:s)?\s+à\b/, /\bva(?:s)?\s+a\b/, /\bmontre(?:-moi)?\b/,
     /\bclique\b/, /\bactive\b/, /\bvisite\b/, /\blance\b/,
     /افتح/, /اذهب\s+إلى/, /اذهب\s+الى/, /روح\s+على/, /روح\s+إلى/, /روح\s+الى/,
-    /انتقل\s+إلى/, /انتقل\s+الى/, /خذني\s+إلى/, /خذني\s+الى/, /اضغط/, /فعّل|فعل/
+    /انتقل\s+إلى/, /انتقل\s+الى/, /خذني\s+إلى/, /خذني\s+الى/, /خذني\s+على/, /وديني\s+على/,
+    /وديني\s+إلى/, /وديني\s+الى/, /خليني\s+أروح/, /خليني\s+اروح/, /خلينا\s+نروح/, /اضغط/, /فعّل|فعل/
   ]);
 }
 
@@ -423,28 +442,28 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     /\bd[ée]cri(s|re)\b/.test(text) ||
     /où suis[- ]?je|ou suis[- ]?je/.test(text) ||
     /que puis[- ]je faire ici/.test(text) ||
-    /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا/.test(text)
+    /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(text)
   ) {
     description = orientation;
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll up\b/, /\bgo up\b/, /\bmove up\b/, /\bback up\b/, /\bup a bit\b/, /\bhigher\b/,
     /\bmonte\b/, /\bplus haut\b/, /\bfais d[ée]filer vers le haut\b/,
-    /اطلع|اصعد|مرر.*(للأعلى|للاعلى)|فوق/
+    /اطلع|طلع|اصعد|مرر.*(للأعلى|للاعلى|لفوق)|لفوق|فوق شوي|كم[ّ]?ل لفوق/
   ])) {
     steps.push({ action: 'scroll', direction: 'up' });
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll\b/, /\bgo down\b/, /\bmove down\b/, /\blower\b/, /\bdown a bit\b/, /\bshow me more\b/, /\bkeep going\b/,
     /\bdescend(s)?\b/, /\bplus bas\b/, /\bfais d[ée]filer vers le bas\b/,
-    /انزل|نز[ّل]|\bمرر.*(للأسفل|للاسفل)\b|تحت/
+    /انزل|نز[ّل]|\bمرر.*(للأسفل|للاسفل|لتحت)\b|لتحت|تحت شوي|كم[ّ]?ل لتحت/
   ])) {
     steps.push({ action: 'scroll', direction: 'down' });
     matched = true;
   } else if (hasIntent(text, [
     /\bread title\b/, /\bpage title\b/, /\bwhat('?s| is) the title\b/, /\btell me the title\b/,
     /\blis le titre\b/, /\bquel est le titre\b/,
-    /اقر[أا] العنوان|ما عنوان الصفحة|ما هو عنوان الصفحة/
+    /اقر[أا] العنوان|ما عنوان الصفحة|ما هو عنوان الصفحة|شو عنوان الصفحة|ايش عنوان الصفحة/
   ])) {
     steps.push({ action: 'read_title' });
     matched = true;
@@ -458,14 +477,14 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
   } else if (hasIntent(text, [
     /\bread heading\b/, /\bcurrent heading\b/, /\bwhat heading am i on\b/,
     /\blis le titre\b/, /\bquel titre\b/, /\bsection actuelle\b/,
-    /اقر[أا] العنوان|ما العنوان الحالي|ما القسم الحالي/
+    /اقر[أا] العنوان|ما العنوان الحالي|ما القسم الحالي|شو العنوان الحالي|ايش العنوان الحالي/
   ])) {
     steps.push({ action: 'read_heading', n: 1 });
     matched = true;
   } else if (hasIntent(text, [
     /\bwhat('?s| is) focused\b/, /\bwhat am i on\b/, /\bread current\b/, /\bread focused\b/,
     /\bsur quoi suis[- ]je\b/, /\blis l[' ]?[ée]l[ée]ment courant\b/,
-    /ما العنصر المحدد|على ماذا انا|ما أنا عليه|ما انا عليه/
+    /ما العنصر المحدد|على ماذا انا|ما أنا عليه|ما انا عليه|شو العنصر الحالي|ايش العنصر الحالي|وين انا واقف|على شو انا/
   ])) {
     steps.push({ action: 'read_focused' });
     matched = true;
@@ -583,7 +602,7 @@ function normalizeAssistantResult(data) {
 
 async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   const settings = options.settings || await loadSettings();
-  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
+  const outputLanguage = configuredOutputLanguage(settings, requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const text = String(input || '').trim();
   const sourceTabId = options.sourceTabId || null;
@@ -631,7 +650,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
 
 async function runPlanner(command, requestedOutputLanguage, preferIntentFallback, options = {}) {
   const settings = await loadSettings();
-  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
+  const outputLanguage = configuredOutputLanguage(settings, requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const sourceTabId = options.sourceTabId || null;
   let structure = options.pageStructure || null;
