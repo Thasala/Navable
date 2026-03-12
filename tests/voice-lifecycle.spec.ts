@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('spoken summary output stays visible through the shared live region', async ({ page }) => {
+test('summary output stays visible without stopping an active recognizer', async ({ page }) => {
   await page.setContent(`
     <main>
       <h1>Docs</h1>
@@ -10,6 +10,44 @@ test('spoken summary output stays visible through the shared live region', async
   `);
 
   await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+
     window.fetch = async (url, init) => {
       if (!String(url).includes('/api/assistant')) {
         throw new Error(`Unexpected fetch: ${String(url)}`);
@@ -18,6 +56,9 @@ test('spoken summary output stays visible through the shared live region', async
       const body = JSON.parse(String(init?.body || '{}'));
       if (body.input !== 'Summarize this page') {
         throw new Error(`Unexpected input: ${String(body.input || '')}`);
+      }
+      if (body.purpose !== 'summary') {
+        throw new Error(`Unexpected purpose: ${String(body.purpose || '')}`);
       }
 
       return {
@@ -56,41 +97,103 @@ test('spoken summary output stays visible through the shared live region', async
   await page.addScriptTag({ path: 'src/common/i18n.js' });
   await page.addScriptTag({ path: 'src/content.js' });
 
+  await page.waitForFunction(() => (window as any).__speechStats?.start === 1);
+
   await page.evaluate(async () => {
     // @ts-ignore
-    await (window as any).NavableTools.handleTranscript('Summarize this page', 'en', 'offscreen');
+    await (window as any).runPlanner('Summarize this page', 'en', false);
   });
 
-  await expect(page.locator('#navable-output-text')).toHaveValue(/documentation/i);
+  await expect(page.locator('#navable-output-text')).toHaveValue(/documentation/);
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.stop).toBe(0);
+  expect(stats.langs).toEqual(['en-US']);
 });
 
-test('content voice toggle delegates microphone control to the background worker', async ({ page }) => {
+test('content pauses listening during a spoken turn and resumes automatically after handling', async ({ page }) => {
   await page.setContent(`
     <main>
       <h1>Voice</h1>
-      <p>Toggle routing test.</p>
+      <p>Testing turn pause.</p>
     </main>
   `);
 
   await page.evaluate(() => {
-    const messages: Array<any> = [];
-    const chromeMock = {
-      runtime: {
-        _listeners: [] as any[],
-        onMessage: {
-          addListener(fn: any) {
-            chromeMock.runtime._listeners.push(fn);
-          }
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    let resolveAssistant: ((value: any) => void) | null = null;
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
         },
-        sendMessage(payload: any) {
-          messages.push(payload);
-          return Promise.resolve({ ok: true });
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__resolveAssistant = () => {
+      if (resolveAssistant) {
+        resolveAssistant({
+          ok: true,
+          speech: "The moon is Earth's natural satellite.",
+          plan: { steps: [] }
+        });
+      }
+    };
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: (payload: any) => {
+          if (payload.type === 'planner:run') {
+            return Promise.resolve({ ok: false, unhandled: true, plan: { steps: [] } });
+          }
+          if (payload.type === 'navable:assistant') {
+            return new Promise((resolve) => {
+              resolveAssistant = resolve;
+            });
+          }
+          return Promise.resolve({ ok: false });
+        },
+        onMessage: {
+          addListener() {}
         }
       },
       storage: {
         sync: {
           get(_defaults: any, cb: (res: any) => void) {
-            cb({ navable_settings: { language: 'en-US', overlay: false, autostart: true } });
+            cb({ navable_settings: { language: 'en-US', autostart: true, overlay: false } });
           }
         },
         onChanged: {
@@ -98,141 +201,134 @@ test('content voice toggle delegates microphone control to the background worker
         }
       }
     };
-
-    // @ts-ignore
-    window.__messages = messages;
-    // @ts-ignore
-    window.chrome = chromeMock;
-    // @ts-ignore
-    // @ts-ignore
-    (globalThis as any).chrome = chromeMock;
   });
 
   await page.addScriptTag({ path: 'src/common/announce.js' });
   await page.addScriptTag({ path: 'src/common/i18n.js' });
   await page.addScriptTag({ path: 'src/content.js' });
 
-  await page.keyboard.down('Alt');
-  await page.keyboard.down('Shift');
-  await page.keyboard.press('M');
-  await page.keyboard.up('Shift');
-  await page.keyboard.up('Alt');
+  await page.waitForFunction(() => (window as any).__speechStats?.start === 1);
 
-  const messages = await page.evaluate(() => {
+  await page.evaluate(() => {
     // @ts-ignore
-    return window.__messages;
+    window.__turnPromise = (window as any).NavableTools.handleTranscript('What is the moon?', 'en', 'native');
   });
 
-  expect(messages).toContainEqual({ type: 'voice:toggle' });
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.stop || 0) >= 1;
+  });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__resolveAssistant();
+  });
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await window.__turnPromise;
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.start || 0) >= 2;
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.stop).toBeGreaterThanOrEqual(1);
+  expect(stats.start).toBeGreaterThanOrEqual(2);
 });
 
-test('background start and stop lifecycle proxies through the offscreen voice owner', async ({ page }) => {
-  await page.evaluate(() => {
-    const offscreenActions: Array<string> = [];
-    const localStore: Record<string, unknown> = {};
-    let offscreenCreated = 0;
+test('content resumes listening after a spoken turn even when the page loses focus', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Voice</h1>
+      <p>Testing focus loss.</p>
+    </main>
+  `);
 
-    const chromeMock = {
-      commands: {
-        onCommand: {
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    let resolveAssistant: ((value: any) => void) | null = null;
+    const focusState = { hasFocus: true };
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
+
+    Object.defineProperty(document, 'hasFocus', {
+      configurable: true,
+      value: () => focusState.hasFocus
+    });
+    // @ts-ignore
+    window.__focusState = focusState;
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__resolveAssistant = () => {
+      if (resolveAssistant) {
+        resolveAssistant({
+          ok: true,
+          speech: "The moon is Earth's natural satellite.",
+          plan: { steps: [] }
+        });
+      }
+    };
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: (payload: any) => {
+          if (payload.type === 'planner:run') {
+            return Promise.resolve({ ok: false, unhandled: true, plan: { steps: [] } });
+          }
+          if (payload.type === 'navable:assistant') {
+            return new Promise((resolve) => {
+              resolveAssistant = resolve;
+            });
+          }
+          return Promise.resolve({ ok: false });
+        },
+        onMessage: {
           addListener() {}
         }
       },
-      tabs: {
-        onCreated: { addListener() {} },
-        onUpdated: { addListener() {} },
-        onActivated: { addListener() {} },
-        query() {
-          return Promise.resolve([{ id: 7, url: 'https://example.com' }]);
-        },
-        create(createProperties: any) {
-          return Promise.resolve({ id: 8, url: createProperties?.url || 'about:blank' });
-        },
-        update(tabId: number, updateProperties: any) {
-          return Promise.resolve({ id: tabId || 7, url: updateProperties?.url || 'https://example.com' });
-        },
-        sendMessage() {
-          return Promise.resolve({ ok: true });
-        }
-      },
-      offscreen: {
-        createDocument() {
-          offscreenCreated += 1;
-          return Promise.resolve();
-        }
-      },
-      runtime: {
-        _listeners: [] as any[],
-        getURL(path?: string) {
-          const p = String(path || '').replace(/^\/+/, '');
-          return 'chrome-extension://test-extension/' + p;
-        },
-        getContexts() {
-          return Promise.resolve(offscreenCreated > 0 ? [{}] : []);
-        },
-        onMessage: {
-          addListener(fn: any) {
-            chromeMock.runtime._listeners.push(fn);
-          }
-        },
-        onInstalled: { addListener() {} },
-        onStartup: { addListener() {} },
-        sendMessage(payload: any) {
-          if (payload?.type === 'voice:offscreen') {
-            offscreenActions.push(String(payload.action || ''));
-            if (payload.action === 'start') {
-              return Promise.resolve({
-                ok: true,
-                status: {
-                  supports: true,
-                  permissionGranted: true,
-                  listening: true,
-                  lastError: '',
-                  language: payload.payload?.language || 'en-US'
-                }
-              });
-            }
-            if (payload.action === 'stop') {
-              return Promise.resolve({
-                ok: true,
-                status: {
-                  supports: true,
-                  permissionGranted: true,
-                  listening: false,
-                  lastError: '',
-                  language: 'ar-SA'
-                }
-              });
-            }
-            if (payload.action === 'requestPermission') {
-              return Promise.resolve({
-                ok: true,
-                status: {
-                  supports: true,
-                  permissionGranted: true,
-                  listening: false,
-                  lastError: '',
-                  language: 'en-US'
-                }
-              });
-            }
-          }
-          return Promise.resolve({ ok: true });
-        }
-      },
       storage: {
-        local: {
-          get(defaults: any, cb: (res: any) => void) {
-            cb({ ...(defaults || {}), ...localStore });
-          },
-          set(values: any, cb?: () => void) {
-            Object.assign(localStore, values || {});
-            if (typeof cb === 'function') cb();
-          }
-        },
         sync: {
           get(_defaults: any, cb: (res: any) => void) {
-            cb({ navable_settings: { language: 'en-US', autostart: false } });
+            cb({ navable_settings: { language: 'en-US', autostart: true, overlay: false } });
           }
         },
         onChanged: {
@@ -240,49 +336,320 @@ test('background start and stop lifecycle proxies through the offscreen voice ow
         }
       }
     };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__speechStats?.start === 1);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__turnPromise = (window as any).NavableTools.handleTranscript('What is the moon?', 'en', 'native');
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.stop || 0) >= 1;
+  });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__focusState.hasFocus = false;
+    window.dispatchEvent(new Event('blur'));
+  });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__resolveAssistant();
+  });
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await window.__turnPromise;
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.start || 0) >= 2;
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.stop).toBeGreaterThanOrEqual(1);
+  expect(stats.start).toBeGreaterThanOrEqual(2);
+});
+
+test('native recognizer rebuilds when speech switches languages', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Voice</h1>
+      <p>Testing language switching.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
 
     // @ts-ignore
-    window.__offscreenActions = offscreenActions;
+    window.__speechStats = stats;
     // @ts-ignore
-    window.__offscreenCreated = () => offscreenCreated;
-    // @ts-ignore
-    window.chrome = chromeMock;
-    // @ts-ignore
-    // @ts-ignore
-    (globalThis as any).chrome = chromeMock;
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+
+    window.fetch = async (url, init) => {
+      if (!String(url).includes('/api/assistant')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.input !== 'Bonjour') {
+        throw new Error(`Unexpected input: ${String(body.input || '')}`);
+      }
+
+      return {
+        ok: true,
+        async json() {
+          return {
+            mode: 'answer',
+            speech: 'Bonjour.',
+            summary: '',
+            answer: 'Bonjour.',
+            suggestions: [],
+            plan: { steps: [] }
+          };
+        }
+      };
+    };
   });
 
   await page.addScriptTag({ path: 'src/background.js' });
 
-  const startStatus = await page.evaluate(async () => {
+  await page.evaluate(() => {
     // @ts-ignore
-    return await (window as any).startVoiceListeningInExtension('ar-SA');
-  });
-  const stopStatus = await page.evaluate(async () => {
-    // @ts-ignore
-    return await (window as any).stopVoiceListeningInExtension();
-  });
-  const currentStatus = await page.evaluate(async () => {
-    // @ts-ignore
-    return await (window as any).getVoiceStatus();
-  });
-  const actions = await page.evaluate(() => {
-    // @ts-ignore
-    return window.__offscreenActions;
-  });
-  const offscreenCreated = await page.evaluate(() => {
-    // @ts-ignore
-    return window.__offscreenCreated();
+    window.chrome.storage.sync.get = (_defaults: unknown, cb: (res: unknown) => void) => {
+      cb({
+        navable_settings: {
+          aiEnabled: true,
+          aiMode: 'summary',
+          language: 'en-US',
+          autostart: true
+        }
+      });
+    };
   });
 
-  expect(offscreenCreated).toBe(1);
-  expect(actions).toEqual(['start', 'stop']);
-  expect(startStatus).toMatchObject({ ok: true, listening: true, language: 'ar-SA' });
-  expect(stopStatus).toMatchObject({ ok: true, listening: false, language: 'ar-SA' });
-  expect(currentStatus).toMatchObject({ ok: true, listening: false, language: 'en-US' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__speechStats?.langs?.length === 1);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('Bonjour', '', 'native');
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.langs || []).includes('fr-FR');
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.langs[0]).toBe('en-US');
+  expect(stats.langs[1]).toBe('fr-FR');
+  expect(stats.stop).toBeGreaterThanOrEqual(1);
+  expect(stats.start).toBeGreaterThanOrEqual(2);
 });
 
-test('new tab voice commands use the background status language for assistant answers', async ({ page }) => {
+test('native fallback rotates to Arabic after recent English recognition gets no speech', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Voice</h1>
+      <p>Testing native locale rotation.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    const recognizers: Array<{
+      start: () => void;
+      stop: () => void;
+      on: (type: string, handler: (payload?: unknown) => void) => unknown;
+      emit: (type: string, payload?: unknown) => void;
+    }> = [];
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        },
+        emit(type: string, payload?: unknown) {
+          (listeners[type] || []).forEach((fn) => fn(payload));
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__recognizers = recognizers;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        const recognizer = createFakeRecognizer();
+        recognizers.push(recognizer);
+        return recognizer;
+      }
+    };
+
+    window.fetch = async (url, init) => {
+      if (!String(url).includes('/api/assistant')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+
+      const body = JSON.parse(String(init?.body || '{}'));
+      return {
+        ok: true,
+        async json() {
+          if (body.input === 'What is the moon?') {
+            return {
+              mode: 'answer',
+              speech: "The moon is Earth's natural satellite.",
+              summary: '',
+              answer: "The moon is Earth's natural satellite.",
+              suggestions: [],
+              plan: { steps: [] }
+            };
+          }
+          if (body.input === 'ما هو القمر؟') {
+            return {
+              mode: 'answer',
+              speech: 'القمر هو القمر الطبيعي للأرض.',
+              summary: '',
+              answer: 'القمر هو القمر الطبيعي للأرض.',
+              suggestions: [],
+              plan: { steps: [] }
+            };
+          }
+          throw new Error(`Unexpected input: ${String(body.input || '')}`);
+        }
+      };
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.chrome.storage.sync.get = (_defaults: unknown, cb: (res: unknown) => void) => {
+      cb({
+        navable_settings: {
+          aiEnabled: true,
+          aiMode: 'summary',
+          language: 'en-US',
+          autostart: true
+        }
+      });
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__recognizers?.length === 1);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('What is the moon?', 'en', 'native');
+  });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__recognizers[0].emit('error', { error: 'no-speech', provider: 'native' });
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.langs || []).includes('ar-SA');
+  });
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('ما هو القمر؟', 'ar', 'native');
+  });
+
+  await expect(page.locator('#navable-live-region-assertive')).toContainText('القمر');
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.langs[0]).toBe('en-US');
+  expect(stats.langs).toContain('ar-SA');
+  expect(stats.stop).toBeGreaterThanOrEqual(1);
+});
+
+test('new tab listening pauses while hidden and resumes automatically when visible again', async ({ page }) => {
   await page.setContent(`
     <div id="clock"></div>
     <div id="greeting"></div>
@@ -291,34 +658,47 @@ test('new tab voice commands use the background status language for assistant an
   `);
 
   await page.evaluate(() => {
-    const listeners: Array<(msg: any) => void> = [];
-    let assistantPayload: any = null;
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    const visibilityState = { value: 'visible' };
 
-    const chromeMock = {
-      runtime: {
-        sendMessage(payload: any) {
-          if (payload?.type === 'voice:getStatus') {
-            return Promise.resolve({
-              ok: true,
-              supports: true,
-              permissionGranted: true,
-              listening: true,
-              lastError: '',
-              language: 'fr-FR'
-            });
-          }
-          if (payload?.type === 'navable:assistant') {
-            assistantPayload = payload;
-            return Promise.resolve({ ok: true, speech: 'Bonjour.' });
-          }
-          return Promise.resolve({ ok: true });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get() {
+        return visibilityState.value;
+      }
+    });
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
         },
-        onMessage: {
-          addListener(fn: (msg: any) => void) {
-            listeners.push(fn);
-          }
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
         }
-      },
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__visibilityState = visibilityState;
+    // @ts-ignore
+    window.chrome = {
       storage: {
         sync: {
           get(_defaults: any, cb: (res: any) => void) {
@@ -328,26 +708,16 @@ test('new tab voice commands use the background status language for assistant an
         onChanged: {
           addListener() {}
         }
-      },
-      tabs: {
-        create() {
-          return Promise.resolve();
-        },
-        update() {
-          return Promise.resolve();
-        }
       }
     };
-
     // @ts-ignore
-    window.__assistantPayload = () => assistantPayload;
-    // @ts-ignore
-    window.__runtimeListeners = listeners;
-    // @ts-ignore
-    window.chrome = chromeMock;
-    // @ts-ignore
-    // @ts-ignore
-    (globalThis as any).chrome = chromeMock;
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
   });
 
   await page.addScriptTag({ path: 'src/common/i18n.js' });
@@ -356,30 +726,143 @@ test('new tab voice commands use the background status language for assistant an
 
   await page.evaluate(() => {
     document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));
+    (document.getElementById('btnMicToggle') as HTMLButtonElement).click();
+  });
+
+  await page.waitForFunction(() => (window as any).__speechStats?.start === 1);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__visibilityState.value = 'hidden';
+    document.dispatchEvent(new Event('visibilitychange'));
   });
 
   await page.waitForFunction(() => {
-    const status = document.getElementById('micStatus');
-    return !!status && /Listening|écoute|أستمع/.test(String(status.textContent || ''));
+    // @ts-ignore
+    return (window.__speechStats?.stop || 0) >= 1;
   });
 
   await page.evaluate(() => {
     // @ts-ignore
-    for (const fn of window.__runtimeListeners) {
-      fn({ type: 'VOICE_COMMAND', text: 'Bonjour' });
-    }
+    window.__visibilityState.value = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
   });
 
-  await expect(page.locator('#micStatus')).toContainText('Bonjour');
-
-  const assistantPayload = await page.evaluate(() => {
+  await page.waitForFunction(() => {
     // @ts-ignore
-    return window.__assistantPayload();
+    return (window.__speechStats?.start || 0) >= 2;
   });
 
-  expect(assistantPayload).toMatchObject({
-    type: 'navable:assistant',
-    input: 'Bonjour',
-    outputLanguage: 'fr'
+  await expect(page.locator('#micStatus')).toContainText('Listening');
+});
+
+test('new tab recognizer keeps the detected language across auto-resume', async ({ page }) => {
+  await page.setContent(`
+    <div id="clock"></div>
+    <div id="greeting"></div>
+    <button id="btnMicToggle" type="button">Start listening</button>
+    <div id="micStatus"></div>
+  `);
+
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.chrome = {
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US' } });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+
+    window.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.input !== 'مرحبا') {
+        throw new Error(`Unexpected input: ${String(body.input || '')}`);
+      }
+      return {
+        ok: true,
+        async json() {
+          return {
+            mode: 'answer',
+            speech: 'مرحبا بك.',
+            summary: '',
+            answer: 'مرحبا بك.',
+            suggestions: [],
+            plan: { steps: [] }
+          };
+        }
+      };
+    };
   });
+
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/newtab/newtab.js' });
+
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));
+    (document.getElementById('btnMicToggle') as HTMLButtonElement).click();
+  });
+
+  await page.waitForFunction(() => (window as any).__speechStats?.langs?.length === 1);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableNewtabTools.handleTranscript('مرحبا', 'ar', 'native');
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.langs || []).includes('ar-SA');
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.langs[0]).toBe('en-US');
+  expect(stats.langs).toContain('ar-SA');
 });
