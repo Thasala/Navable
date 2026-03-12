@@ -24,7 +24,7 @@
               <div>
                 <h1 class="nv-options-title">Navable settings</h1>
                 <p class="nv-options-subtitle">
-                  Tune voice fallback language, continuous listening, and AI features without changing Navable’s navigation behavior.
+                  Tune Arabic and English voice behavior, continuous listening, and AI features without changing Navable’s navigation behavior.
                 </p>
               </div>
             </div>
@@ -41,11 +41,11 @@
             <h2>Voice settings</h2>
             <div class="nv-form-grid">
               <div class="nv-field">
-                <label class="nv-label" for="language">Fallback language</label>
-                <select id="language" class="nv-select">
-                  <option value="en-US">English (United States)</option>
-                  <option value="en-GB">English (United Kingdom)</option>
-                  <option value="ar-JO">Arabic (Jordan)</option>
+                <label class="nv-label" for="languageMode">Conversation language</label>
+                <select id="languageMode" class="nv-select">
+                  <option value="auto">Auto detect Arabic or English</option>
+                  <option value="en">Always English</option>
+                  <option value="ar">Always Arabic</option>
                 </select>
               </div>
               <label class="nv-inline" for="continuous">
@@ -53,7 +53,7 @@
                 <span>Continuous listening (auto-start on pages)</span>
               </label>
             </div>
-            <p>Navable prefers backend multilingual transcription for automatic language detection, and falls back to the browser speech API if the backend is unavailable.</p>
+            <p>Navable prefers backend multilingual transcription for automatic Arabic and English detection, and falls back to the browser speech API if the backend is unavailable.</p>
           </div>
         </section>
 

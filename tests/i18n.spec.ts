@@ -10,16 +10,26 @@ test('language helper resolves transcript language and explicit overrides', asyn
       frenchTranscript: i18n.resolveOutputLanguage({ transcript: 'Ouvre YouTube', fallbackLanguage: 'en-US' }),
       explicitFrench: i18n.resolveOutputLanguage({ transcript: 'Summarize this page in French', fallbackLanguage: 'en-US' }),
       arabicTranscript: i18n.resolveOutputLanguage({ transcript: 'افتح يوتيوب', fallbackLanguage: 'en-US' }),
+      arabicDialectTranscript: i18n.resolveOutputLanguage({ transcript: 'شو هاي الصفحة', fallbackLanguage: 'en-US' }),
       frenchMessage: i18n.t('scrolled_down', 'fr'),
-      frenchLocale: i18n.localeForLanguage('fr')
+      frenchLocale: i18n.localeForLanguage('fr'),
+      autoMode: i18n.normalizeLanguageMode('auto', 'en-US'),
+      missingMode: i18n.normalizeLanguageMode('', 'ar-JO'),
+      arabicLocales: i18n.recognitionLocalesForLanguage('ar', 'ar-JO')
     };
   });
 
   expect(result.frenchTranscript).toBe('fr');
   expect(result.explicitFrench).toBe('fr');
   expect(result.arabicTranscript).toBe('ar');
+  expect(result.arabicDialectTranscript).toBe('ar');
   expect(result.frenchMessage).toContain('Defilement');
   expect(result.frenchLocale).toBe('fr-FR');
+  expect(result.autoMode).toBe('auto');
+  expect(result.missingMode).toBe('auto');
+  expect(result.arabicLocales[0]).toBe('ar-JO');
+  expect(result.arabicLocales).toContain('ar-SA');
+  expect(result.arabicLocales).toContain('ar-JO');
 });
 
 test('language helper loads an on-demand pack for unknown languages', async ({ page }) => {

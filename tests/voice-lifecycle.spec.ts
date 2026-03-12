@@ -649,6 +649,132 @@ test('native fallback rotates to Arabic after recent English recognition gets no
   expect(stats.stop).toBeGreaterThanOrEqual(1);
 });
 
+test('locked English mode keeps recognizer and output language in English', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Voice</h1>
+      <p>Testing locked English mode.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    const recognizers: Array<{
+      start: () => void;
+      stop: () => void;
+      on: (type: string, handler: (payload?: unknown) => void) => unknown;
+      emit: (type: string, payload?: unknown) => void;
+    }> = [];
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        },
+        emit(type: string, payload?: unknown) {
+          (listeners[type] || []).forEach((fn) => fn(payload));
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__recognizers = recognizers;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        const recognizer = createFakeRecognizer();
+        recognizers.push(recognizer);
+        return recognizer;
+      }
+    };
+
+    window.fetch = async (url, init) => {
+      if (!String(url).includes('/api/assistant')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.outputLanguage !== 'en') {
+        throw new Error(`Expected English output lock, got: ${String(body.outputLanguage || '')}`);
+      }
+      if (body.input !== 'ما هو القمر؟') {
+        throw new Error(`Unexpected input: ${String(body.input || '')}`);
+      }
+
+      return {
+        ok: true,
+        async json() {
+          return {
+            mode: 'answer',
+            speech: "The moon is Earth's natural satellite.",
+            summary: '',
+            answer: "The moon is Earth's natural satellite.",
+            suggestions: [],
+            plan: { steps: [] }
+          };
+        }
+      };
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.chrome.storage.sync.get = (_defaults: unknown, cb: (res: unknown) => void) => {
+      cb({
+        navable_settings: {
+          aiEnabled: true,
+          aiMode: 'summary',
+          language: 'en-US',
+          languageMode: 'en',
+          autostart: true
+        }
+      });
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__recognizers?.length === 1);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('ما هو القمر؟', 'ar', 'native');
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.langs).toEqual(['en-US']);
+  await expect(page.locator('#navable-live-region-assertive')).toContainText("Earth's natural satellite");
+});
+
 test('new tab listening pauses while hidden and resumes automatically when visible again', async ({ page }) => {
   await page.setContent(`
     <div id="clock"></div>
