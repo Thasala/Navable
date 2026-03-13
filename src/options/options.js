@@ -1,15 +1,35 @@
+let currentLanguageLocale = 'en-US';
+
+function normalizeLanguageMode(mode, _locale) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'auto') return 'auto';
+  if (!raw) return 'auto';
+  if (raw === 'en' || raw === 'english' || raw.startsWith('en-')) return 'en';
+  if (raw === 'ar' || raw === 'arabic' || raw.startsWith('ar-')) return 'ar';
+  return 'auto';
+}
+
+function localeForLanguageMode(mode, locale) {
+  const normalized = normalizeLanguageMode(mode, locale);
+  const current = String(locale || '').trim();
+  if (normalized === 'ar') return current.toLowerCase().startsWith('ar') ? current : 'ar-JO';
+  if (normalized === 'en') return current.toLowerCase().startsWith('en') ? current : 'en-US';
+  return current || 'en-US';
+}
+
 function loadSettings() {
   if (!chrome || !chrome.storage || !chrome.storage.sync) return;
   chrome.storage.sync.get({ navable_settings: {} }, (res) => {
     const s = res.navable_settings || {};
-    const language = document.getElementById('language');
+    const languageMode = document.getElementById('languageMode');
     const continuous = document.getElementById('continuous');
     const aiEnabled = document.getElementById('aiEnabled');
     const aiMode = document.getElementById('aiMode');
     const noFormFields = document.getElementById('noFormFields');
     const noSensitiveSites = document.getElementById('noSensitiveSites');
 
-    if (language) language.value = s.language || 'en-US';
+    currentLanguageLocale = s.language || 'en-US';
+    if (languageMode) languageMode.value = normalizeLanguageMode(s.languageMode, currentLanguageLocale);
     if (continuous) continuous.checked = typeof s.autostart === 'boolean' ? s.autostart : true;
     if (aiEnabled) aiEnabled.checked = !!s.aiEnabled;
     if (aiMode) aiMode.value = s.aiMode || 'off';
@@ -20,15 +40,18 @@ function loadSettings() {
 
 function saveSettings() {
   if (!chrome || !chrome.storage || !chrome.storage.sync) return;
-  const language = document.getElementById('language');
+  const languageMode = document.getElementById('languageMode');
   const continuous = document.getElementById('continuous');
   const aiEnabled = document.getElementById('aiEnabled');
   const aiMode = document.getElementById('aiMode');
   const noSensitiveSites = document.getElementById('noSensitiveSites');
   const saveStatus = document.getElementById('saveStatus');
+  const normalizedLanguageMode = normalizeLanguageMode(languageMode ? languageMode.value : 'auto', currentLanguageLocale);
+  currentLanguageLocale = localeForLanguageMode(normalizedLanguageMode, currentLanguageLocale);
 
   const navable_settings = {
-    language: language ? language.value : 'en-US',
+    language: currentLanguageLocale,
+    languageMode: normalizedLanguageMode,
     overlay: false,
     autostart: continuous ? continuous.checked : true,
     aiEnabled: aiEnabled ? aiEnabled.checked : false,
@@ -49,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.body.addEventListener('change', (e) => {
     if (
       e.target &&
-      (e.target.id === 'language' ||
+      (e.target.id === 'languageMode' ||
         e.target.id === 'continuous' ||
         e.target.id === 'aiEnabled' ||
         e.target.id === 'aiMode' ||

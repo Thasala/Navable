@@ -8,6 +8,10 @@
     fr: 'fr-FR',
     ar: 'ar-SA'
   };
+  var VOICE_LOCALE_GROUPS = {
+    en: ['en-US', 'en-GB', 'en-AU', 'en-IN'],
+    ar: ['ar-SA', 'ar-JO', 'ar-EG', 'ar-AE']
+  };
 
   var LANGUAGE_NAMES = {
     english: 'en',
@@ -258,6 +262,36 @@
     return normalized || LOCALES[DEFAULT_LANGUAGE];
   }
 
+  function recognitionLocalesForLanguage(lang, preferredLocale) {
+    var normalized = normalizeLanguage(lang);
+    var locales = [];
+    var seen = {};
+
+    function push(locale) {
+      var canonical = canonicalizeLocale(locale);
+      if (!canonical) return;
+      if (normalizeLanguage(canonical) !== normalized) return;
+      var key = canonical.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      locales.push(canonical);
+    }
+
+    push(preferredLocale);
+    (VOICE_LOCALE_GROUPS[normalized] || []).forEach(push);
+    push(localeForLanguage(normalized));
+    return locales;
+  }
+
+  function normalizeLanguageMode(mode, fallbackLanguage) {
+    var raw = String(mode || '').trim().toLowerCase();
+    if (raw === 'auto') return 'auto';
+    if (!raw) return 'auto';
+    var explicit = normalizeLanguage(raw || fallbackLanguage || DEFAULT_LANGUAGE);
+    if (explicit === 'ar' || explicit === 'en') return explicit;
+    return 'auto';
+  }
+
   function interpolate(template, params) {
     var text = String(template || '');
     var values = params || {};
@@ -334,12 +368,15 @@
     var lower = raw.toLowerCase();
     var frScore = 0;
     var enScore = 0;
+    var arLatnScore = 0;
 
     if (/[àâçéèêëîïôûùüÿœæ]/i.test(raw)) frScore += 3;
     frScore += countMatches(lower, /\b(bonjour|salut|merci|ouvre|ouvrir|recherche|resume|résume|résumé|decris|décris|titre|page|lien|bouton|suivant|precedent|précédent|aide|ecoute|écoute)\b/g);
     enScore += countMatches(lower, /\b(open|search|scroll|summary|summarize|describe|title|button|link|page|help|listen|stop|start|next|previous|focus|activate)\b/g);
+    arLatnScore += countMatches(lower, /\b(ifta[h7]|efta[h7]|roo[h7]|rou[h7]|wayn|wein|shu|sho|khallas|waq[aei]f|inzil|inzal|itla[3a]|tal[ae]3|dawwer|dowwer|mosa[ae]da)\b/g);
 
     if (frScore > enScore && frScore > 0) return 'fr';
+    if (arLatnScore > 0) return 'ar';
     if (enScore > frScore && enScore > 0) return 'en';
 
     return normalizeLanguage(fallbackLanguage);
@@ -364,9 +401,9 @@
     var frenchMatch = lower.match(/\b(?:reponds|réponds|parle|dis|resume|résume|decris|décris)\b[\s\S]{0,24}?\ben\s+(anglais|francais|français|arabe)\b/);
     if (frenchMatch && frenchMatch[1]) return resolveNamedLanguage(frenchMatch[1]);
 
-    if (/بالانجليزية|بالإنجليزية/.test(raw)) return 'en';
+    if (/بالانجليزية|بالإنجليزية|بالانجليزي|بالإنجليزي/.test(raw)) return 'en';
     if (/بالفرنسية/.test(raw)) return 'fr';
-    if (/بالعربية/.test(raw)) return 'ar';
+    if (/بالعربية|بالعربي/.test(raw)) return 'ar';
 
     return null;
   }
@@ -382,7 +419,9 @@
   window.NavableI18n = {
     messages: MESSAGES,
     normalizeLanguage: normalizeLanguage,
+    normalizeLanguageMode: normalizeLanguageMode,
     localeForLanguage: localeForLanguage,
+    recognitionLocalesForLanguage: recognitionLocalesForLanguage,
     detectLanguage: detectLanguage,
     extractExplicitOutputLanguage: extractExplicitOutputLanguage,
     resolveOutputLanguage: resolveOutputLanguage,
