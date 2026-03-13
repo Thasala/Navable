@@ -8,20 +8,21 @@
     <link rel="stylesheet" href="newtab.css" />
   </head>
   <body class="nv-ui nv-newtab">
-    <main class="nv-container">
+    <main class="nv-container nv-newtab-layout">
       <section class="nv-card nv-newtab-hero" aria-label="Navable new tab">
-        <div class="nv-card-inner">
-          <div class="nv-newtab-top">
+        <div class="nv-card-inner nv-newtab-hero-inner">
+          <header class="nv-newtab-top">
             <div class="nv-newtab-brand">
               <img
                 class="nv-newtab-logo"
                 src="../../assets/navable-logo.svg"
-                width="40"
-                height="40"
+                width="48"
+                height="48"
                 alt=""
                 aria-hidden="true"
               />
               <div>
+                <p class="nv-eyebrow">Voice-First Start Page</p>
                 <div class="nv-newtab-wordmark">Navable</div>
                 <div id="greeting" class="nv-newtab-greeting">Welcome back.</div>
               </div>
@@ -32,63 +33,122 @@
                 <span class="nv-dot nv-dot--ok" aria-hidden="true"></span>
                 <span id="clock" class="nv-newtab-clock">--:--</span>
               </div>
-              <a class="nv-btn nv-btn--ghost" href="../options/index.html" target="_blank" rel="noreferrer">Options</a>
+              <a class="nv-btn nv-btn--ghost" href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
             </div>
-          </div>
+          </header>
 
-          <h1 class="nv-newtab-headline">A calmer, voice-first new tab.</h1>
-          <p class="nv-newtab-lede">Use voice or type to open a site, or ask a quick question.</p>
-
-          <section class="nv-newtab-voice" aria-label="Voice controls">
-            <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn" type="button">
-              Checking voice support…
-            </button>
-            <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
-            <div class="nv-newtab-voice-hint">Try: “Open YouTube”, “Open example dot com”, “What is photosynthesis?”</div>
-          </section>
-
-          <form id="searchForm" class="nv-newtab-search" role="search" aria-label="Search">
-            <label class="nv-sr-only" for="searchInput">Search or type a URL</label>
-            <input
-              id="searchInput"
-              class="nv-input"
-              type="text"
-              inputmode="search"
-              autocomplete="off"
-              placeholder="Search or type a URL"
-            />
-            <button class="nv-btn nv-btn--primary" type="submit">Go</button>
-          </form>
-
-          <div class="nv-chips" aria-label="Suggestions">
-            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://example.com">
-              example.com
-            </button>
-            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://wikipedia.org">Wikipedia</button>
-            <button class="nv-btn nv-btn--ghost nv-chip" type="button" data-open="https://news.ycombinator.com">
-              Hacker News
-            </button>
-          </div>
-
-          <details class="nv-newtab-details">
-            <summary class="nv-newtab-details-summary">Demo tips</summary>
-            <div class="nv-newtab-details-body">
-              <ul class="nv-newtab-mini">
-                <li>Try: “Scroll down”, “Next heading”, “Read title”</li>
-                <li>Use the popup for quick actions + summarize</li>
-              </ul>
-              <div class="nv-newtab-details-actions">
-                <button id="openShortcuts" class="nv-btn nv-btn--ghost" type="button">Keyboard shortcuts</button>
+          <div class="nv-newtab-hero-grid">
+            <section class="nv-newtab-primary">
+              <div class="nv-newtab-copy">
+                <h1 class="nv-display nv-newtab-headline">Open a place, ask a question, or let the page guide itself.</h1>
+                <p class="nv-body nv-newtab-lede">
+                  Navable keeps the opening screen quieter: fewer distractions, cleaner navigation cues, and a faster route into
+                  what you actually need.
+                </p>
               </div>
-            </div>
-          </details>
+
+              <section class="nv-surface nv-newtab-voice" aria-label="Voice controls">
+                <div class="nv-newtab-block-head">
+                  <div>
+                    <p class="nv-section-kicker">Voice entry</p>
+                    <h2 class="nv-section-heading">Talk first when that is faster</h2>
+                  </div>
+                </div>
+                <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn" type="button">
+                  Checking voice support…
+                </button>
+                <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
+                <div class="nv-newtab-voice-hints">
+                  <span class="nv-pill">“Open YouTube”</span>
+                  <span class="nv-pill">“Open example dot com”</span>
+                  <span class="nv-pill">“What is photosynthesis?”</span>
+                </div>
+              </section>
+
+              <form id="searchForm" class="nv-newtab-search" role="search" aria-label="Search">
+                <label class="nv-sr-only" for="searchInput">Search or type a URL</label>
+                <input
+                  id="searchInput"
+                  class="nv-input"
+                  type="text"
+                  inputmode="search"
+                  autocomplete="off"
+                  placeholder="Search, paste a URL, or type a destination"
+                />
+                <button class="nv-btn nv-btn--primary" type="submit">Open or search</button>
+              </form>
+            </section>
+
+            <aside class="nv-newtab-rail" aria-label="Quick launch and tips">
+              <section class="nv-surface nv-newtab-panel">
+                <p class="nv-section-kicker">Jump in</p>
+                <h2 class="nv-section-heading">Launch a destination</h2>
+                <p class="nv-section-text">Keep a few clean starting points one tap away.</p>
+                <div class="nv-newtab-links">
+                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://example.com">
+                    <strong>example.com</strong>
+                    <span>Minimal page for testing structure.</span>
+                  </button>
+                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://wikipedia.org">
+                    <strong>Wikipedia</strong>
+                    <span>Good for summaries and headings.</span>
+                  </button>
+                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://news.ycombinator.com">
+                    <strong>Hacker News</strong>
+                    <span>Useful when testing dense link lists.</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="nv-surface nv-newtab-panel">
+                <p class="nv-section-kicker">Useful cues</p>
+                <h2 class="nv-section-heading">Stay oriented without clutter</h2>
+                <ul class="nv-newtab-mini">
+                  <li>Use the popup when you want summaries, headings, or focused-element feedback.</li>
+                  <li>Press Alt+Shift+M any time to toggle voice listening.</li>
+                  <li>Use Chrome shortcuts when you want repeatable demo flows.</li>
+                </ul>
+                <button id="openShortcuts" class="nv-btn nv-btn--ghost" type="button">Keyboard shortcuts</button>
+              </section>
+            </aside>
+          </div>
         </div>
       </section>
 
+      <section class="nv-newtab-guides" aria-label="Guides">
+        <article class="nv-card nv-guide-card">
+          <div class="nv-card-inner">
+            <p class="nv-section-kicker">Try saying</p>
+            <h2 class="nv-section-heading">Natural openings</h2>
+            <ul class="nv-newtab-mini">
+              <li>“Open YouTube”</li>
+              <li>“Read title”</li>
+              <li>“Summarize this page”</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="nv-card nv-guide-card">
+          <div class="nv-card-inner">
+            <p class="nv-section-kicker">Why it feels cleaner</p>
+            <h2 class="nv-section-heading">One screen, three jobs</h2>
+            <p class="nv-section-text">Open a site, ask a short question, or start listening, without stacking five unrelated widgets.</p>
+          </div>
+        </article>
+
+        <article class="nv-card nv-guide-card">
+          <div class="nv-card-inner">
+            <p class="nv-section-kicker">Built for demos</p>
+            <h2 class="nv-section-heading">Keep the story obvious</h2>
+            <p class="nv-section-text">The layout stays readable at a glance so the voice interaction remains the headline, not the chrome.</p>
+          </div>
+        </article>
+      </section>
+
       <footer class="nv-newtab-footer">
-        <span>Tip: Press Alt+Shift+M to toggle voice.</span>
+        <span>Press Alt+Shift+M to toggle voice.</span>
         <span> · </span>
-        <a href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
+        <a class="nv-link" href="../options/index.html" target="_blank" rel="noreferrer">Open settings</a>
       </footer>
     </main>
 
