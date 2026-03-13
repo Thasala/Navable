@@ -27,6 +27,15 @@ function setDescription(text) {
   el.textContent = text || '';
 }
 
+function setHelpPanelState(helpBtn, helpPanel, open) {
+  if (!helpBtn || !helpPanel) return;
+  const isOpen = !!open;
+  helpPanel.style.display = isOpen ? 'grid' : 'none';
+  helpPanel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+  helpBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  helpBtn.textContent = isOpen ? 'Hide examples' : 'Show examples';
+}
+
 async function refreshMicStatus() {
   const btn = document.getElementById('btnMicToggle');
   const statusEl = document.getElementById('micStatus');
@@ -171,10 +180,10 @@ function wirePopup() {
   const helpBtn = document.getElementById('btnHelp');
   const helpPanel = document.getElementById('helpPanel');
   if (helpBtn && helpPanel) {
+    setHelpPanelState(helpBtn, helpPanel, false);
     helpBtn.addEventListener('click', () => {
-      const isOpen = helpPanel.style.display === 'block';
-      helpPanel.style.display = isOpen ? 'none' : 'block';
-      helpPanel.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
+      const isOpen = helpPanel.getAttribute('aria-hidden') !== 'false';
+      setHelpPanelState(helpBtn, helpPanel, isOpen);
     });
   }
 
