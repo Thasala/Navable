@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
   isClarifyingAnswerText,
   resolveAnswerQuestionWithSessionContext
-} from '../backend/src/server.js';
+} from '../backend/src/assistant-session.js';
 
 test('answer follow-ups resolve to the prior entity', async () => {
   const resolved = resolveAnswerQuestionWithSessionContext('tell me more', {

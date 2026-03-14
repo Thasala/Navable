@@ -5,6 +5,11 @@ import OpenAI, { toFile } from 'openai';
 import swaggerUi from 'swagger-ui-express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  isClarifyingAnswerText,
+  isFollowUpIntentText,
+  resolveAnswerQuestionWithSessionContext
+} from './assistant-session.js';
 import { getOpenApiSpec } from './openapi.js';
 
 dotenv.config();
@@ -489,108 +494,6 @@ function isPageContextIntentText(text) {
     /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
     /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
     /(أين أنا|اين انا|ساعدني هنا|ساعدني هون|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو المهم هون|ايش المهم هون|شو المهم هنا|ايش المهم هنا|احكيلي عن (?:هاي|هذه) الصفحة|احكيلي عن ه(?:اي|ذا) الموقع|دلني هون|دلني هنا|وجهني هون|وجهني هنا|شو في هون|ايش في هون|شو الموجود هون|ايش الموجود هون)/.test(t)
-  );
-}
-
-function isFollowUpIntentText(text) {
-  const t = String(text || '').trim().toLowerCase();
-  if (!t) return false;
-  return (
-    /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
-    /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
-    /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
-  );
-}
-
-function trimSessionText(text, maxLen = 240) {
-  const raw = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!raw) return '';
-  return raw.length > maxLen ? `${raw.slice(0, Math.max(0, maxLen - 3)).trim()}...` : raw;
-}
-
-function rewriteTopicPronouns(text, topic) {
-  const raw = trimSessionText(text, 240);
-  const subject = trimSessionText(topic, 120);
-  if (!raw || !subject) return raw;
-  return raw
-    .replace(/\bits\b/gi, `${subject}'s`)
-    .replace(/\btheir\b/gi, `${subject}'s`)
-    .replace(/\bit\b/gi, subject)
-    .replace(/\bthis\b/gi, subject)
-    .replace(/\bthat\b/gi, subject)
-    .replace(/\bthey\b/gi, subject)
-    .replace(/\bthem\b/gi, subject)
-    .replace(/\bhe\b/gi, subject)
-    .replace(/\bhim\b/gi, subject)
-    .replace(/\bshe\b/gi, subject)
-    .replace(/\bher\b/gi, subject);
-}
-
-function resolveAnswerQuestionWithSessionContext(question, sessionContext = null) {
-  const rawQuestion = trimSessionText(question, 240);
-  if (!rawQuestion) {
-    return { question: '', resolvedQuestion: '', resolvedFromSession: false, topic: '' };
-  }
-
-  const lastEntity = trimSessionText(sessionContext && sessionContext.lastEntity, 120);
-  const lastUserUtterance = trimSessionText(sessionContext && sessionContext.lastUserUtterance, 180);
-  const lastAnswer = trimSessionText(sessionContext && sessionContext.lastAnswer, 220);
-  const isFollowUp = isFollowUpIntentText(rawQuestion);
-
-  if (isFollowUp) {
-    if (lastEntity) {
-      return {
-        question: rawQuestion,
-        resolvedQuestion: `Tell me more about ${lastEntity}.`,
-        resolvedFromSession: true,
-        topic: lastEntity
-      };
-    }
-    if (lastUserUtterance && !isFollowUpIntentText(lastUserUtterance)) {
-      return {
-        question: rawQuestion,
-        resolvedQuestion: `Tell me more about: ${lastUserUtterance}`,
-        resolvedFromSession: true,
-        topic: lastUserUtterance
-      };
-    }
-    if (lastAnswer) {
-      return {
-        question: rawQuestion,
-        resolvedQuestion: `Tell me more about this previous answer: ${lastAnswer}`,
-        resolvedFromSession: true,
-        topic: lastAnswer
-      };
-    }
-  }
-
-  if (lastEntity) {
-    const rewritten = rewriteTopicPronouns(rawQuestion, lastEntity);
-    if (rewritten && rewritten !== rawQuestion) {
-      return {
-        question: rawQuestion,
-        resolvedQuestion: rewritten,
-        resolvedFromSession: true,
-        topic: lastEntity
-      };
-    }
-  }
-
-  return {
-    question: rawQuestion,
-    resolvedQuestion: rawQuestion,
-    resolvedFromSession: false,
-    topic: lastEntity
-  };
-}
-
-function isClarifyingAnswerText(answer) {
-  const t = String(answer || '').trim().toLowerCase();
-  if (!t) return false;
-  return (
-    /\b(specify|clarify|which topic|what topic|which subject|what subject|more context|what would you like|which one)\b/.test(t) ||
-    /(pr[ée]ciser|quel sujet|quel thème|de quel sujet|sur quel sujet)/.test(t) ||
-    /(حدد|حدّد|أي موضوع|اي موضوع|عن ماذا|عن اي موضوع|أي شيء تقصد|اي شيء تقصد)/.test(t)
   );
 }
 
