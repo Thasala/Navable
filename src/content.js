@@ -577,6 +577,7 @@
     if (isNavableUiElement(active)) active = null;
     var activeId = active && active.dataset ? active.dataset.navableId : null;
     var activeLabel = '';
+    var sensitiveInputCount = 0;
     if (active) activeLabel = textOf(active);
     var headings = [];
     var links = [];
@@ -608,6 +609,7 @@
         if (el) {
           if (isSensitiveInput(el)) {
             // Exclude sensitive fields (e.g., passwords, card numbers) from the snapshot.
+            sensitiveInputCount += 1;
             return;
           }
           entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
@@ -626,6 +628,10 @@
       activeId: activeId,
       activeLabel: activeLabel || '',
       landmarks: landmarks,
+      privacy: {
+        sensitiveInputCount: sensitiveInputCount,
+        sensitivePage: sensitiveInputCount > 0
+      },
       counts: {
         headings: headings.length,
         links: links.length,
@@ -1151,8 +1157,34 @@
     return null;
   }
 
-  function extractOpenSiteQuery(t) {
+  function stripOpenIntentPrefixes(t) {
     var s = String(t || '').trim().toLowerCase();
+    if (!s) return '';
+
+    var patterns = [
+      /^(?:hey\s+navable|navable|please|pls)\b[\s,]*/,
+      /^(?:can you|could you|would you|will you)\b[\s,]*/,
+      /^(?:peux[- ]?tu|pourrais[- ]?tu|tu peux|svp|stp|s['’]?il te pla[îi]t)\b[\s,]*/,
+      /^(?:لو سمحت|من فضلك|رجاءً?|رجاء|ممكن|بتقدر|تقدر)\b[\s،]*/
+    ];
+
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < patterns.length; i += 1) {
+        var next = s.replace(patterns[i], '').trim();
+        if (next !== s) {
+          s = next;
+          changed = true;
+        }
+      }
+    }
+
+    return s;
+  }
+
+  function extractOpenSiteQuery(t) {
+    var s = stripOpenIntentPrefixes(t);
     if (!s) return null;
 
     // Avoid conflicting with in-page intents like "open first link" or "press button".
@@ -1169,7 +1201,7 @@
         .trim()
         .replace(/^(le|la|les|un|une)\b/, '')
         .trim()
-        .replace(/^(site|page|onglet)\b/, '')
+        .replace(/^(site|page|onglet|application|appli)\b/, '')
         .trim();
     }
 
@@ -1185,7 +1217,9 @@
       .trim()
       .replace(/^(new\s+)?tab\b/, '')
       .trim()
-      .replace(/^(website|site|page)\b/, '')
+      .replace(/^(website|site|page|app)\b/, '')
+      .trim()
+      .replace(/\bfor me\b/g, '')
       .trim()
       .replace(/\bplease\b/g, '')
       .trim();
@@ -1194,6 +1228,143 @@
     // If the remainder looks like another command, ignore.
     if (/^(scroll|read|focus|press|activate|next|previous|prev|repeat|stop)\b/.test(q)) return null;
     return q;
+  }
+
+  function isSummaryCommandText(text) {
+    var t = String(text || '').toLowerCase();
+    if (!t) return false;
+    return (
+      t.includes('summarize') ||
+      t.includes('summary') ||
+      t.includes('describe this page') ||
+      t.includes('what is this page') ||
+      t.includes("what's on this page") ||
+      t.includes('what is on this page') ||
+      t.includes("what's this page") ||
+      /r[ée]sum[ée]?.*cette page/.test(t) ||
+      /d[ée]cri(s|re).*cette page/.test(t) ||
+      /c[' ]?est quoi cette page/.test(t) ||
+      /qu[' ]?est[- ]ce que cette page/.test(t) ||
+      /ما هذه الصفحه/.test(t) ||
+      /ما هذه الصفحة/.test(t) ||
+      /ما هو محتوى الصفحة/.test(t) ||
+      /ملخص/.test(t) ||
+      /وصف الصفحة|صفحة شو هاي|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(t)
+    );
+  }
+
+  function isPageAssistantQuestionText(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t) return false;
+    if (isSummaryCommandText(t)) return true;
+    return (
+      /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
+      /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
+      /(أين أنا|اين انا|ساعدني هنا|ساعدني هون|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو المهم هون|ايش المهم هون|شو المهم هنا|ايش المهم هنا|احكيلي عن (?:هاي|هذه) الصفحة|احكيلي عن ه(?:اي|ذا) الموقع|دلني هون|دلني هنا|وجهني هون|وجهني هنا|شو في هون|ايش في هون|شو الموجود هون|ايش الموجود هون)/.test(t)
+    );
+  }
+
+  function isSessionFollowUpText(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t) return false;
+    return (
+      /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+      /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+      /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
+    );
+  }
+
+  var localAssistantSession = null;
+
+  function trimAssistantMemoryText(text, maxLen) {
+    var raw = String(text || '').replace(/\s+/g, ' ').trim();
+    var limit = typeof maxLen === 'number' ? maxLen : 240;
+    if (!raw) return '';
+    return raw.length > limit ? (raw.slice(0, Math.max(0, limit - 3)).trim() + '...') : raw;
+  }
+
+  function extractAssistantEntity(text) {
+    var raw = trimAssistantMemoryText(text, 160);
+    if (!raw || isSessionFollowUpText(raw)) return '';
+    return trimAssistantMemoryText(
+      raw
+        .replace(/^[“"'`]+|[”"'`]+$/g, '')
+        .replace(/^(who|what|when|where|why|how)\s+(is|are|was|were)\s+/i, '')
+        .replace(/^(explain|define|compare|tell me about|more about|what about)\s+/i, '')
+        .replace(/^(qui|que|qu[' ]?est[- ]?ce que|qu[' ]?est-ce que|explique|definis|définis|compare|parle[- ]?moi de|dis[- ]?moi)\s+/i, '')
+        .replace(/^(من|ما هو|ما هي|ما|اشرح|عر[ّ]ف|عرف|احكيلي عن|قل لي عن|خبرني عن|شو هو|ايش هو)\s+/i, '')
+        .replace(/^(the|a|an|le|la|les|un|une|ال)\s+/i, '')
+        .replace(/[?!.]+$/g, ''),
+      80
+    );
+  }
+
+  function buildLocalAssistantPageMemory(structure, summaryText) {
+    if (!structure) return null;
+    var privacy = structure && structure.privacy ? structure.privacy : {};
+    var sensitive = !!(privacy && (privacy.sensitivePage || Number(privacy.sensitiveInputCount || 0) > 0));
+    return {
+      url: trimAssistantMemoryText(structure.url, 280),
+      host: (function () {
+        try { return new URL(String(structure.url || '')).hostname.toLowerCase(); } catch (_err) { return ''; }
+      })(),
+      title: trimAssistantMemoryText(structure.title, 120),
+      topHeading: trimAssistantMemoryText(structure && structure.headings && structure.headings[0] ? structure.headings[0].label : '', 120),
+      activeLabel: sensitive ? '' : trimAssistantMemoryText(structure.activeLabel, 120),
+      summary: sensitive ? '' : trimAssistantMemoryText(summaryText, 260),
+      sensitivePage: sensitive,
+      sensitiveInputCount: Math.max(0, Number(privacy.sensitiveInputCount || 0))
+    };
+  }
+
+  function buildLocalAssistantSessionContext() {
+    if (!localAssistantSession) return null;
+    return {
+      lastPurpose: localAssistantSession.lastPurpose || '',
+      lastUserUtterance: localAssistantSession.lastUserUtterance || '',
+      lastEntity: localAssistantSession.lastEntity || '',
+      lastAssistantReply: localAssistantSession.lastAssistantReply || '',
+      lastAnswer: localAssistantSession.lastAnswer || '',
+      lastPage: localAssistantSession.lastPage || null,
+      lastAction: localAssistantSession.lastAction || '',
+      outputLanguage: localAssistantSession.outputLanguage || '',
+      detectedLanguage: localAssistantSession.detectedLanguage || '',
+      recognitionProvider: localAssistantSession.recognitionProvider || '',
+      domainHabits: null
+    };
+  }
+
+  function rememberLocalAssistantTurn(info) {
+    var existing = localAssistantSession || {};
+    var purpose = info && info.purpose ? String(info.purpose) : (existing.lastPurpose || '');
+    var speech = trimAssistantMemoryText((info && (info.speech || info.description)) || '', 260);
+    var answer = trimAssistantMemoryText((info && info.answer) || '', 260);
+    var summary = trimAssistantMemoryText((info && info.summary) || '', 260);
+    var structure = info && info.structure ? info.structure : null;
+    localAssistantSession = {
+      lastPurpose: purpose || existing.lastPurpose || '',
+      lastUserUtterance: trimAssistantMemoryText(info && info.input, 180) || existing.lastUserUtterance || '',
+      lastEntity: extractAssistantEntity(info && info.input) || existing.lastEntity || '',
+      lastAssistantReply: speech || answer || summary || existing.lastAssistantReply || '',
+      lastAnswer: answer || existing.lastAnswer || '',
+      lastPage: structure ? buildLocalAssistantPageMemory(structure, summary || speech) : (existing.lastPage || null),
+      lastAction: existing.lastAction || '',
+      outputLanguage: trimAssistantMemoryText(info && info.outputLanguage, 24) || existing.outputLanguage || '',
+      detectedLanguage: trimAssistantMemoryText(info && info.detectedLanguage, 24) || existing.detectedLanguage || '',
+      recognitionProvider: trimAssistantMemoryText(info && info.recognitionProvider, 24) || existing.recognitionProvider || ''
+    };
+  }
+
+  function assistantPurposeForText(text, sessionContext) {
+    if (isSummaryCommandText(text)) return 'summary';
+    if (isPageAssistantQuestionText(text)) return 'page';
+    if (isSessionFollowUpText(text)) {
+      var priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
+      if (priorPurpose === 'summary' || priorPurpose === 'page') return 'page';
+      if (priorPurpose === 'answer') return 'answer';
+      return 'auto';
+    }
+    return 'answer';
   }
 
   function parseCommand(text) {
@@ -1212,24 +1383,7 @@
     }
 
     // Summary/orientation triggers in English, French, and Arabic.
-    if (
-      t.includes('summarize') ||
-      t.includes('summary') ||
-      t.includes('describe this page') ||
-      t.includes('what is this page') ||
-      t.includes("what's on this page") ||
-      t.includes('what is on this page') ||
-      t.includes("what's this page") ||
-      /r[ée]sum[ée]?.*cette page/.test(t) ||
-      /d[ée]cri(s|re).*cette page/.test(t) ||
-      /c[' ]?est quoi cette page/.test(t) ||
-      /qu[' ]?est[- ]ce que cette page/.test(t) ||
-      /ما هذه الصفحه/.test(t) ||
-      /ما هذه الصفحة/.test(t) ||
-      /ما هو محتوى الصفحة/.test(t) ||
-      /ملخص/.test(t) ||
-      /وصف الصفحة|صفحة شو هاي|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(t)
-    ) {
+    if (isSummaryCommandText(t)) {
       return { type: 'summarize', command: original || 'Summarize this page' };
     }
 
@@ -1621,10 +1775,14 @@
     }
   }
 
-  async function assistantRequest(questionText, pageStructure) {
+  async function assistantRequest(questionText, pageStructure, turnContext) {
     var q = String(questionText || '').trim();
     if (!q) return false;
-    var structure = pageStructure || buildPageContextSnapshot();
+    var context = turnContext || {};
+    var sessionContext = buildLocalAssistantSessionContext();
+    var purpose = assistantPurposeForText(q, sessionContext);
+    var wantsPageContext = purpose === 'summary' || purpose === 'page';
+    var structure = wantsPageContext ? (pageStructure || buildPageContextSnapshot()) : null;
 
     await ensureOutputLanguageReady();
     speakTransient(translate('answering_question'), 2500);
@@ -1635,11 +1793,27 @@
           type: 'navable:assistant',
           input: q,
           outputLanguage: currentOutputLanguage(),
-          pageContext: true,
+          purpose: purpose,
+          pageContext: wantsPageContext,
           pageStructure: structure,
-          autoExecutePlan: true
+          autoExecutePlan: wantsPageContext,
+          detectedLanguage: context.detectedLanguage || '',
+          recognitionProvider: context.recognitionProvider || '',
+          pageUrl: structure && structure.url ? structure.url : location.href
         });
         if (res && res.ok === true && res.speech) {
+          var rememberedPurpose = purpose === 'auto' ? (res.mode === 'page' ? 'page' : 'answer') : purpose;
+          rememberLocalAssistantTurn({
+            input: q,
+            purpose: rememberedPurpose,
+            structure: structure,
+            speech: res.speech,
+            summary: res.summary || '',
+            answer: res.answer || '',
+            outputLanguage: currentOutputLanguage(),
+            detectedLanguage: context.detectedLanguage || '',
+            recognitionProvider: context.recognitionProvider || ''
+          });
           speak(String(res.speech), { mode: 'assertive' });
           return true;
         }
@@ -1658,14 +1832,38 @@
         body: JSON.stringify({
           input: q,
           outputLanguage: currentOutputLanguage(),
-          pageStructure: structure
+          pageStructure: structure,
+          purpose: purpose,
+          sessionContext: sessionContext
         })
       });
       var directData = await directResponse.json().catch(function () { return {}; });
+      if (
+        directResponse.ok &&
+        directData &&
+        directData.action &&
+        directData.action.type === 'open_site' &&
+        directData.action.query
+      ) {
+        await openSiteRequest(directData.action.query, directData.action.newTab !== false);
+        return true;
+      }
       if (directResponse.ok && directData && directData.speech) {
-        if (directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
+        if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
           await runPlan(directData.plan);
         }
+        var directRememberedPurpose = purpose === 'auto' ? (directData.mode === 'page' ? 'page' : 'answer') : purpose;
+        rememberLocalAssistantTurn({
+          input: q,
+          purpose: directRememberedPurpose,
+          structure: structure,
+          speech: directData.speech,
+          summary: directData.summary || '',
+          answer: directData.answer || '',
+          outputLanguage: currentOutputLanguage(),
+          detectedLanguage: context.detectedLanguage || '',
+          recognitionProvider: context.recognitionProvider || ''
+        });
         speak(String(directData.speech), { mode: 'assertive' });
         return true;
       }
@@ -1721,7 +1919,10 @@
         return true;
       }
       if (await tryIntentFallback(text, pageStructure)) return true;
-      if (await assistantRequest(text, pageStructure)) return true;
+      if (await assistantRequest(text, pageStructure, {
+        detectedLanguage: detectedLanguage || '',
+        recognitionProvider: provider || ''
+      })) return true;
       await languageReady;
       execCommand(null);
       return true;

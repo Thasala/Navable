@@ -65,6 +65,8 @@ test('buildPageStructure excludes sensitive inputs from snapshot', async ({ page
   expect(structure.counts.inputs).toBe(1);
   const names = structure.inputs.map((i: any) => i.name).sort();
   expect(names).toEqual(['city']);
+  expect(structure.privacy?.sensitiveInputCount).toBe(2);
+  expect(structure.privacy?.sensitivePage).toBe(true);
 });
 
 test('buildPageStructure ignores Navable injected output UI', async ({ page }) => {

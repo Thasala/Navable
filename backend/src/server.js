@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI, { toFile } from 'openai';
 import swaggerUi from 'swagger-ui-express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getOpenApiSpec } from './openapi.js';
 
 dotenv.config();
@@ -288,13 +290,28 @@ function sanitizePlan(rawPlan) {
   return { steps };
 }
 
+function sanitizeAssistantAction(rawAction) {
+  if (!rawAction || typeof rawAction !== 'object' || Array.isArray(rawAction)) return null;
+  const type = typeof rawAction.type === 'string' ? rawAction.type.trim().toLowerCase() : '';
+  if (type !== 'open_site') return null;
+
+  const query = typeof rawAction.query === 'string' ? rawAction.query.trim() : '';
+  if (!query) return null;
+
+  return {
+    type: 'open_site',
+    query,
+    newTab: rawAction.newTab !== false
+  };
+}
+
 function getOpenAiClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }
 
-async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+async function callOpenAiSummarize(command, pageStructure, sessionContext, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
   if (settings.aiEnabled === false) {
     return null;
   }
@@ -306,9 +323,10 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
 
   const systemPrompt = [
     'You are an accessibility-oriented navigator assistant for a browser extension called Navable.',
-    'You receive a structured snapshot of a web page as JSON (pageStructure) and an optional user command string.',
+    'You receive a structured snapshot of a web page as JSON (pageStructure), an optional sessionContext object, and an optional user command string.',
     'pageStructure.excerpt may contain up to ~1200 characters of visible page text; prefer it for detail.',
     'pageStructure includes counts, headings, links, buttons, landmarks, activeLabel (focused element), lang, and URL.',
+    'sessionContext may include the last purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
     `You must answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user command explicitly requests another output language.`,
     'Your job for a blind user:',
     '- Give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
@@ -320,6 +338,7 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
     '',
     'Important rules:',
     '- Only use the information provided in pageStructure and command; do not hallucinate hidden content.',
+    '- Use sessionContext only as a short continuity hint. If it conflicts with the current pageStructure, prefer pageStructure.',
     '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, describe_page, wait_for_user_input, move_heading.',
     '- If you propose a plan, use ONLY those actions in plan.steps.',
     '- When referencing elements (links, headings, buttons, inputs), prefer their labels from the structure.',
@@ -340,6 +359,7 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
   const userContent = JSON.stringify({
     command: command || 'Summarize this page for a blind user.',
     pageStructure,
+    sessionContext: sessionContext || null,
     outputLanguage: normalizeOutputLanguage(outputLanguage)
   });
 
@@ -367,7 +387,13 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
   };
 }
 
-async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+async function callOpenAiAnswerQuestion(
+  question,
+  sessionContext,
+  settings = DEFAULT_SETTINGS,
+  outputLanguage = 'en',
+  resolvedQuestion = ''
+) {
   if (settings.aiEnabled === false) {
     return null;
   }
@@ -386,18 +412,31 @@ async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, o
           'You are a concise voice-first assistant for a browser extension called Navable.',
           `Answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user explicitly requests another language.`,
           'The user asked a general informational question.',
+          'Navable can open websites and web apps in the browser for the user.',
+          'You may receive a sessionContext object with the previous purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
+          'You may also receive a resolvedQuestion string. If resolvedQuestion is non-empty, treat it as the fully disambiguated version of the current request.',
           'The spoken question may be colloquial Arabic, dialectal Arabic, informal English, or Arabic-English code switching.',
+          'Use sessionContext only when it clearly helps resolve a short follow-up such as "tell me more" or "what about that".',
+          'If resolvedQuestion or sessionContext already identifies the topic, answer directly and do not ask the user to specify the topic again.',
+          'If sessionContext conflicts with the current question, prefer the current question.',
+          'If the user is asking Navable to open, navigate to, visit, launch, bring up, or take them to a website, web app, or named online service, do not refuse or say that you cannot do it.',
+          'For those browser-navigation requests, return an action object with type "open_site" and a short query such as "facebook", "gmail", or a URL. Keep answer empty or use a very short acknowledgment.',
+          'If the user says "app" but the destination is also available in a browser, treat it as an "open_site" request for the browser version.',
+          'If the user is asking for information about the service instead of asking to navigate there, answer normally and return action null.',
+          'Only return an action when the navigation intent is clear.',
           'Reply with 1 to 3 short sentences that are useful when read aloud.',
           'Do not use markdown, lists, headings, or emojis.',
           'If the question is ambiguous, ask one short clarifying question instead of guessing.',
           'If you do not know, say so briefly.',
-          'Return exactly one JSON object: { "answer": string }.'
+          'Return exactly one JSON object: { "answer": string, "action": null | { "type": "open_site", "query": string, "newTab": boolean } }.'
         ].join('\n')
       },
       {
         role: 'user',
         content: JSON.stringify({
           question: String(question || '').trim(),
+          resolvedQuestion: String(resolvedQuestion || '').trim(),
+          sessionContext: sessionContext || null,
           outputLanguage: normalizeOutputLanguage(outputLanguage)
         })
       }
@@ -413,7 +452,8 @@ async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, o
   }
 
   return {
-    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : ''
+    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
+    action: sanitizeAssistantAction(parsed.action)
   };
 }
 
@@ -446,12 +486,111 @@ function isPageContextIntentText(text) {
   if (!t) return false;
   if (isSummaryIntentText(t)) return true;
   return (
-    /\b(this page|that page|page|here|this site|website|site|heading|section|link|button|field|input|title|selection|focused)\b/.test(t) ||
-    /\b(scroll|read|focus|click|press|activate|open|move|next|previous|prev|help me here|where am i|what can i do here)\b/.test(t) ||
-    /\b(cette page|page|ici|site|site web|titre|section|lien|bouton|champ|selection|focus)\b/.test(t) ||
-    /\b(fais defiler|lis|ouvre|clique|active|va|suivant|precedent|précédent|ou suis-je|où suis-je|que puis-je faire ici)\b/.test(t) ||
-    /(هذه الصفحة|الصفحة|هنا|الموقع|العنوان|القسم|الرابط|الزر|الحقل|التحديد|العنصر المحدد)/.test(t) ||
-    /(مرر|اقر[أا]|افتح|اضغط|فعّل|فعل|انتقل|التالي|السابق|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|وين انا|على شو انا)/.test(t)
+    /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
+    /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
+    /(أين أنا|اين انا|ساعدني هنا|ساعدني هون|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو المهم هون|ايش المهم هون|شو المهم هنا|ايش المهم هنا|احكيلي عن (?:هاي|هذه) الصفحة|احكيلي عن ه(?:اي|ذا) الموقع|دلني هون|دلني هنا|وجهني هون|وجهني هنا|شو في هون|ايش في هون|شو الموجود هون|ايش الموجود هون)/.test(t)
+  );
+}
+
+function isFollowUpIntentText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+    /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+    /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
+  );
+}
+
+function trimSessionText(text, maxLen = 240) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.length > maxLen ? `${raw.slice(0, Math.max(0, maxLen - 3)).trim()}...` : raw;
+}
+
+function rewriteTopicPronouns(text, topic) {
+  const raw = trimSessionText(text, 240);
+  const subject = trimSessionText(topic, 120);
+  if (!raw || !subject) return raw;
+  return raw
+    .replace(/\bits\b/gi, `${subject}'s`)
+    .replace(/\btheir\b/gi, `${subject}'s`)
+    .replace(/\bit\b/gi, subject)
+    .replace(/\bthis\b/gi, subject)
+    .replace(/\bthat\b/gi, subject)
+    .replace(/\bthey\b/gi, subject)
+    .replace(/\bthem\b/gi, subject)
+    .replace(/\bhe\b/gi, subject)
+    .replace(/\bhim\b/gi, subject)
+    .replace(/\bshe\b/gi, subject)
+    .replace(/\bher\b/gi, subject);
+}
+
+function resolveAnswerQuestionWithSessionContext(question, sessionContext = null) {
+  const rawQuestion = trimSessionText(question, 240);
+  if (!rawQuestion) {
+    return { question: '', resolvedQuestion: '', resolvedFromSession: false, topic: '' };
+  }
+
+  const lastEntity = trimSessionText(sessionContext && sessionContext.lastEntity, 120);
+  const lastUserUtterance = trimSessionText(sessionContext && sessionContext.lastUserUtterance, 180);
+  const lastAnswer = trimSessionText(sessionContext && sessionContext.lastAnswer, 220);
+  const isFollowUp = isFollowUpIntentText(rawQuestion);
+
+  if (isFollowUp) {
+    if (lastEntity) {
+      return {
+        question: rawQuestion,
+        resolvedQuestion: `Tell me more about ${lastEntity}.`,
+        resolvedFromSession: true,
+        topic: lastEntity
+      };
+    }
+    if (lastUserUtterance && !isFollowUpIntentText(lastUserUtterance)) {
+      return {
+        question: rawQuestion,
+        resolvedQuestion: `Tell me more about: ${lastUserUtterance}`,
+        resolvedFromSession: true,
+        topic: lastUserUtterance
+      };
+    }
+    if (lastAnswer) {
+      return {
+        question: rawQuestion,
+        resolvedQuestion: `Tell me more about this previous answer: ${lastAnswer}`,
+        resolvedFromSession: true,
+        topic: lastAnswer
+      };
+    }
+  }
+
+  if (lastEntity) {
+    const rewritten = rewriteTopicPronouns(rawQuestion, lastEntity);
+    if (rewritten && rewritten !== rawQuestion) {
+      return {
+        question: rawQuestion,
+        resolvedQuestion: rewritten,
+        resolvedFromSession: true,
+        topic: lastEntity
+      };
+    }
+  }
+
+  return {
+    question: rawQuestion,
+    resolvedQuestion: rawQuestion,
+    resolvedFromSession: false,
+    topic: lastEntity
+  };
+}
+
+function isClarifyingAnswerText(answer) {
+  const t = String(answer || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(specify|clarify|which topic|what topic|which subject|what subject|more context|what would you like|which one)\b/.test(t) ||
+    /(pr[ée]ciser|quel sujet|quel thème|de quel sujet|sur quel sujet)/.test(t) ||
+    /(حدد|حدّد|أي موضوع|اي موضوع|عن ماذا|عن اي موضوع|أي شيء تقصد|اي شيء تقصد)/.test(t)
   );
 }
 
@@ -480,21 +619,22 @@ function buildAssistantSpeech(primaryText, suggestions = []) {
   return parts.join(' ').trim();
 }
 
-async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto') {
+async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto', sessionContext = null) {
   const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
   const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, settings);
   const text = String(input || '').trim();
   const resolvedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
-  const wantsSummary = resolvedPurpose === 'summary' || isSummaryIntentText(text);
-  const wantsPageAssistant =
-    !!pageStructure &&
-    (
-      resolvedPurpose === 'summary' ||
-      resolvedPurpose === 'page' ||
-      (!isGeneralKnowledgeQuestionText(text) || wantsSummary)
-    );
+  const priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
+  const followUpToPage = resolvedPurpose === 'auto' && isFollowUpIntentText(text) && (priorPurpose === 'page' || priorPurpose === 'summary');
+  const wantsSummary = resolvedPurpose === 'summary' || (resolvedPurpose !== 'answer' && isSummaryIntentText(text));
+  const wantsPageIntent =
+    resolvedPurpose === 'summary' ||
+    resolvedPurpose === 'page' ||
+    followUpToPage ||
+    (resolvedPurpose === 'auto' && isPageContextIntentText(text));
+  const wantsPageAssistant = !!pageStructure && wantsPageIntent;
 
-  if (wantsSummary && !pageStructure) {
+  if (wantsPageIntent && !pageStructure) {
     const summary = outputMessage('no_page_data', resolvedOutputLanguage, {}, outputCatalog);
     return {
       mode: 'page',
@@ -509,7 +649,7 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   if (wantsPageAssistant) {
     let result = null;
     try {
-      result = await callOpenAiSummarize(text, pageStructure, settings, resolvedOutputLanguage);
+      result = await callOpenAiSummarize(text, pageStructure, sessionContext, settings, resolvedOutputLanguage);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[Navable backend] OpenAI page assistant error:', err);
@@ -545,11 +685,51 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   }
 
   let answerResult = null;
+  const resolvedAnswer = resolveAnswerQuestionWithSessionContext(text, sessionContext);
   try {
-    answerResult = await callOpenAiAnswerQuestion(text, settings, resolvedOutputLanguage);
+    answerResult = await callOpenAiAnswerQuestion(
+      text,
+      sessionContext,
+      settings,
+      resolvedOutputLanguage,
+      resolvedAnswer.resolvedQuestion !== resolvedAnswer.question ? resolvedAnswer.resolvedQuestion : ''
+    );
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[Navable backend] OpenAI answer error:', err);
+  }
+
+  if (
+    resolvedAnswer.resolvedFromSession &&
+    answerResult &&
+    answerResult.answer &&
+    isClarifyingAnswerText(answerResult.answer)
+  ) {
+    try {
+      answerResult = await callOpenAiAnswerQuestion(
+        resolvedAnswer.resolvedQuestion,
+        sessionContext,
+        settings,
+        resolvedOutputLanguage,
+        resolvedAnswer.resolvedQuestion
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[Navable backend] OpenAI follow-up retry error:', err);
+    }
+  }
+
+  const action = sanitizeAssistantAction(answerResult && answerResult.action);
+  if (action) {
+    return {
+      mode: 'action',
+      speech: answerResult && answerResult.answer ? answerResult.answer : '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [] },
+      action
+    };
   }
 
   if (!answerResult || !answerResult.answer) {
@@ -721,12 +901,12 @@ app.post('/api/translate-messages', async (req, res) => {
 
 app.post('/api/assistant', async (req, res) => {
   try {
-    const { input, pageStructure, outputLanguage, purpose } = req.body || {};
+    const { input, pageStructure, outputLanguage, purpose, sessionContext } = req.body || {};
     if (!input || typeof input !== 'string' || !input.trim()) {
       return res.status(400).json({ error: 'Missing input' });
     }
 
-    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto');
+    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto', sessionContext || null);
     if (result && result.ok === false) {
       return res.status(result.status || 503).json({ error: result.error || 'Assistant unavailable' });
     }
@@ -737,7 +917,8 @@ app.post('/api/assistant', async (req, res) => {
       summary: result.summary || '',
       answer: result.answer || '',
       suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
-      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] }
+      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] },
+      action: sanitizeAssistantAction(result.action)
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -746,7 +927,18 @@ app.post('/api/assistant', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[Navable backend] Listening on http://localhost:${port}`);
-});
+const isDirectRun = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+
+if (isDirectRun) {
+  app.listen(port, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[Navable backend] Listening on http://localhost:${port}`);
+  });
+}
+
+export {
+  app,
+  isClarifyingAnswerText,
+  resolveAnswerQuestionWithSessionContext,
+  runAssistant
+};
