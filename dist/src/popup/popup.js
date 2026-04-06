@@ -27,57 +27,51 @@ function setDescription(text) {
   el.textContent = text || '';
 }
 
-let lastVoiceStatus = null;
-
-function updateMicUiFromStatus(status) {
-  const btn = document.getElementById('btnMicToggle');
-  const statusEl = document.getElementById('micStatus');
-  if (!btn || !statusEl) return;
-
-  if (!status || status.ok !== true) {
-    btn.disabled = true;
-    btn.textContent = 'Voice unavailable';
-    statusEl.textContent = (status && status.error) ? String(status.error) : 'Voice status is unavailable.';
-    return;
-  }
-
-  if (!status.supports) {
-    btn.disabled = true;
-    btn.textContent = 'Voice not supported';
-    statusEl.textContent = 'Voice recognition is not supported in this browser.';
-    return;
-  }
-
-  btn.disabled = false;
-  if (!status.permissionGranted) {
-    btn.textContent = 'Enable microphone';
-    statusEl.textContent = 'Grant mic access once to enable voice on all webpages.';
-    return;
-  }
-
-  btn.textContent = status.listening ? 'Stop listening' : 'Start listening';
-  statusEl.textContent = status.listening ? 'Listening...' : 'Not listening.';
-}
-
-async function requestVoiceStatus() {
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'voice:getStatus' });
-    lastVoiceStatus = res || null;
-    return lastVoiceStatus;
-  } catch (err) {
-    lastVoiceStatus = { ok: false, error: String(err || 'voice-status-failed') };
-    return lastVoiceStatus;
-  }
+function setHelpPanelState(helpBtn, helpPanel, open) {
+  if (!helpBtn || !helpPanel) return;
+  const isOpen = !!open;
+  helpPanel.style.display = isOpen ? 'grid' : 'none';
+  helpPanel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+  helpBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  helpBtn.textContent = isOpen ? 'Hide examples' : 'Show examples';
 }
 
 async function refreshMicStatus() {
-  const status = await requestVoiceStatus();
-  updateMicUiFromStatus(status);
+  const btn = document.getElementById('btnMicToggle');
+  const statusEl = document.getElementById('micStatus');
+  if (!btn || !statusEl) return;
+  try {
+    const res = await sendToActiveTab({ type: 'navable:getSpeechStatus' });
+    if (!res) {
+      btn.disabled = true;
+      btn.textContent = 'Open a page to use voice';
+      statusEl.textContent = 'Voice tools work on web pages (http/https).';
+      return;
+    }
+    if (!res || !res.ok || !res.supports) {
+      btn.disabled = true;
+      btn.textContent = 'Voice not available';
+      statusEl.textContent = 'Voice input not available in this browser/page.';
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = res.listening ? 'Stop listening' : 'Start listening';
+    statusEl.textContent = res.listening ? 'Listening…' : 'Not listening.';
+  } catch (e) {
+    console.error(e);
+    const btn2 = document.getElementById('btnMicToggle');
+    const status2 = document.getElementById('micStatus');
+    if (btn2 && status2) {
+      btn2.disabled = true;
+      btn2.textContent = 'Voice not available';
+      status2.textContent = 'Voice input not available in this browser/page.';
+    }
+  }
 }
 
 async function handleSummarizeClick() {
   try {
-    setStatus('Summarizing page...');
+    setStatus('Summarizing page…');
     setDescription('');
     const res = await chrome.runtime.sendMessage({ type: 'planner:run', command: 'Summarize this page' });
     if (res?.ok) {
@@ -96,7 +90,7 @@ async function handleSummarizeClick() {
 
 async function handleListHeadingsClick() {
   try {
-    setStatus('Listing headings...');
+    setStatus('Listing headings…');
     setDescription('');
     const res = await sendToActiveTab({ type: 'navable:listHeadings' });
     if (!res) {
@@ -117,7 +111,7 @@ async function handleListHeadingsClick() {
 
 async function handleListLinksClick() {
   try {
-    setStatus('Listing links...');
+    setStatus('Listing links…');
     setDescription('');
     const res = await sendToActiveTab({ type: 'navable:listLinks' });
     if (!res) {
@@ -138,7 +132,7 @@ async function handleListLinksClick() {
 
 async function handleReadFocusedClick() {
   try {
-    setStatus('Reading focused element...');
+    setStatus('Reading focused element…');
     setDescription('');
     const res = await sendToActiveTab({ type: 'navable:readFocused' });
     if (!res) {
@@ -162,17 +156,11 @@ function wirePopup() {
     micBtn.addEventListener('click', async () => {
       try {
         const statusEl = document.getElementById('micStatus');
-        if (statusEl) statusEl.textContent = 'Updating microphone...';
-        const current = lastVoiceStatus || (await requestVoiceStatus());
-        const action = (current && current.permissionGranted) ? 'voice:toggle' : 'voice:requestPermission';
-        const res = await chrome.runtime.sendMessage({ type: action });
-        lastVoiceStatus = res || current || null;
-        updateMicUiFromStatus(lastVoiceStatus);
+        if (statusEl) statusEl.textContent = 'Toggling microphone…';
+        await sendToActiveTab({ type: 'speech', action: 'toggle' });
+        setTimeout(refreshMicStatus, 300);
       } catch (e) {
         console.error(e);
-        updateMicUiFromStatus({ ok: false, error: String(e || 'Mic toggle failed.') });
-      } finally {
-        setTimeout(refreshMicStatus, 200);
       }
     });
   }
@@ -192,19 +180,10 @@ function wirePopup() {
   const helpBtn = document.getElementById('btnHelp');
   const helpPanel = document.getElementById('helpPanel');
   if (helpBtn && helpPanel) {
+    setHelpPanelState(helpBtn, helpPanel, false);
     helpBtn.addEventListener('click', () => {
-      const isOpen = helpPanel.style.display === 'block';
-      helpPanel.style.display = isOpen ? 'none' : 'block';
-      helpPanel.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
-    });
-  }
-
-  if (chrome?.runtime?.onMessage?.addListener) {
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (msg && msg.type === 'voice:status') {
-        lastVoiceStatus = msg.status || lastVoiceStatus;
-        updateMicUiFromStatus(lastVoiceStatus);
-      }
+      const isOpen = helpPanel.getAttribute('aria-hidden') !== 'false';
+      setHelpPanelState(helpBtn, helpPanel, isOpen);
     });
   }
 

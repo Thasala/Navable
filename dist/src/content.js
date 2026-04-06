@@ -1,8 +1,3 @@
-// Content script responsibilities:
-// - inspect the active page
-// - parse recognized voice text into Navable commands
-// - execute those commands against the DOM
-// Microphone permission and speech recognition stay in the extension offscreen document.
 (function () {
   console.log('[Navable] content script loaded on', location.href);
 
@@ -51,7 +46,45 @@
     return String(lang || 'en-US');
   }
 
+  function normalizeLanguageMode(mode, fallbackLanguage) {
+    if (i18n && typeof i18n.normalizeLanguageMode === 'function') {
+      return i18n.normalizeLanguageMode(mode, fallbackLanguage);
+    }
+    if (!String(mode || '').trim()) return 'auto';
+    var normalized = normalizeOutputLanguage(mode || fallbackLanguage || 'en-US');
+    return normalized === 'ar' || normalized === 'en' ? normalized : 'auto';
+  }
+
+  function configuredLanguageMode(state) {
+    var source = state || settings || {};
+    return normalizeLanguageMode(source.languageMode, source.language || 'en-US');
+  }
+
+  function lockedOutputLanguage(state) {
+    var mode = configuredLanguageMode(state);
+    return mode === 'auto' ? '' : mode;
+  }
+
+  function recognitionLocalesForLanguage(language, preferredLocale) {
+    if (i18n && typeof i18n.recognitionLocalesForLanguage === 'function') {
+      return i18n.recognitionLocalesForLanguage(language, preferredLocale);
+    }
+    return [recognitionLocaleFor(preferredLocale || outputLocale(language))];
+  }
+
+  function configuredRecognitionLocale(state) {
+    var source = state || settings || {};
+    var mode = configuredLanguageMode(source);
+    var configuredLocale = recognitionLocaleFor(source.language || 'en-US');
+    if (mode === 'auto') return configuredLocale;
+    if (normalizeOutputLanguage(configuredLocale) === mode) return configuredLocale;
+    var candidates = recognitionLocalesForLanguage(mode, configuredLocale);
+    return candidates[0] || outputLocale(mode);
+  }
+
   function currentOutputLanguage() {
+    var locked = lockedOutputLanguage();
+    if (locked) return locked;
     return normalizeOutputLanguage(outputLanguage || settings.language || recogLang || 'en-US');
   }
 
@@ -91,6 +124,11 @@
   }
 
   function setOutputLanguageFromTranscript(text, detectedLanguage) {
+    var locked = lockedOutputLanguage();
+    if (locked) {
+      outputLanguage = locked;
+      return outputLanguage;
+    }
     if (detectedLanguage) {
       outputLanguage = normalizeOutputLanguage(detectedLanguage);
       return outputLanguage;
@@ -99,11 +137,83 @@
     return outputLanguage;
   }
 
+  function detectRecognitionLanguage(text, detectedLanguage) {
+    var locked = lockedOutputLanguage();
+    if (locked) return locked;
+    if (detectedLanguage) {
+      return normalizeOutputLanguage(detectedLanguage);
+    }
+    if (i18n && typeof i18n.detectLanguage === 'function') {
+      return i18n.detectLanguage(text, normalizeOutputLanguage(recogLang || settings.language || 'en-US'));
+    }
+    return normalizeOutputLanguage(recogLang || settings.language || 'en-US');
+  }
+
   function recognitionLocaleFor(lang) {
     var raw = String(lang || '').trim();
     if (!raw) return String(recogLang || settings.language || 'en-US');
     if (raw.indexOf('-') >= 0 || raw.indexOf('_') >= 0) return raw.replace(/_/g, '-');
     return outputLocale(raw);
+  }
+
+  function recognitionCandidateLocales() {
+    var seen = {};
+    var list = [];
+    var mode = configuredLanguageMode();
+
+    function pushLocale(locale) {
+      var normalized = recognitionLocaleFor(locale);
+      var key = String(normalized || '').toLowerCase();
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      list.push(normalized);
+    }
+
+    function pushLanguage(language, preferredLocale) {
+      var locales = recognitionLocalesForLanguage(language, preferredLocale);
+      for (var i = 0; i < locales.length; i++) pushLocale(locales[i]);
+    }
+
+    pushLocale(recogLang || configuredRecognitionLocale());
+    pushLocale(configuredRecognitionLocale());
+
+    if (mode === 'auto') {
+      var primary = normalizeOutputLanguage(recogLang || currentOutputLanguage() || settings.language || 'en-US');
+      var secondary = primary === 'ar' ? 'en' : 'ar';
+      pushLanguage(secondary, secondary === normalizeOutputLanguage(settings.language || '') ? settings.language : outputLocale(secondary));
+      pushLanguage(primary, settings.language || outputLocale(primary));
+      pushLanguage(currentOutputLanguage(), recogLang || settings.language || 'en-US');
+    } else {
+      pushLanguage(mode, settings.language || outputLocale(mode));
+    }
+
+    return list;
+  }
+
+  function maybeRotateRecognitionLocale() {
+    var now = Date.now();
+    if (!lastRecognitionResultAt || now - lastRecognitionResultAt > 15000) return false;
+    if (now - lastRecognitionLocaleRotateAt < 2500) return false;
+
+    var locales = recognitionCandidateLocales();
+    if (!locales.length) return false;
+
+    var currentKey = String(recogLang || '').toLowerCase();
+    var currentIndex = -1;
+    for (var i = 0; i < locales.length; i++) {
+      if (String(locales[i] || '').toLowerCase() === currentKey) {
+        currentIndex = i;
+        break;
+      }
+    }
+
+    var nextLocale = locales[(currentIndex + 1 + locales.length) % locales.length];
+    if (!nextLocale || String(nextLocale).toLowerCase() === currentKey) return false;
+
+    lastRecognitionLocaleRotateAt = now;
+    recogLang = nextLocale;
+    refreshRecognizer({ restart: true, delayMs: 80 });
+    return true;
   }
 
   // Fallback hotkey: Alt+Shift+;
@@ -191,12 +301,12 @@
         }
         return true;
       }
-      if (msg && (msg.type === 'VOICE_COMMAND' || msg.type === 'navable:voiceTranscript')) {
+      if (msg && msg.type === 'navable:getSpeechStatus') {
         try {
-          handleVoiceCommandText(msg.text || '');
-          sendResponse && sendResponse({ ok: true });
+          var supports = !!(speech && speech.supportsRecognition && speech.supportsRecognition());
+          sendResponse && sendResponse({ ok: true, supports: supports, listening: !!listening });
         } catch (err) {
-          sendResponse && sendResponse({ ok: false, error: String(err || 'voice command failed') });
+          sendResponse && sendResponse({ ok: false, error: String(err || 'status failed') });
         }
         return true;
       }
@@ -225,7 +335,7 @@
   var overlayMarkers = [];
   var observer; // mutation observer
   var scanDebounce;
-  var settings = { language: 'en-US', overlay: false, autostart: true };
+  var settings = { language: 'en-US', languageMode: 'auto', overlay: false, autostart: true };
 
   function isHidden(el) {
     if (!el || !el.isConnected) return true;
@@ -697,14 +807,26 @@
   };
 
   // -------------------------------
-  // Voice command output + execution
+  // Voice input/output (prototype)
   // -------------------------------
 
+  var speech = window.NavableSpeech || {};
+  var recognizer = null;
+  var listening = false; // desired state for this tab (when active)
+  var manualListening = null; // null = follow autostart; true = force on; false = force off
+  var settingsLoaded = false;
   var lastSpoken = '';
   var lastUnknownCmdAt = 0;
+  var lastMicBusyAt = 0;
   var recogLang = 'en-US';
   var outputLanguage = 'en';
   var transientRestoreTimer = null;
+  var startRetryTimer = null;
+  var startRetryCount = 0;
+  var outputOpen = false;
+  var recognizerRefreshTimer = null;
+  var lastRecognitionResultAt = 0;
+  var lastRecognitionLocaleRotateAt = 0;
   var voiceTurnInFlight = false;
   var voiceTurnResumeTimer = null;
   var suppressedSpeechDepth = 0;
@@ -715,11 +837,24 @@
     transientRestoreTimer = null;
   }
 
+  function clearStartRetryTimer() {
+    if (!startRetryTimer) return;
+    try { clearTimeout(startRetryTimer); } catch (_err) { /* ignore */ }
+    startRetryTimer = null;
+  }
+
+  function clearRecognizerRefreshTimer() {
+    if (!recognizerRefreshTimer) return;
+    try { clearTimeout(recognizerRefreshTimer); } catch (_err) { /* ignore */ }
+    recognizerRefreshTimer = null;
+  }
+
   function clearVoiceTurnResumeTimer() {
     if (!voiceTurnResumeTimer) return;
     try { clearTimeout(voiceTurnResumeTimer); } catch (_err) { /* ignore */ }
     voiceTurnResumeTimer = null;
   }
+
   function getLiveRegion(mode) {
     var m = mode === 'assertive' ? 'assertive' : 'polite';
     return document.getElementById('navable-live-region-' + m);
@@ -770,35 +905,227 @@
     speak(text, { transient: true, restoreMs: restoreMs });
   }
 
+  function isVoiceSupported() {
+    return !!(speech && speech.supportsRecognition && speech.supportsRecognition());
+  }
+
+  function isPageActiveForVoice() {
+    try {
+      if (document.visibilityState && document.visibilityState !== 'visible') return false;
+      return true;
+    } catch (_err) {
+      return true;
+    }
+  }
+
+  function computeShouldListen() {
+    if (outputOpen) return false;
+    if (voiceTurnInFlight) return false;
+    if (!isPageActiveForVoice()) return false;
+    if (manualListening === true) return true;
+    if (manualListening === false) return false;
+    // Avoid auto-starting before we've checked stored settings.
+    if (
+      !settingsLoaded &&
+      typeof chrome !== 'undefined' &&
+      chrome.storage &&
+      chrome.storage.sync
+    ) {
+      return false;
+    }
+    return !!(settings && settings.autostart);
+  }
+
   function beginVoiceTurn() {
     if (voiceTurnInFlight) return false;
     clearVoiceTurnResumeTimer();
     voiceTurnInFlight = true;
+    syncListening({ announce: false });
     return true;
   }
 
   function finishVoiceTurn(opts) {
     opts = opts || {};
     clearVoiceTurnResumeTimer();
+    voiceTurnInFlight = false;
     var delayMs = typeof opts.delayMs === 'number' ? opts.delayMs : 900;
     if (delayMs <= 0) {
-      voiceTurnInFlight = false;
+      syncListening({ announce: false });
       return;
     }
     voiceTurnResumeTimer = setTimeout(function () {
       voiceTurnResumeTimer = null;
-      voiceTurnInFlight = false;
+      if (!voiceTurnInFlight) {
+        syncListening({ announce: false });
+      }
     }, Math.max(0, delayMs));
   }
 
-  function toggleListening() {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speakTransient(translate('speech_not_available'), 2500);
+  function refreshRecognizer(opts) {
+    opts = opts || {};
+    clearStartRetryTimer();
+    clearRecognizerRefreshTimer();
+    startRetryCount = 0;
+
+    var shouldResume = opts.restart !== false && computeShouldListen();
+    var delayMs = typeof opts.delayMs === 'number' ? opts.delayMs : 180;
+    var oldRecognizer = recognizer;
+
+    recognizer = null;
+    listening = false;
+
+    if (oldRecognizer) {
+      try { oldRecognizer.stop({ silent: true }); } catch (_err) { /* ignore */ }
+    }
+
+    if (!shouldResume) return;
+
+    recognizerRefreshTimer = setTimeout(function () {
+      recognizerRefreshTimer = null;
+      if (computeShouldListen()) startListening({ announce: false });
+    }, oldRecognizer ? Math.max(0, delayMs) : 0);
+  }
+
+  function maybeRefreshRecognizerLanguage(text, detectedLanguage, provider) {
+    if (String(provider || '').toLowerCase() !== 'native') return;
+    var nextLanguage = detectRecognitionLanguage(text, detectedLanguage);
+    var languageCandidates = recognitionLocalesForLanguage(nextLanguage, settings.language || recogLang || outputLocale(nextLanguage));
+    var nextLocale = languageCandidates[0] || recognitionLocaleFor(nextLanguage);
+    var mode = configuredLanguageMode();
+    if (mode !== 'auto' && normalizeOutputLanguage(nextLocale) !== mode) return;
+    if (!nextLocale) return;
+    if (String(recogLang || '').toLowerCase() === String(nextLocale).toLowerCase()) return;
+    recogLang = nextLocale;
+    refreshRecognizer({ restart: true });
+  }
+
+  function ensureRecognizer() {
+    if (recognizer || !isVoiceSupported()) return recognizer;
+    recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
+    recognizer.on('result', function (ev) {
+      if (!ev || !ev.transcript) return;
+      if (voiceTurnInFlight) return;
+      handleTranscript(ev.transcript, ev.language || '', ev.provider || '');
+    });
+    recognizer.on('error', function (e) {
+      try {
+        var code = e && e.error ? String(e.error) : 'unknown';
+        var provider = e && e.provider ? String(e.provider) : '';
+        if (code !== 'no-speech') {
+          console.warn('[Navable] speech error', code);
+        }
+        if (code === 'start-failed' || code === 'audio-capture' || code === 'aborted') {
+          // Common when another tab/window is still holding the mic. Retry quietly while we still want to listen.
+          if (computeShouldListen()) {
+            var now2 = Date.now();
+            if (now2 - lastMicBusyAt > 15000) {
+              lastMicBusyAt = now2;
+              speakTransient(translate('microphone_busy_retry'), 3500);
+            }
+            clearStartRetryTimer();
+            startRetryCount = Math.min(10, startRetryCount + 1);
+            var backoff = Math.min(2000, 150 * startRetryCount);
+            startRetryTimer = setTimeout(function () {
+              if (!computeShouldListen()) return;
+              try { ensureRecognizer(); if (recognizer) recognizer.start(); } catch (_err) { /* ignore */ }
+            }, backoff);
+            return;
+          }
+          return;
+        }
+	        if (code === 'no-speech') {
+	          // If native fallback was just working in another language, try the next locale.
+	          if (provider === 'native' && maybeRotateRecognitionLocale()) return;
+	          return;
+	        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
+	          listening = false;
+	          manualListening = false;
+	          speak(translate('speech_not_allowed'));
+	        } else if (code === 'network') {
+	          listening = false;
+	          manualListening = false;
+	          speak(translate('speech_network_issue'));
+	        } else {
+	          speak(translate('speech_problem_retry'));
+	        }
+      } catch (_err) {
+        // ignore secondary failures
+      }
+    });
+    recognizer.on('start', function () {
+      startRetryCount = 0;
+      clearStartRetryTimer();
+      console.log('[Navable] listening');
+    });
+    recognizer.on('end', function () { console.log('[Navable] speech recognition ended'); });
+    return recognizer;
+  }
+
+  function startListening(opts) {
+    opts = opts || {};
+    clearStartRetryTimer();
+    startRetryCount = 0;
+    ensureRecognizer();
+    if (!recognizer) {
+      if (opts.announce !== false) speak(translate('speech_not_available'));
+      listening = false;
       return;
     }
-    chrome.runtime.sendMessage({ type: 'voice:toggle' }).catch(function () {
-      speakTransient(translate('speech_problem_retry'), 3000);
-    });
+    listening = true;
+    if (opts.announce) speak(translate('listening_help'));
+    try { recognizer.start(); } catch (_err) { /* errors are handled via recognizer error events */ }
+  }
+
+  function stopListening(opts) {
+    opts = opts || {};
+    listening = false;
+    clearStartRetryTimer();
+    startRetryCount = 0;
+    if (opts.announce) speak(translate('stopped_listening'));
+    try { if (recognizer) recognizer.stop(); } catch (_err) { /* ignore */ }
+  }
+
+  function syncListening(opts) {
+    opts = opts || {};
+    var should = computeShouldListen();
+    if (should && !listening) startListening(opts);
+    else if (!should && listening) stopListening(opts);
+  }
+
+  function toggleListening() {
+    var currentlyOn = computeShouldListen();
+    manualListening = currentlyOn ? false : true;
+    syncListening({ announce: true });
+  }
+
+  // Pause listening while the Navable output overlay is open to avoid SR/TTS feedback loops.
+  try {
+    window.addEventListener(
+      'navable:output-open',
+      function (e) {
+        try {
+          outputOpen = !!(e && e.detail && e.detail.open);
+        } catch (_err) {
+          outputOpen = false;
+        }
+        syncListening({ announce: false });
+      },
+      { capture: true }
+    );
+  } catch (_e) {
+    // ignore
+  }
+
+  // Auto-pause/resume based on tab visibility/focus so multiple open tabs don't contend for speech recognition.
+  try {
+    document.addEventListener('visibilitychange', function () {
+      syncListening({ announce: false });
+    }, { capture: true });
+    window.addEventListener('focus', function () { syncListening({ announce: false }); }, { capture: true });
+    window.addEventListener('blur', function () { syncListening({ announce: false }); }, { capture: true });
+    window.addEventListener('pagehide', function () { stopListening({ announce: false }); }, { capture: true });
+  } catch (_err) {
+    // ignore
   }
 
   function matchesAnyPattern(text, patterns) {
@@ -812,13 +1139,13 @@
     var s = String(t || '').trim().toLowerCase();
     if (!s) return null;
 
-    var en = s.match(/^(search|google|look up|find)\s+(for\s+)?(.+)$/);
+    var en = s.match(/^(search|google|look up|find|search up|check)\s+(for\s+)?(.+)$/);
     if (en && en[3]) return 'search for ' + String(en[3]).trim();
 
     var fr = s.match(/^(cherche|recherche)\s+(.+)$/);
     if (fr && fr[2]) return 'search for ' + String(fr[2]).trim();
 
-    var ar = s.match(/^(ابحث|فتش)(\s+عن)?\s+(.+)$/);
+    var ar = s.match(/^(ابحث|فتش|دو[ّو]?ر|طل[ّ]?ع)(\s+عن)?\s+(.+)$/);
     if (ar && ar[3]) return 'search for ' + String(ar[3]).trim();
 
     return null;
@@ -832,7 +1159,7 @@
     if (/\b(link|button|heading|lien|bouton|titre)\b|رابط|زر|عنوان/.test(s)) return null;
 
     // Arabic website intents.
-    var ar = s.match(/^(افتح|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى)\s+(.+)$/);
+    var ar = s.match(/^(افتح(?:\s+لي)?|خذني\s+على|خذني\s+إلى|خذني\s+الى|وديني\s+على|وديني\s+إلى|وديني\s+الى|اذهب\s+إلى|اذهب\s+الى|روح\s+على|روح\s+إلى|روح\s+الى|انتقل\s+إلى|انتقل\s+الى|خليني\s+أروح\s+على|خليني\s+اروح\s+على|خلينا\s+نروح\s+على)\s+(.+)$/);
     if (ar && ar[2]) return String(ar[2]).trim();
 
     // French website intents.
@@ -847,10 +1174,10 @@
     }
 
     // English: flexible website intents.
-    if (!/^(open|navigate to|take me to|go to|visit|bring up|launch)\b/.test(s)) return null;
+    if (!/^(open|open up|navigate to|take me to|go to|visit|bring up|launch|pull up)\b/.test(s)) return null;
 
     var q = s
-      .replace(/^(open(\s+up)?|navigate to|take me to|go to|visit|bring up|launch)\b/, '')
+      .replace(/^(open(\s+up)?|navigate to|take me to|go to|visit|bring up|launch|pull up)\b/, '')
       .trim()
       .replace(/^(me|for me)\b/, '')
       .trim()
@@ -869,23 +1196,6 @@
     return q;
   }
 
-  function extractCompoundSiteSearchQuery(text) {
-    var raw = String(text || '').trim();
-    if (!raw) return null;
-    var match = raw.match(/^(?:open|navigate to|go to|take me to)\s+(.+?)\s+and\s+(?:search|google)\s+(?:for\s+)?(.+?)\s*$/i);
-    if (!match || !match[1] || !match[2]) return null;
-
-    var siteQuery = String(match[1] || '')
-      .replace(/^(a|an|the)\s+/i, '')
-      .replace(/^(new\s+)?tab\s+/i, '')
-      .replace(/^(website|site|page)\s+/i, '')
-      .replace(/\bplease\b/gi, '')
-      .trim();
-    var searchQuery = String(match[2] || '').trim();
-    if (!siteQuery || !searchQuery) return null;
-    return 'search ' + searchQuery + ' on ' + siteQuery;
-  }
-
   function parseCommand(text) {
     var original = String(text || '');
     var t = original.trim().toLowerCase();
@@ -895,8 +1205,8 @@
 
     // Help / examples.
     if (
-      /^(help|help me|commands|show commands|what can i say\??|aide|montre les commandes|que puis-je dire\??)$/.test(t) ||
-      /مساعدة/.test(t)
+      /^(help|help me|commands|show commands|what can i say\??|what can you do\??|aide|montre les commandes|que puis-je dire\??)$/.test(t) ||
+      /مساعدة|شو الاوامر|ايش الاوامر|شو بقدر احكي|ايش بقدر احكي/.test(t)
     ) {
       return { type: 'help' };
     }
@@ -918,14 +1228,9 @@
       /ما هذه الصفحة/.test(t) ||
       /ما هو محتوى الصفحة/.test(t) ||
       /ملخص/.test(t) ||
-      /وصف الصفحة/.test(t)
+      /وصف الصفحة|صفحة شو هاي|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(t)
     ) {
       return { type: 'summarize', command: original || 'Summarize this page' };
-    }
-
-    var compoundSiteSearchQuery = extractCompoundSiteSearchQuery(original);
-    if (compoundSiteSearchQuery) {
-      return { type: 'open_site', query: compoundSiteSearchQuery, newTab: true };
     }
 
     var searchQuery = extractSearchSiteQuery(t);
@@ -935,13 +1240,13 @@
     var siteQuery = extractOpenSiteQuery(t);
     if (siteQuery) return { type: 'open_site', query: siteQuery, newTab: true };
 
-    if (matchesAnyPattern(t, [/(scroll )?down/, /scroll down/, /\bdescend(s)?\b/, /plus bas/, /انزل|نز[ّل]|مرر.*(للأسفل|للاسفل)/])) return { type: 'scroll', dir: 'down' };
-    if (matchesAnyPattern(t, [/(scroll )?up/, /scroll up/, /\bmonte\b/, /plus haut/, /اطلع|اصعد|مرر.*(للأعلى|للاعلى)/])) return { type: 'scroll', dir: 'up' };
-    if (matchesAnyPattern(t, [/\btop\b/, /scroll (to )?top/, /en haut/, /أعلى الصفحة|اعلى الصفحة/])) return { type: 'scroll', dir: 'top' };
-    if (matchesAnyPattern(t, [/\bbottom\b/, /scroll (to )?bottom/, /en bas/, /أسفل الصفحة|اسفل الصفحة/])) return { type: 'scroll', dir: 'bottom' };
-    if (matchesAnyPattern(t, [/read (the )?title/, /read title/, /lis le titre/, /quel est le titre/, /اقر[أا] العنوان|ما عنوان الصفحة/])) return { type: 'read', what: 'title' };
+    if (matchesAnyPattern(t, [/(scroll )?down/, /scroll down/, /\bdescend(s)?\b/, /plus bas/, /انزل|نز[ّل]|مرر.*(للأسفل|للاسفل|لتحت)|لتحت|تحت شوي|كم[ّ]?ل لتحت/])) return { type: 'scroll', dir: 'down' };
+    if (matchesAnyPattern(t, [/(scroll )?up/, /scroll up/, /\bmonte\b/, /plus haut/, /اطلع|طلع|اصعد|مرر.*(للأعلى|للاعلى|لفوق)|لفوق|فوق شوي|كم[ّ]?ل لفوق/])) return { type: 'scroll', dir: 'up' };
+    if (matchesAnyPattern(t, [/\btop\b/, /scroll (to )?top/, /en haut/, /أعلى الصفحة|اعلى الصفحة|لفوق للاخر|اطلع فوق/])) return { type: 'scroll', dir: 'top' };
+    if (matchesAnyPattern(t, [/\bbottom\b/, /scroll (to )?bottom/, /en bas/, /أسفل الصفحة|اسفل الصفحة|لتحت للاخر|انزل تحت/])) return { type: 'scroll', dir: 'bottom' };
+    if (matchesAnyPattern(t, [/read (the )?title/, /read title/, /lis le titre/, /quel est le titre/, /اقر[أا] العنوان|ما عنوان الصفحة|شو عنوان الصفحة|ايش عنوان الصفحة/])) return { type: 'read', what: 'title' };
     if (matchesAnyPattern(t, [/^read (the )?selection/, /^read selected/, /lis la s[ée]lection/, /اقر[أا] التحديد/])) return { type: 'read', what: 'selection' };
-    if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا/])) return { type: 'read', what: 'focused' };
+    if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا|شو العنصر الحالي|ايش العنصر الحالي|وين انا واقف|على شو انا/])) return { type: 'read', what: 'focused' };
 
     // Explicit label-based intents first
     if ((/^open/.test(t) || /^click/.test(t)) && /link/.test(t) && (label = extractLabel(t, 'link'))) return { type: 'open', target: 'link', label: label };
@@ -981,8 +1286,8 @@
     if (/next .*heading/.test(t) || /^next heading/.test(t)) return { type: 'move', target: 'heading', dir: 'next' };
     if (/previous .*heading/.test(t) || /^previous heading/.test(t) || /prev .*heading/.test(t)) return { type: 'move', target: 'heading', dir: 'prev' };
 
-    if (/repeat|r[ée]p[èe]te|كرر/.test(t)) return { type: 'repeat' };
-    if (/stop|arr[êe]te|stoppe|توقف|قف|اسكت/.test(t)) return { type: 'stop' };
+    if (/repeat|say that again|r[ée]p[èe]te|كرر|عيد/.test(t)) return { type: 'repeat' };
+    if (/stop|stop listening|cancel|arr[êe]te|stoppe|توقف|قف|وقف|خلاص|اسكت/.test(t)) return { type: 'stop' };
     return null;
   }
 
@@ -1316,12 +1621,6 @@
     }
   }
 
-  function handleVoiceCommandText(text) {
-    handleTranscript(text, '', '').catch(function (err) {
-      console.warn('[Navable] voice command handling failed', err);
-    });
-  }
-
   async function assistantRequest(questionText, pageStructure) {
     var q = String(questionText || '').trim();
     if (!q) return false;
@@ -1403,10 +1702,12 @@
     }
   }
 
-  async function handleTranscript(text, detectedLanguage, _provider) {
+  async function handleTranscript(text, detectedLanguage, provider) {
     if (!beginVoiceTurn()) return false;
     console.log('[Navable] Recognized:', text);
     try {
+      lastRecognitionResultAt = Date.now();
+      maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
       setOutputLanguageFromTranscript(text, detectedLanguage);
       var languageReady = ensureOutputLanguageReady();
       var cmd = parseCommand(text);
@@ -1436,27 +1737,60 @@
     if (e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) { toggleListening(); }
   }, { capture: true });
 
+	  // Allow popup/background to toggle listening
+	  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+	    chrome.runtime.onMessage.addListener((msg) => {
+	      if (msg && msg.type === 'speech') {
+	        if (msg.action === 'toggle') toggleListening();
+	        if (msg.action === 'start') { manualListening = true; syncListening({ announce: true }); }
+	        if (msg.action === 'stop') { manualListening = false; syncListening({ announce: true }); }
+	      }
+	    });
+	  }
+
 	  // Settings: load and react to changes
 	  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
 	    try {
 	      chrome.storage.sync.get({ navable_settings: settings }, (res) => {
 	        var s = res && res.navable_settings ? res.navable_settings : settings;
 	        var autostart = typeof s.autostart === 'boolean' ? s.autostart : true;
-	        var nextRecogLang = recognitionLocaleFor(s.language || 'en-US');
-	        settings = { language: s.language || 'en-US', overlay: !!s.overlay, autostart: autostart };
+	        var nextLanguageMode = normalizeLanguageMode(s.languageMode, s.language || 'en-US');
+	        var nextSettings = {
+	          language: s.language || 'en-US',
+	          languageMode: nextLanguageMode,
+	          overlay: !!s.overlay,
+	          autostart: autostart
+	        };
+	        var nextRecogLang = configuredRecognitionLocale(nextSettings);
+	        var recogLangChanged = String(nextRecogLang).toLowerCase() !== String(recogLang || '').toLowerCase();
+	        settings = nextSettings;
+	        settingsLoaded = true;
 	        recogLang = nextRecogLang;
-	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
+	        outputLanguage = lockedOutputLanguage(settings) || normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
+	        if (recogLangChanged) refreshRecognizer({ restart: true });
+	        else syncListening({ announce: false });
 	      });
 	      chrome.storage.onChanged && chrome.storage.onChanged.addListener((changes, area) => {
 	        if (area !== 'sync' || !changes.navable_settings) return;
 	        var s2 = changes.navable_settings.newValue || settings;
 	        var autostart2 = typeof s2.autostart === 'boolean' ? s2.autostart : true;
-	        var nextRecogLang2 = recognitionLocaleFor(s2.language || 'en-US');
-	        settings = { language: s2.language || 'en-US', overlay: !!s2.overlay, autostart: autostart2 };
+	        var nextLanguageMode2 = normalizeLanguageMode(s2.languageMode, s2.language || 'en-US');
+	        var nextSettings2 = {
+	          language: s2.language || 'en-US',
+	          languageMode: nextLanguageMode2,
+	          overlay: !!s2.overlay,
+	          autostart: autostart2
+	        };
+	        var nextRecogLang2 = configuredRecognitionLocale(nextSettings2);
+	        var recogLangChanged2 = String(nextRecogLang2).toLowerCase() !== String(recogLang || '').toLowerCase();
+	        settings = nextSettings2;
+	        settingsLoaded = true;
 	        recogLang = nextRecogLang2;
-	        outputLanguage = normalizeOutputLanguage(settings.language || 'en-US');
+	        outputLanguage = lockedOutputLanguage(settings) || normalizeOutputLanguage(settings.language || 'en-US');
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
+	        if (recogLangChanged2) refreshRecognizer({ restart: true });
+	        else syncListening({ announce: false });
 	      });
 	    } catch (_e) { /* storage not available in tests */ }
 	  }

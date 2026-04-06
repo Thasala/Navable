@@ -1,10 +1,5 @@
-// Background service worker responsibilities:
-// - keep microphone permission and speech recognition inside the extension origin
-// - own the offscreen document lifecycle
-// - forward recognized voice commands to the active tab content script
 // Test fallback: if chrome is missing (non-extension env), create a minimal shim so tests can run.
 if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
-  const localStore = {};
   window.chrome = {
     commands: {
       _listeners: [],
@@ -23,11 +18,7 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
       _created: [],
       onCreated: { addListener() {} },
       onUpdated: { addListener() {} },
-      onActivated: { addListener() {} },
       query() { return Promise.resolve([{ id: 1 }]); },
-      get(tabId) {
-        return Promise.resolve({ id: tabId || 1, url: 'https://example.com' });
-      },
       create(createProperties) {
         const url = createProperties && createProperties.url ? String(createProperties.url) : 'about:blank';
         chrome.tabs._created.push(url);
@@ -68,20 +59,14 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
     },
     runtime: {
       _listeners: [],
-      getURL(path) {
-        const p = String(path || '').replace(/^\/+/, '');
-        return 'chrome-extension://test-extension/' + p;
-      },
       onMessage: {
         addListener(fn) {
           chrome.runtime._listeners.push(fn);
         }
       },
-      onInstalled: { addListener() {} },
-      onStartup: { addListener() {} },
       sendMessage(payload) {
         return new Promise((resolve) => {
-          const listeners = (chrome.runtime._listeners || []);
+          const listeners = chrome.runtime._listeners || [];
           let responded = false;
           const sendResponse = (res) => {
             responded = true;
@@ -104,16 +89,6 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
       }
     },
     storage: {
-      local: {
-        get(defaults, cb) {
-          const out = Object.assign({}, defaults || {}, localStore);
-          cb(out);
-        },
-        set(values, cb) {
-          Object.assign(localStore, values || {});
-          if (typeof cb === 'function') cb();
-        }
-      },
       sync: {
         get(defaults, cb) { cb(defaults); }
       },
@@ -131,345 +106,6 @@ const NAVABLE_NEW_TAB_URL = (() => {
     return '';
   }
 })();
-
-const NAVABLE_EXTENSION_BASE_URL = (() => {
-  try {
-    return chrome && chrome.runtime && chrome.runtime.getURL
-      ? String(chrome.runtime.getURL(''))
-      : '';
-  } catch (_err) {
-    return '';
-  }
-})();
-
-const NAVABLE_OFFSCREEN_PATH = 'src/offscreen/offscreen.html';
-const NAVABLE_OFFSCREEN_URL = (() => {
-  try {
-    return chrome && chrome.runtime && chrome.runtime.getURL
-      ? String(chrome.runtime.getURL(NAVABLE_OFFSCREEN_PATH))
-      : '';
-  } catch (_err) {
-    return '';
-  }
-})();
-const VOICE_COMMAND_MESSAGE_TYPE = 'VOICE_COMMAND';
-const LEGACY_VOICE_COMMAND_MESSAGE_TYPE = 'navable:voiceTranscript';
-
-const NAVABLE_ONBOARDING_URL = (() => {
-  try {
-    return chrome && chrome.runtime && chrome.runtime.getURL
-      ? String(chrome.runtime.getURL('src/onboarding/welcome.html'))
-      : '';
-  } catch (_err) {
-    return '';
-  }
-})();
-
-const VOICE_STATE_STORAGE_KEY = 'navable_voice_state';
-
-const voiceState = {
-  supported: true,
-  permissionGranted: false,
-  listening: false,
-  lastError: '',
-  language: 'en-US'
-};
-
-let voiceStateLoaded = false;
-let offscreenCreationPromise = null;
-
-function fireAndForgetRuntimeMessage(payload) {
-  try {
-    if (!chrome?.runtime?.sendMessage) return;
-    const maybe = chrome.runtime.sendMessage(payload);
-    if (maybe && typeof maybe.catch === 'function') {
-      maybe.catch(() => {});
-    }
-  } catch (_err) {
-    // ignore messaging errors when no listeners are available
-  }
-}
-
-function mergeVoiceState(next) {
-  if (!next || typeof next !== 'object') return;
-  if (typeof next.supported === 'boolean') voiceState.supported = next.supported;
-  if (typeof next.permissionGranted === 'boolean') voiceState.permissionGranted = next.permissionGranted;
-  if (typeof next.listening === 'boolean') voiceState.listening = next.listening;
-  if (typeof next.lastError === 'string') voiceState.lastError = next.lastError;
-  if (typeof next.language === 'string' && next.language.trim()) voiceState.language = next.language.trim();
-}
-
-function voiceStatusPayload() {
-  return {
-    ok: true,
-    supports: !!voiceState.supported,
-    permissionGranted: !!voiceState.permissionGranted,
-    listening: !!voiceState.listening,
-    lastError: voiceState.lastError || '',
-    language: voiceState.language || 'en-US'
-  };
-}
-
-function broadcastVoiceStatus() {
-  fireAndForgetRuntimeMessage({ type: 'voice:status', status: voiceStatusPayload() });
-}
-
-function readLocalStorage(defaults) {
-  return new Promise((resolve) => {
-    if (!chrome?.storage?.local?.get) {
-      resolve(defaults || {});
-      return;
-    }
-    chrome.storage.local.get(defaults || {}, (res) => {
-      resolve(res || defaults || {});
-    });
-  });
-}
-
-function writeLocalStorage(values) {
-  return new Promise((resolve) => {
-    if (!chrome?.storage?.local?.set) {
-      resolve();
-      return;
-    }
-    chrome.storage.local.set(values || {}, () => resolve());
-  });
-}
-
-function readSyncSettings() {
-  return new Promise((resolve) => {
-    if (!chrome?.storage?.sync?.get) {
-      resolve({});
-      return;
-    }
-    chrome.storage.sync.get({ navable_settings: {} }, (res) => {
-      const s = res && res.navable_settings ? res.navable_settings : {};
-      resolve(s);
-    });
-  });
-}
-
-async function hydrateVoiceState() {
-  if (voiceStateLoaded) return voiceState;
-  const res = await readLocalStorage({ [VOICE_STATE_STORAGE_KEY]: {} });
-  const stored = res && res[VOICE_STATE_STORAGE_KEY] ? res[VOICE_STATE_STORAGE_KEY] : {};
-  mergeVoiceState({
-    supported: stored.supported !== false,
-    permissionGranted: !!stored.permissionGranted,
-    listening: false,
-    lastError: stored.lastError ? String(stored.lastError) : '',
-    language: stored.language ? String(stored.language) : 'en-US'
-  });
-  voiceStateLoaded = true;
-  return voiceState;
-}
-
-async function persistVoiceState() {
-  await writeLocalStorage({
-    [VOICE_STATE_STORAGE_KEY]: {
-      supported: !!voiceState.supported,
-      permissionGranted: !!voiceState.permissionGranted,
-      listening: !!voiceState.listening,
-      lastError: voiceState.lastError || '',
-      language: voiceState.language || 'en-US'
-    }
-  });
-}
-
-function applyOffscreenStatus(status) {
-  if (!status || typeof status !== 'object') return;
-  mergeVoiceState({
-    supported: status.supports !== false,
-    permissionGranted: !!status.permissionGranted,
-    listening: !!status.listening,
-    lastError: status.lastError ? String(status.lastError) : '',
-    language: status.language ? String(status.language) : voiceState.language
-  });
-}
-
-function isNavableExtensionUrl(url) {
-  const u = String(url || '');
-  if (!u) return false;
-  if (!NAVABLE_EXTENSION_BASE_URL) return false;
-  return u.startsWith(NAVABLE_EXTENSION_BASE_URL);
-}
-
-async function hasOffscreenDocument() {
-  try {
-    if (chrome?.runtime?.getContexts && NAVABLE_OFFSCREEN_URL) {
-      const contexts = await chrome.runtime.getContexts({
-        contextTypes: ['OFFSCREEN_DOCUMENT'],
-        documentUrls: [NAVABLE_OFFSCREEN_URL]
-      });
-      return Array.isArray(contexts) && contexts.length > 0;
-    }
-  } catch (_err) {
-    // fall through to legacy API
-  }
-
-  try {
-    if (globalThis.clients && typeof globalThis.clients.matchAll === 'function' && NAVABLE_OFFSCREEN_URL) {
-      const matchedClients = await globalThis.clients.matchAll();
-      return matchedClients.some((client) => String(client?.url || '') === NAVABLE_OFFSCREEN_URL);
-    }
-  } catch (_err2) {
-    // ignore
-  }
-  return false;
-}
-
-async function ensureOffscreenDocument() {
-  if (!chrome?.offscreen?.createDocument || !NAVABLE_OFFSCREEN_PATH) {
-    mergeVoiceState({ supported: false, lastError: 'offscreen-unavailable' });
-    return false;
-  }
-
-  if (await hasOffscreenDocument()) {
-    return true;
-  }
-
-  if (offscreenCreationPromise) {
-    return offscreenCreationPromise;
-  }
-
-  offscreenCreationPromise = (async () => {
-    try {
-      await chrome.offscreen.createDocument({
-        url: NAVABLE_OFFSCREEN_PATH,
-        reasons: ['USER_MEDIA'],
-        justification: 'Keep microphone and speech recognition in extension context.'
-      });
-      return true;
-    } catch (err) {
-      mergeVoiceState({ supported: false, lastError: String(err || 'offscreen-create-failed') });
-      return false;
-    } finally {
-      offscreenCreationPromise = null;
-    }
-  })();
-
-  return offscreenCreationPromise;
-}
-
-async function sendVoiceActionToOffscreen(action, payload) {
-  const ready = await ensureOffscreenDocument();
-  if (!ready) {
-    return { ok: false, error: voiceState.lastError || 'offscreen-unavailable' };
-  }
-
-  try {
-    const res = await chrome.runtime.sendMessage({
-      type: 'voice:offscreen',
-      action,
-      payload: payload || {}
-    });
-    return res || { ok: false, error: 'offscreen-no-response' };
-  } catch (err) {
-    return { ok: false, error: String(err || 'offscreen-message-failed') };
-  }
-}
-
-async function requestExtensionMicrophonePermission() {
-  await hydrateVoiceState();
-  const res = await sendVoiceActionToOffscreen('requestPermission');
-  if (res && res.status) applyOffscreenStatus(res.status);
-  if (!res || !res.ok) {
-    mergeVoiceState({ lastError: res && res.error ? String(res.error) : 'mic-permission-failed' });
-  }
-  await persistVoiceState();
-  broadcastVoiceStatus();
-  return voiceStatusPayload();
-}
-
-async function startVoiceListeningInExtension(language) {
-  await hydrateVoiceState();
-  const settings = await readSyncSettings();
-  const lang = String(language || settings.language || voiceState.language || 'en-US');
-  mergeVoiceState({ language: lang });
-
-  const res = await sendVoiceActionToOffscreen('start', { language: lang });
-  if (res && res.status) applyOffscreenStatus(res.status);
-  if (!res || !res.ok) {
-    mergeVoiceState({ listening: false, lastError: res && res.error ? String(res.error) : 'voice-start-failed' });
-  }
-
-  await persistVoiceState();
-  broadcastVoiceStatus();
-  return voiceStatusPayload();
-}
-
-async function stopVoiceListeningInExtension() {
-  await hydrateVoiceState();
-  const res = await sendVoiceActionToOffscreen('stop');
-  if (res && res.status) applyOffscreenStatus(res.status);
-  if (!res || !res.ok) {
-    mergeVoiceState({ listening: false, lastError: res && res.error ? String(res.error) : 'voice-stop-failed' });
-  }
-
-  await persistVoiceState();
-  broadcastVoiceStatus();
-  return voiceStatusPayload();
-}
-
-async function getVoiceStatus() {
-  await hydrateVoiceState();
-  const settings = await readSyncSettings();
-  if (settings && settings.language) {
-    mergeVoiceState({ language: String(settings.language) });
-  }
-  return voiceStatusPayload();
-}
-
-async function syncVoiceWithSettings() {
-  await hydrateVoiceState();
-  const settings = await readSyncSettings();
-  const autostart = typeof settings.autostart === 'boolean' ? settings.autostart : true;
-  const language = settings.language ? String(settings.language) : voiceState.language;
-  mergeVoiceState({ language });
-
-  if (!voiceState.permissionGranted) {
-    await persistVoiceState();
-    broadcastVoiceStatus();
-    return;
-  }
-
-  const offscreenReady = await ensureOffscreenDocument();
-  if (!offscreenReady) {
-    await persistVoiceState();
-    broadcastVoiceStatus();
-    return;
-  }
-
-  if (autostart && !voiceState.listening) {
-    await startVoiceListeningInExtension(language);
-    return;
-  }
-  if (!autostart && voiceState.listening) {
-    await stopVoiceListeningInExtension();
-    return;
-  }
-
-  await persistVoiceState();
-  broadcastVoiceStatus();
-}
-
-async function dispatchVoiceTranscript(transcript) {
-  const text = String(transcript || '').trim();
-  if (!text) return;
-  const payload = { type: VOICE_COMMAND_MESSAGE_TYPE, text };
-
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab && tab.id && !isNavableExtensionUrl(tab.url || tab.pendingUrl)) {
-      await chrome.tabs.sendMessage(tab.id, payload);
-      return;
-    }
-  } catch (_err) {
-    // fall back to extension runtime messaging
-  }
-
-  fireAndForgetRuntimeMessage(payload);
-}
 
 const TRANSLATE_MESSAGES_URL = 'http://localhost:3000/api/translate-messages';
 const OUTPUT_LOCALES = {
@@ -548,6 +184,23 @@ function normalizeOutputLanguage(lang) {
   } catch (_err) {
     return raw.toLowerCase().split(/[-_]/)[0] || 'en';
   }
+}
+
+function normalizeLanguageMode(mode, fallbackLanguage) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'auto') return 'auto';
+  if (!raw) return 'auto';
+  const normalized = normalizeOutputLanguage(raw || fallbackLanguage || 'en-US');
+  if (normalized === 'ar' || normalized === 'en') return normalized;
+  return 'auto';
+}
+
+function configuredOutputLanguage(settings = {}, requestedOutputLanguage = '') {
+  const rawRequested = String(requestedOutputLanguage || '').trim();
+  if (rawRequested && rawRequested.toLowerCase() !== 'auto') return normalizeOutputLanguage(rawRequested);
+  const mode = normalizeLanguageMode(settings.languageMode, settings.language || 'en-US');
+  if (mode !== 'auto') return mode;
+  return normalizeOutputLanguage(settings.language || 'en-US');
 }
 
 function canonicalizeLocale(lang) {
@@ -687,7 +340,8 @@ const INTENT_STOPWORDS = new Set([
   'ouvre', 'lis', 'montre', 'titre', 'lien', 'bouton', 'champ',
   'من', 'على', 'في', 'إلى', 'الى', 'هذا', 'هذه', 'ذلك', 'تلك', 'لي', 'لو', 'ممكن',
   'افتح', 'اذهب', 'روح', 'انتقل', 'اقرأ', 'مرر', 'انزل', 'اطلع', 'العنوان', 'الرابط',
-  'الزر', 'الصفحة', 'القسم', 'التالي', 'السابق'
+  'الزر', 'الصفحة', 'القسم', 'التالي', 'السابق', 'شو', 'ايش', 'وين', 'على', 'وديني', 'خذني',
+  'خلي', 'خليني', 'خلينا', 'لفوق', 'لتحت'
 ]);
 
 function hasIntent(text, patterns) {
@@ -741,10 +395,10 @@ function chooseIntentTarget(text, structure) {
   if (!tokens.length || !structure) return null;
 
   let targetTypes = ['link', 'button', 'heading', 'input'];
-  if (/\b(button|press|tap|activate|bouton)\b|زر/.test(normalized)) targetTypes = ['button', 'link'];
-  else if (/\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح/.test(normalized)) targetTypes = ['link', 'heading', 'button'];
-  else if (/\b(section|heading|part|titre)\b|عنوان|قسم/.test(normalized)) targetTypes = ['heading', 'link'];
-  else if (/\b(field|input|box|search|champ)\b|حقل|بحث/.test(normalized)) targetTypes = ['input', 'button', 'link'];
+  if (/\b(button|press|tap|activate|bouton)\b|زر|اضغط|فع[ّ]?ل/.test(normalized)) targetTypes = ['button', 'link'];
+  else if (/\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح|وديني|خذني|روح/.test(normalized)) targetTypes = ['link', 'heading', 'button'];
+  else if (/\b(section|heading|part|titre)\b|عنوان|قسم|جزء/.test(normalized)) targetTypes = ['heading', 'link'];
+  else if (/\b(field|input|box|search|champ)\b|حقل|بحث|ابحث|دو[ّو]?ر/.test(normalized)) targetTypes = ['input', 'button', 'link'];
 
   const candidates = collectIntentCandidates(structure, targetTypes);
   let best = null;
@@ -765,7 +419,8 @@ function isTargetSelectionIntent(text) {
     /\bouvre\b/, /\bva(?:s)?\s+à\b/, /\bva(?:s)?\s+a\b/, /\bmontre(?:-moi)?\b/,
     /\bclique\b/, /\bactive\b/, /\bvisite\b/, /\blance\b/,
     /افتح/, /اذهب\s+إلى/, /اذهب\s+الى/, /روح\s+على/, /روح\s+إلى/, /روح\s+الى/,
-    /انتقل\s+إلى/, /انتقل\s+الى/, /خذني\s+إلى/, /خذني\s+الى/, /اضغط/, /فعّل|فعل/
+    /انتقل\s+إلى/, /انتقل\s+الى/, /خذني\s+إلى/, /خذني\s+الى/, /خذني\s+على/, /وديني\s+على/,
+    /وديني\s+إلى/, /وديني\s+الى/, /خليني\s+أروح/, /خليني\s+اروح/, /خلينا\s+نروح/, /اضغط/, /فعّل|فعل/
   ]);
 }
 
@@ -787,28 +442,28 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     /\bd[ée]cri(s|re)\b/.test(text) ||
     /où suis[- ]?je|ou suis[- ]?je/.test(text) ||
     /que puis[- ]je faire ici/.test(text) ||
-    /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا/.test(text)
+    /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(text)
   ) {
     description = orientation;
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll up\b/, /\bgo up\b/, /\bmove up\b/, /\bback up\b/, /\bup a bit\b/, /\bhigher\b/,
     /\bmonte\b/, /\bplus haut\b/, /\bfais d[ée]filer vers le haut\b/,
-    /اطلع|اصعد|مرر.*(للأعلى|للاعلى)|فوق/
+    /اطلع|طلع|اصعد|مرر.*(للأعلى|للاعلى|لفوق)|لفوق|فوق شوي|كم[ّ]?ل لفوق/
   ])) {
     steps.push({ action: 'scroll', direction: 'up' });
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll\b/, /\bgo down\b/, /\bmove down\b/, /\blower\b/, /\bdown a bit\b/, /\bshow me more\b/, /\bkeep going\b/,
     /\bdescend(s)?\b/, /\bplus bas\b/, /\bfais d[ée]filer vers le bas\b/,
-    /انزل|نز[ّل]|\bمرر.*(للأسفل|للاسفل)\b|تحت/
+    /انزل|نز[ّل]|\bمرر.*(للأسفل|للاسفل|لتحت)\b|لتحت|تحت شوي|كم[ّ]?ل لتحت/
   ])) {
     steps.push({ action: 'scroll', direction: 'down' });
     matched = true;
   } else if (hasIntent(text, [
     /\bread title\b/, /\bpage title\b/, /\bwhat('?s| is) the title\b/, /\btell me the title\b/,
     /\blis le titre\b/, /\bquel est le titre\b/,
-    /اقر[أا] العنوان|ما عنوان الصفحة|ما هو عنوان الصفحة/
+    /اقر[أا] العنوان|ما عنوان الصفحة|ما هو عنوان الصفحة|شو عنوان الصفحة|ايش عنوان الصفحة/
   ])) {
     steps.push({ action: 'read_title' });
     matched = true;
@@ -822,14 +477,14 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
   } else if (hasIntent(text, [
     /\bread heading\b/, /\bcurrent heading\b/, /\bwhat heading am i on\b/,
     /\blis le titre\b/, /\bquel titre\b/, /\bsection actuelle\b/,
-    /اقر[أا] العنوان|ما العنوان الحالي|ما القسم الحالي/
+    /اقر[أا] العنوان|ما العنوان الحالي|ما القسم الحالي|شو العنوان الحالي|ايش العنوان الحالي/
   ])) {
     steps.push({ action: 'read_heading', n: 1 });
     matched = true;
   } else if (hasIntent(text, [
     /\bwhat('?s| is) focused\b/, /\bwhat am i on\b/, /\bread current\b/, /\bread focused\b/,
     /\bsur quoi suis[- ]je\b/, /\blis l[' ]?[ée]l[ée]ment courant\b/,
-    /ما العنصر المحدد|على ماذا انا|ما أنا عليه|ما انا عليه/
+    /ما العنصر المحدد|على ماذا انا|ما أنا عليه|ما انا عليه|شو العنصر الحالي|ايش العنصر الحالي|وين انا واقف|على شو انا/
   ])) {
     steps.push({ action: 'read_focused' });
     matched = true;
@@ -947,7 +602,7 @@ function normalizeAssistantResult(data) {
 
 async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   const settings = options.settings || await loadSettings();
-  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
+  const outputLanguage = configuredOutputLanguage(settings, requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const text = String(input || '').trim();
   const sourceTabId = options.sourceTabId || null;
@@ -995,7 +650,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
 
 async function runPlanner(command, requestedOutputLanguage, preferIntentFallback, options = {}) {
   const settings = await loadSettings();
-  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || settings.language || 'en-US');
+  const outputLanguage = configuredOutputLanguage(settings, requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const sourceTabId = options.sourceTabId || null;
   let structure = options.pageStructure || null;
@@ -1280,18 +935,6 @@ function tryParseHttpUrl(candidate) {
   return null;
 }
 
-function hostnameFromUrl(candidate) {
-  try {
-    const parsed = new URL(String(candidate || ''));
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return parsed.hostname || '';
-    }
-  } catch (_err) {
-    // ignore
-  }
-  return '';
-}
-
 function looksLikeHostWithOptionalPath(candidate) {
   if (!candidate) return false;
   if (/\s/.test(candidate)) return false;
@@ -1309,105 +952,11 @@ function looksLikeHostWithOptionalPath(candidate) {
   return true;
 }
 
-const SITE_SEARCH_PROVIDERS = {
-  // Register additional site-specific search URLs here.
-  youtube: {
-    aliases: ['youtube.com', 'yt'],
-    buildUrl(query) {
-      return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-    }
-  },
-  google: {
-    aliases: ['google.com'],
-    buildUrl(query) {
-      return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    }
-  },
-  facebook: {
-    aliases: ['facebook.com', 'fb'],
-    buildUrl(query) {
-      return `https://www.facebook.com/search/top?q=${encodeURIComponent(query)}`;
-    }
-  },
-  amazon: {
-    aliases: ['amazon.com'],
-    buildUrl(query) {
-      return `https://www.amazon.com/s?k=${encodeURIComponent(query)}`;
-    }
-  }
-};
-
-function aliasesForSiteSearchProvider(siteKey, provider) {
-  return [siteKey].concat(Array.isArray(provider.aliases) ? provider.aliases : []);
-}
-
-function normalizeSiteSearchTarget(rawSite) {
-  const normalizedSite = String(rawSite || '').trim().toLowerCase().replace(/^the\s+/, '');
-  if (!normalizedSite) return '';
-
-  for (const [siteKey, provider] of Object.entries(SITE_SEARCH_PROVIDERS)) {
-    const aliases = aliasesForSiteSearchProvider(siteKey, provider);
-    if (aliases.includes(normalizedSite)) return siteKey;
-  }
-
-  return '';
-}
-
-function siteSearchProviderFromHostname(hostname) {
-  const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/^www\./, '');
-  if (!normalizedHostname) return '';
-
-  for (const [siteKey, provider] of Object.entries(SITE_SEARCH_PROVIDERS)) {
-    const aliases = aliasesForSiteSearchProvider(siteKey, provider);
-    const matched = aliases.some((alias) => {
-      const normalizedAlias = String(alias || '').trim().toLowerCase().replace(/^www\./, '');
-      return normalizedHostname === normalizedAlias || normalizedHostname.endsWith(`.${normalizedAlias}`);
-    });
-    if (matched) return siteKey;
-  }
-
-  return '';
-}
-
-function parseSearchCommand(query) {
-  const raw = String(query || '').trim();
-  if (!raw) return null;
-
-  const match = raw.match(/^(?:search|google)\s+(?:for\s+)?(.+?)\s+on\s+([a-z0-9.-]+)\s*$/i);
-  if (match && match[1] && match[2]) {
-    const searchQuery = String(match[1] || '').trim();
-    const siteKey = normalizeSiteSearchTarget(match[2]);
-    if (!searchQuery || !siteKey || !SITE_SEARCH_PROVIDERS[siteKey]) return null;
-    return { searchQuery, siteKey };
-  }
-
-  const genericMatch = raw.match(/^(?:search|google)\s+(?:for\s+)?(.+?)\s*$/i);
-  if (!genericMatch || !genericMatch[1]) return null;
-
-  const searchQuery = String(genericMatch[1] || '').trim();
-  if (!searchQuery) return null;
-  return { searchQuery, siteKey: '' };
-}
-
-function tryResolveSiteSearchUrl(query, currentHostname) {
-  const parsed = parseSearchCommand(query);
-  if (!parsed || !parsed.searchQuery) return null;
-
-  const siteKey = parsed.siteKey || siteSearchProviderFromHostname(currentHostname) || 'google';
-  const provider = SITE_SEARCH_PROVIDERS[siteKey];
-  if (!provider) return null;
-
-  return provider.buildUrl(parsed.searchQuery);
-}
-
-function resolveOpenQueryToUrl(query, currentHostname) {
+function resolveOpenQueryToUrl(query) {
   const raw = String(query || '').trim();
   if (!raw) return null;
 
   const normalized = normalizeSpokenUrl(raw);
-
-  const siteSearchUrl = tryResolveSiteSearchUrl(raw, currentHostname);
-  if (siteSearchUrl) return siteSearchUrl;
 
   // Explicit search intent: "search for <x>"
   const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
@@ -1448,24 +997,10 @@ function friendlyUrlForSpeech(url) {
 }
 
 async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options = {}) {
-  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage || voiceState.language || 'en-US');
+  const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
+  const url = resolveOpenQueryToUrl(query);
   const sourceTabId = options.sourceTabId || null;
-  let currentHostname = hostnameFromUrl(options.currentPageUrl || '');
-  try {
-    if (!currentHostname && sourceTabId && chrome?.tabs?.get) {
-      const sourceTab = await chrome.tabs.get(sourceTabId);
-      currentHostname = hostnameFromUrl(sourceTab && (sourceTab.url || sourceTab.pendingUrl));
-    }
-    if (!currentHostname) {
-      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      currentHostname = hostnameFromUrl(activeTab && (activeTab.url || activeTab.pendingUrl));
-    }
-  } catch (_err) {
-    currentHostname = '';
-  }
-
-  const url = resolveOpenQueryToUrl(query, currentHostname);
   if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
 
   outputMessagesReady.then(() => (
@@ -1559,102 +1094,12 @@ try {
   // ignore in test contexts
 }
 
-try {
-  if (chrome?.runtime?.onInstalled?.addListener) {
-    chrome.runtime.onInstalled.addListener((details) => {
-      if (details && details.reason === 'install' && NAVABLE_ONBOARDING_URL) {
-        chrome.tabs.create({ url: NAVABLE_ONBOARDING_URL }).catch(() => {});
-      }
-      hydrateVoiceState().then(() => syncVoiceWithSettings()).catch(() => {});
-    });
-  }
-  if (chrome?.runtime?.onStartup?.addListener) {
-    chrome.runtime.onStartup.addListener(() => {
-      hydrateVoiceState().then(() => syncVoiceWithSettings()).catch(() => {});
-    });
-  }
-  if (chrome?.storage?.onChanged?.addListener) {
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== 'sync' || !changes || !changes.navable_settings) return;
-      syncVoiceWithSettings().catch(() => {});
-    });
-  }
-} catch (_err2) {
-  // ignore in test contexts
-}
-
-hydrateVoiceState().then(() => syncVoiceWithSettings()).catch(() => {});
-
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const sourceTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
-  const senderUrl =
-    (sender && sender.tab && (sender.tab.url || sender.tab.pendingUrl))
-      ? String(sender.tab.url || sender.tab.pendingUrl)
-      : (sender && sender.url ? String(sender.url) : '');
-  if (msg && msg.type === 'voice:state') {
-    applyOffscreenStatus(msg.status || {});
-    persistVoiceState().then(() => {
-      broadcastVoiceStatus();
-      sendResponse({ ok: true });
-    }).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-state-persist-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:transcript') {
-    dispatchVoiceTranscript(msg.text || '').then(() => {
-      sendResponse({ ok: true });
-    }).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-transcript-dispatch-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === LEGACY_VOICE_COMMAND_MESSAGE_TYPE) {
-    dispatchVoiceTranscript(msg.text || '').then(() => {
-      sendResponse({ ok: true });
-    }).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-command-dispatch-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:getStatus') {
-    getVoiceStatus().then((res) => sendResponse(res)).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-status-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:requestPermission') {
-    requestExtensionMicrophonePermission().then((res) => sendResponse(res)).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-permission-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:start') {
-    startVoiceListeningInExtension(msg.language || '').then((res) => sendResponse(res)).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-start-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:stop') {
-    stopVoiceListeningInExtension().then((res) => sendResponse(res)).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-stop-failed') });
-    });
-    return true;
-  }
-  if (msg && msg.type === 'voice:toggle') {
-    getVoiceStatus().then((status) => {
-      if (status && status.listening) return stopVoiceListeningInExtension();
-      return startVoiceListeningInExtension(status && status.language ? status.language : '');
-    }).then((res) => sendResponse(res)).catch((err) => {
-      sendResponse({ ok: false, error: String(err || 'voice-toggle-failed') });
-    });
-    return true;
-  }
   if (msg && msg.type === 'navable:openSite') {
     openSiteInBrowser(msg.query || '', msg.newTab, msg.outputLanguage, {
-      sourceTabId,
-      currentPageUrl: senderUrl
+      sourceTabId
     }).then((res) => {
       sendResponse(res);
     }).catch((err) => {
