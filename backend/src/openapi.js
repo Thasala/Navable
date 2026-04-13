@@ -253,6 +253,12 @@ const baseSpec = {
           'Structured snapshot of the page produced by the extension content script.',
         additionalProperties: true
       },
+      SessionContext: {
+        type: 'object',
+        description:
+          'Sanitized short-lived memory for the current tab/session (for example last purpose, last reply, last entity, and page summary hints).',
+        additionalProperties: true
+      },
       Step: {
         type: 'object',
         additionalProperties: false,
@@ -276,6 +282,19 @@ const baseSpec = {
           steps: { type: 'array', items: { $ref: '#/components/schemas/Step' } }
         }
       },
+      AssistantAction: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['type', 'query', 'newTab'],
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['open_site']
+          },
+          query: { type: 'string' },
+          newTab: { type: 'boolean' }
+        }
+      },
       AssistantRequest: {
         type: 'object',
         additionalProperties: false,
@@ -294,6 +313,9 @@ const baseSpec = {
             enum: ['auto', 'summary', 'page', 'answer'],
             description: 'Optional routing hint for callers that already know the intent.'
           },
+          sessionContext: {
+            $ref: '#/components/schemas/SessionContext'
+          },
           pageStructure: {
             $ref: '#/components/schemas/PageStructure'
           }
@@ -302,17 +324,21 @@ const baseSpec = {
       AssistantResponse: {
         type: 'object',
         additionalProperties: false,
-        required: ['mode', 'speech', 'summary', 'answer', 'suggestions', 'plan'],
+        required: ['mode', 'speech', 'summary', 'answer', 'suggestions', 'plan', 'action'],
         properties: {
           mode: {
             type: 'string',
-            enum: ['answer', 'page']
+            enum: ['answer', 'page', 'action']
           },
           speech: { type: 'string' },
           summary: { type: 'string' },
           answer: { type: 'string' },
           suggestions: { type: 'array', items: { type: 'string' } },
-          plan: { $ref: '#/components/schemas/Plan' }
+          plan: { $ref: '#/components/schemas/Plan' },
+          action: {
+            nullable: true,
+            allOf: [{ $ref: '#/components/schemas/AssistantAction' }]
+          }
         }
       },
       TranscribeRequest: {

@@ -169,6 +169,27 @@
               </ul>
             </div>
           </div>
+
+          <form id="typedCommandForm" class="nv-popup-typed" aria-label="Typed test command">
+            <div class="nv-popup-section-head">
+              <div>
+                <p class="nv-section-kicker">Typed testing</p>
+                <h2 class="nv-section-heading">Send a command without voice</h2>
+              </div>
+              <button id="btnTypedSend" class="nv-btn nv-btn--primary" type="submit">Run typed</button>
+            </div>
+            <label class="nv-sr-only" for="typedCommandInput">Type a command, question, or page request</label>
+            <textarea
+              id="typedCommandInput"
+              class="nv-input nv-popup-typed-input"
+              rows="3"
+              spellcheck="false"
+              placeholder="Type a command, page question, or context request for testing"
+            ></textarea>
+            <p id="typedCommandHint" class="nv-popup-help-note nv-popup-typed-note">
+              Uses the same parser and assistant path as voice. Press Ctrl+Enter or Cmd+Enter to send.
+            </p>
+          </form>
         </section>
 
         <section class="nv-popup-help-strip" aria-label="Help">

@@ -3,6 +3,18 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI, { toFile } from 'openai';
 import swaggerUi from 'swagger-ui-express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  isClarifyingAnswerText,
+  isFollowUpIntentText,
+  resolveAnswerQuestionWithSessionContext
+} from './assistant-session.js';
+import {
+  isPageContextIntentText,
+  isSummaryIntentText,
+  resolveRequestedAssistantPurpose
+} from './page-assistant-intent.js';
 import { getOpenApiSpec } from './openapi.js';
 
 dotenv.config();
@@ -288,13 +300,28 @@ function sanitizePlan(rawPlan) {
   return { steps };
 }
 
+function sanitizeAssistantAction(rawAction) {
+  if (!rawAction || typeof rawAction !== 'object' || Array.isArray(rawAction)) return null;
+  const type = typeof rawAction.type === 'string' ? rawAction.type.trim().toLowerCase() : '';
+  if (type !== 'open_site') return null;
+
+  const query = typeof rawAction.query === 'string' ? rawAction.query.trim() : '';
+  if (!query) return null;
+
+  return {
+    type: 'open_site',
+    query,
+    newTab: rawAction.newTab !== false
+  };
+}
+
 function getOpenAiClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }
 
-async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+async function callOpenAiSummarize(command, pageStructure, sessionContext, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
   if (settings.aiEnabled === false) {
     return null;
   }
@@ -306,20 +333,25 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
 
   const systemPrompt = [
     'You are an accessibility-oriented navigator assistant for a browser extension called Navable.',
-    'You receive a structured snapshot of a web page as JSON (pageStructure) and an optional user command string.',
+    'You receive a structured snapshot of a web page as JSON (pageStructure), an optional sessionContext object, and an optional user command string.',
     'pageStructure.excerpt may contain up to ~1200 characters of visible page text; prefer it for detail.',
-    'pageStructure includes counts, headings, links, buttons, landmarks, activeLabel (focused element), lang, and URL.',
+    'pageStructure may include headings, links, buttons, inputs, landmarks, activeLabel (focused element), lang, URL, and visible excerpt text.',
+    'sessionContext may include the last purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
     `You must answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user command explicitly requests another output language.`,
     'Your job for a blind user:',
-    '- Give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
+    '- If the command asks about the current page generally, give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
+    '- If the command asks you to answer or explain a question shown on the current page, answer from the visible page content instead of giving a generic orientation.',
+    '- When pageStructure shows answer choices or form options, identify the best visible answer first and briefly explain why it fits the visible question.',
     '- Then provide 2–5 next actions as a numbered list of short, actionable items.',
     '- Optionally propose a deterministic plan for the extension to execute via existing tools.',
-    '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, non-English phrases like Arabic for “what is this page”). Infer intent to orient/summarize even without the word “summary.”',
+    '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, “what is the answer to the question on this page”, and non-English variants). Infer whether the user wants orientation or page-local question answering from the command and pageStructure.',
     '- The command may be in any language; interpret intent from context and pageStructure.',
     '- Arabic may be Modern Standard Arabic, dialectal Arabic, or Arabic-English code switching. Treat colloquial Arabic as valid input.',
     '',
     'Important rules:',
     '- Only use the information provided in pageStructure and command; do not hallucinate hidden content.',
+    '- Use sessionContext only as a short continuity hint. If it conflicts with the current pageStructure, prefer pageStructure.',
+    '- If the command clearly refers to the current page, do not ask the user to clarify which page or which question they mean unless the visible page data is truly insufficient.',
     '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, describe_page, wait_for_user_input, move_heading.',
     '- If you propose a plan, use ONLY those actions in plan.steps.',
     '- When referencing elements (links, headings, buttons, inputs), prefer their labels from the structure.',
@@ -340,6 +372,7 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
   const userContent = JSON.stringify({
     command: command || 'Summarize this page for a blind user.',
     pageStructure,
+    sessionContext: sessionContext || null,
     outputLanguage: normalizeOutputLanguage(outputLanguage)
   });
 
@@ -367,7 +400,13 @@ async function callOpenAiSummarize(command, pageStructure, settings = DEFAULT_SE
   };
 }
 
-async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+async function callOpenAiAnswerQuestion(
+  question,
+  sessionContext,
+  settings = DEFAULT_SETTINGS,
+  outputLanguage = 'en',
+  resolvedQuestion = ''
+) {
   if (settings.aiEnabled === false) {
     return null;
   }
@@ -386,18 +425,31 @@ async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, o
           'You are a concise voice-first assistant for a browser extension called Navable.',
           `Answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user explicitly requests another language.`,
           'The user asked a general informational question.',
+          'Navable can open websites and web apps in the browser for the user.',
+          'You may receive a sessionContext object with the previous purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
+          'You may also receive a resolvedQuestion string. If resolvedQuestion is non-empty, treat it as the fully disambiguated version of the current request.',
           'The spoken question may be colloquial Arabic, dialectal Arabic, informal English, or Arabic-English code switching.',
+          'Use sessionContext only when it clearly helps resolve a short follow-up such as "tell me more" or "what about that".',
+          'If resolvedQuestion or sessionContext already identifies the topic, answer directly and do not ask the user to specify the topic again.',
+          'If sessionContext conflicts with the current question, prefer the current question.',
+          'If the user is asking Navable to open, navigate to, visit, launch, bring up, or take them to a website, web app, or named online service, do not refuse or say that you cannot do it.',
+          'For those browser-navigation requests, return an action object with type "open_site" and a short query such as "facebook", "gmail", or a URL. Keep answer empty or use a very short acknowledgment.',
+          'If the user says "app" but the destination is also available in a browser, treat it as an "open_site" request for the browser version.',
+          'If the user is asking for information about the service instead of asking to navigate there, answer normally and return action null.',
+          'Only return an action when the navigation intent is clear.',
           'Reply with 1 to 3 short sentences that are useful when read aloud.',
           'Do not use markdown, lists, headings, or emojis.',
           'If the question is ambiguous, ask one short clarifying question instead of guessing.',
           'If you do not know, say so briefly.',
-          'Return exactly one JSON object: { "answer": string }.'
+          'Return exactly one JSON object: { "answer": string, "action": null | { "type": "open_site", "query": string, "newTab": boolean } }.'
         ].join('\n')
       },
       {
         role: 'user',
         content: JSON.stringify({
           question: String(question || '').trim(),
+          resolvedQuestion: String(resolvedQuestion || '').trim(),
+          sessionContext: sessionContext || null,
           outputLanguage: normalizeOutputLanguage(outputLanguage)
         })
       }
@@ -413,46 +465,9 @@ async function callOpenAiAnswerQuestion(question, settings = DEFAULT_SETTINGS, o
   }
 
   return {
-    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : ''
+    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
+    action: sanitizeAssistantAction(parsed.action)
   };
-}
-
-function isSummaryIntentText(text) {
-  const t = String(text || '').toLowerCase();
-  if (!t) return false;
-  return (
-    t.includes('summarize') ||
-    t.includes('summary') ||
-    t.includes('describe this page') ||
-    t.includes('describe the page') ||
-    t.includes('what is this page') ||
-    t.includes("what's on this page") ||
-    t.includes('what is on this page') ||
-    t.includes("what's this page") ||
-    /r[ée]sum[ée]?.*cette page/.test(t) ||
-    /d[ée]cri(s|re).*cette page/.test(t) ||
-    /c[' ]?est quoi cette page/.test(t) ||
-    /qu[' ]?est[- ]ce que cette page/.test(t) ||
-    /ما هذه الصفحه/.test(t) ||
-    /ما هذه الصفحة/.test(t) ||
-    /ما هو محتوى الصفحة/.test(t) ||
-    /ملخص/.test(t) ||
-    /وصف الصفحة|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(t)
-  );
-}
-
-function isPageContextIntentText(text) {
-  const t = String(text || '').trim().toLowerCase();
-  if (!t) return false;
-  if (isSummaryIntentText(t)) return true;
-  return (
-    /\b(this page|that page|page|here|this site|website|site|heading|section|link|button|field|input|title|selection|focused)\b/.test(t) ||
-    /\b(scroll|read|focus|click|press|activate|open|move|next|previous|prev|help me here|where am i|what can i do here)\b/.test(t) ||
-    /\b(cette page|page|ici|site|site web|titre|section|lien|bouton|champ|selection|focus)\b/.test(t) ||
-    /\b(fais defiler|lis|ouvre|clique|active|va|suivant|precedent|précédent|ou suis-je|où suis-je|que puis-je faire ici)\b/.test(t) ||
-    /(هذه الصفحة|الصفحة|هنا|الموقع|العنوان|القسم|الرابط|الزر|الحقل|التحديد|العنصر المحدد)/.test(t) ||
-    /(مرر|اقر[أا]|افتح|اضغط|فعّل|فعل|انتقل|التالي|السابق|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|وين انا|على شو انا)/.test(t)
-  );
 }
 
 function isGeneralKnowledgeQuestionText(text) {
@@ -480,21 +495,23 @@ function buildAssistantSpeech(primaryText, suggestions = []) {
   return parts.join(' ').trim();
 }
 
-async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto') {
+async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto', sessionContext = null) {
   const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
   const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, settings);
   const text = String(input || '').trim();
-  const resolvedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
-  const wantsSummary = resolvedPurpose === 'summary' || isSummaryIntentText(text);
-  const wantsPageAssistant =
-    !!pageStructure &&
-    (
-      resolvedPurpose === 'summary' ||
-      resolvedPurpose === 'page' ||
-      (!isGeneralKnowledgeQuestionText(text) || wantsSummary)
-    );
+  const requestedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
+  const resolvedPurpose = resolveRequestedAssistantPurpose(text, requestedPurpose);
+  const priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
+  const followUpToPage = resolvedPurpose === 'auto' && isFollowUpIntentText(text) && (priorPurpose === 'page' || priorPurpose === 'summary');
+  const wantsSummary = resolvedPurpose === 'summary' || (resolvedPurpose !== 'answer' && isSummaryIntentText(text));
+  const wantsPageIntent =
+    resolvedPurpose === 'summary' ||
+    resolvedPurpose === 'page' ||
+    followUpToPage ||
+    (resolvedPurpose === 'auto' && isPageContextIntentText(text));
+  const wantsPageAssistant = !!pageStructure && wantsPageIntent;
 
-  if (wantsSummary && !pageStructure) {
+  if (wantsPageIntent && !pageStructure) {
     const summary = outputMessage('no_page_data', resolvedOutputLanguage, {}, outputCatalog);
     return {
       mode: 'page',
@@ -509,7 +526,7 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   if (wantsPageAssistant) {
     let result = null;
     try {
-      result = await callOpenAiSummarize(text, pageStructure, settings, resolvedOutputLanguage);
+      result = await callOpenAiSummarize(text, pageStructure, sessionContext, settings, resolvedOutputLanguage);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[Navable backend] OpenAI page assistant error:', err);
@@ -545,11 +562,51 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   }
 
   let answerResult = null;
+  const resolvedAnswer = resolveAnswerQuestionWithSessionContext(text, sessionContext);
   try {
-    answerResult = await callOpenAiAnswerQuestion(text, settings, resolvedOutputLanguage);
+    answerResult = await callOpenAiAnswerQuestion(
+      text,
+      sessionContext,
+      settings,
+      resolvedOutputLanguage,
+      resolvedAnswer.resolvedQuestion !== resolvedAnswer.question ? resolvedAnswer.resolvedQuestion : ''
+    );
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[Navable backend] OpenAI answer error:', err);
+  }
+
+  if (
+    resolvedAnswer.resolvedFromSession &&
+    answerResult &&
+    answerResult.answer &&
+    isClarifyingAnswerText(answerResult.answer)
+  ) {
+    try {
+      answerResult = await callOpenAiAnswerQuestion(
+        resolvedAnswer.resolvedQuestion,
+        sessionContext,
+        settings,
+        resolvedOutputLanguage,
+        resolvedAnswer.resolvedQuestion
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[Navable backend] OpenAI follow-up retry error:', err);
+    }
+  }
+
+  const action = sanitizeAssistantAction(answerResult && answerResult.action);
+  if (action) {
+    return {
+      mode: 'action',
+      speech: answerResult && answerResult.answer ? answerResult.answer : '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [] },
+      action
+    };
   }
 
   if (!answerResult || !answerResult.answer) {
@@ -721,12 +778,12 @@ app.post('/api/translate-messages', async (req, res) => {
 
 app.post('/api/assistant', async (req, res) => {
   try {
-    const { input, pageStructure, outputLanguage, purpose } = req.body || {};
+    const { input, pageStructure, outputLanguage, purpose, sessionContext } = req.body || {};
     if (!input || typeof input !== 'string' || !input.trim()) {
       return res.status(400).json({ error: 'Missing input' });
     }
 
-    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto');
+    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto', sessionContext || null);
     if (result && result.ok === false) {
       return res.status(result.status || 503).json({ error: result.error || 'Assistant unavailable' });
     }
@@ -737,7 +794,8 @@ app.post('/api/assistant', async (req, res) => {
       summary: result.summary || '',
       answer: result.answer || '',
       suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
-      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] }
+      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] },
+      action: sanitizeAssistantAction(result.action)
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -746,7 +804,18 @@ app.post('/api/assistant', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[Navable backend] Listening on http://localhost:${port}`);
-});
+const isDirectRun = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+
+if (isDirectRun) {
+  app.listen(port, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[Navable backend] Listening on http://localhost:${port}`);
+  });
+}
+
+export {
+  app,
+  isClarifyingAnswerText,
+  resolveAnswerQuestionWithSessionContext,
+  runAssistant
+};

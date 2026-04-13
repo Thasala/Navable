@@ -95,3 +95,56 @@ test('planner fallback leaves informational questions unhandled', async ({ page 
   expect(result.ok).toBe(false);
   expect(result.unhandled).toBe(true);
 });
+
+test('planner fallback prefers password inputs over related links', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" />
+      <label for="pw">Password</label>
+      <input id="pw" name="password" type="password" />
+      <a href="#forgot">Forgot password?</a>
+    </main>
+  `);
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.buildPageStructure);
+
+  const result = await page.evaluate(async () => {
+    // @ts-ignore
+    return await (window as any).runPlanner('focus password', 'en', true);
+  });
+
+  expect(result.ok).toBe(true);
+  await page.waitForFunction(() => document.activeElement && (document.activeElement as HTMLElement).id === 'pw');
+});
+
+test('planner fallback can choose generic actionable controls surfaced as buttons', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <div role="button" onclick="window.clicked='profile'">Use another profile</div>
+      <div tabindex="0" style="cursor: pointer" onclick="window.clicked='create'">Create new account</div>
+    </main>
+  `);
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.buildPageStructure);
+
+  const result = await page.evaluate(async () => {
+    // @ts-ignore
+    return await (window as any).runPlanner('click create new account', 'en', true);
+  });
+
+  expect(result.ok).toBe(true);
+  expect(await page.evaluate(() => (window as any).clicked || '')).toBe('create');
+});
