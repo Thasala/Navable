@@ -597,10 +597,33 @@ function isSummaryCommandText(text) {
   );
 }
 
+function isCurrentPageReferenceText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(?:this|current)\s+(?:page|screen|site)\b/.test(t) ||
+    /\b(?:on|in)\s+(?:this|the current)\s+(?:page|screen|site)\b/.test(t) ||
+    /\b(?:sur|dans)\s+(?:cette|la)\s+(?:page|ecran|écran|site)\b/.test(t) ||
+    /(?:في|على|ب)\s+(?:هاي|هذه|هاد|هذي)\s+(?:الصفحة|الشاشة|الموقع)/.test(t) ||
+    /(?:الصفحة|الشاشة|الموقع)\s+(?:الحالية|هاي|هذه)/.test(t)
+  );
+}
+
+function isPageQuestionRequestText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t || !isCurrentPageReferenceText(t)) return false;
+  return (
+    /\b(answer|correct answer|question|quiz|exercise|problem|prompt|choice|choices|option|options|solve|read|explain)\b/.test(t) ||
+    /\b(r[ée]ponse|question|quiz|exercice|probl[èe]me|choix|option|options|r[ée]soudre|lire|explique)\b/.test(t) ||
+    /(سؤال|اسئلة|أسئلة|جواب|الجواب|إجابة|اجابة|حل|خيارات|خيار|اختيار|اقر[أا]|اشرح)/.test(t)
+  );
+}
+
 function isPageAssistantRequestText(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return false;
   if (isSummaryCommandText(t)) return true;
+  if (isPageQuestionRequestText(t)) return true;
   return (
     /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
     /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
@@ -974,7 +997,8 @@ async function rememberActionTurn(sourceTabId, info = {}) {
 
 function assistantPurposeForText(text, includePageContext, explicitPurpose, session) {
   const rawPurpose = typeof explicitPurpose === 'string' ? String(explicitPurpose).trim().toLowerCase() : '';
-  if (rawPurpose === 'summary' || rawPurpose === 'page' || rawPurpose === 'answer') return rawPurpose;
+  if (rawPurpose === 'summary' || rawPurpose === 'page') return rawPurpose;
+  if (rawPurpose === 'answer' && !isPageAssistantRequestText(text)) return rawPurpose;
   if (isSummaryCommandText(text)) return 'summary';
   if (isPageAssistantRequestText(text)) return 'page';
   if (isSessionFollowUpText(text)) {
@@ -982,6 +1006,7 @@ function assistantPurposeForText(text, includePageContext, explicitPurpose, sess
     if (priorPurpose === 'summary' || priorPurpose === 'page') return 'page';
     if (priorPurpose === 'answer') return 'answer';
   }
+  if (rawPurpose === 'answer') return rawPurpose;
   if (!includePageContext) return 'answer';
   return 'answer';
 }

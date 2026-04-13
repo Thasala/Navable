@@ -330,20 +330,23 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
     'You are an accessibility-oriented navigator assistant for a browser extension called Navable.',
     'You receive a structured snapshot of a web page as JSON (pageStructure), an optional sessionContext object, and an optional user command string.',
     'pageStructure.excerpt may contain up to ~1200 characters of visible page text; prefer it for detail.',
-    'pageStructure includes counts, headings, links, buttons, landmarks, activeLabel (focused element), lang, and URL.',
+    'pageStructure may include headings, links, buttons, inputs, landmarks, activeLabel (focused element), lang, URL, and visible excerpt text.',
     'sessionContext may include the last purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
     `You must answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user command explicitly requests another output language.`,
     'Your job for a blind user:',
-    '- Give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
+    '- If the command asks about the current page generally, give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
+    '- If the command asks you to answer or explain a question shown on the current page, answer from the visible page content instead of giving a generic orientation.',
+    '- When pageStructure shows answer choices or form options, identify the best visible answer first and briefly explain why it fits the visible question.',
     '- Then provide 2–5 next actions as a numbered list of short, actionable items.',
     '- Optionally propose a deterministic plan for the extension to execute via existing tools.',
-    '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, non-English phrases like Arabic for “what is this page”). Infer intent to orient/summarize even without the word “summary.”',
+    '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, “what is the answer to the question on this page”, and non-English variants). Infer whether the user wants orientation or page-local question answering from the command and pageStructure.',
     '- The command may be in any language; interpret intent from context and pageStructure.',
     '- Arabic may be Modern Standard Arabic, dialectal Arabic, or Arabic-English code switching. Treat colloquial Arabic as valid input.',
     '',
     'Important rules:',
     '- Only use the information provided in pageStructure and command; do not hallucinate hidden content.',
     '- Use sessionContext only as a short continuity hint. If it conflicts with the current pageStructure, prefer pageStructure.',
+    '- If the command clearly refers to the current page, do not ask the user to clarify which page or which question they mean unless the visible page data is truly insufficient.',
     '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, describe_page, wait_for_user_input, move_heading.',
     '- If you propose a plan, use ONLY those actions in plan.steps.',
     '- When referencing elements (links, headings, buttons, inputs), prefer their labels from the structure.',
@@ -486,10 +489,33 @@ function isSummaryIntentText(text) {
   );
 }
 
+function isCurrentPageReferenceText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(?:this|current)\s+(?:page|screen|site)\b/.test(t) ||
+    /\b(?:on|in)\s+(?:this|the current)\s+(?:page|screen|site)\b/.test(t) ||
+    /\b(?:sur|dans)\s+(?:cette|la)\s+(?:page|ecran|écran|site)\b/.test(t) ||
+    /(?:في|على|ب)\s+(?:هاي|هذه|هاد|هذي)\s+(?:الصفحة|الشاشة|الموقع)/.test(t) ||
+    /(?:الصفحة|الشاشة|الموقع)\s+(?:الحالية|هاي|هذه)/.test(t)
+  );
+}
+
+function isPageQuestionIntentText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t || !isCurrentPageReferenceText(t)) return false;
+  return (
+    /\b(answer|correct answer|question|quiz|exercise|problem|prompt|choice|choices|option|options|solve|read|explain)\b/.test(t) ||
+    /\b(r[ée]ponse|question|quiz|exercice|probl[èe]me|choix|option|options|r[ée]soudre|lire|explique)\b/.test(t) ||
+    /(سؤال|اسئلة|أسئلة|جواب|الجواب|إجابة|اجابة|حل|خيارات|خيار|اختيار|اقر[أا]|اشرح)/.test(t)
+  );
+}
+
 function isPageContextIntentText(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return false;
   if (isSummaryIntentText(t)) return true;
+  if (isPageQuestionIntentText(t)) return true;
   return (
     /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
     /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
@@ -526,7 +552,11 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
   const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, settings);
   const text = String(input || '').trim();
-  const resolvedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
+  const requestedPurpose = typeof purpose === 'string' ? String(purpose).trim().toLowerCase() : 'auto';
+  const resolvedPurpose =
+    requestedPurpose === 'answer' && isPageContextIntentText(text)
+      ? 'page'
+      : requestedPurpose;
   const priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
   const followUpToPage = resolvedPurpose === 'auto' && isFollowUpIntentText(text) && (priorPurpose === 'page' || priorPurpose === 'summary');
   const wantsSummary = resolvedPurpose === 'summary' || (resolvedPurpose !== 'answer' && isSummaryIntentText(text));

@@ -412,3 +412,87 @@ test('content assistant requests include the current page structure for explicit
   expect(captured[1].pageContext).toBe(true);
   expect(captured[1].pageStructure.title).toBe('Docs');
 });
+
+test('content assistant treats current-page answer requests as page context', async ({ page }) => {
+  await page.setContent(`
+    <html>
+      <head>
+        <title>Quiz</title>
+      </head>
+      <body>
+        <main>
+          <h1>Question 1</h1>
+          <fieldset>
+            <legend>During Industry 1.0, what marked a major shift in production?</legend>
+            <label><input type="radio" name="q1" value="phone" /> Introduction of the telephone in 1850.</label>
+            <label><input type="radio" name="q1" value="steam" /> Development of James Watt's steam engine in 1763.</label>
+          </fieldset>
+        </main>
+      </body>
+    </html>
+  `);
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+
+  await page.evaluate(() => {
+    const messages: any[] = [];
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: async (payload: any) => {
+          messages.push(payload);
+          return {
+            ok: true,
+            speech: "The best answer shown is James Watt's steam engine in 1763.",
+            plan: { steps: [] }
+          };
+        },
+        onMessage: {
+          addListener() {}
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US', autostart: false, overlay: false } });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+    // @ts-ignore
+    window.__capturedMessages = messages;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: () => ({
+        start() {},
+        stop() {},
+        on() { return this; }
+      })
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/content.js' });
+  await page.waitForFunction(() => (window as any).NavableTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('What is the answer to the question on the current page?', 'en', 'native');
+  });
+
+  const captured = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__capturedMessages;
+  });
+
+  expect(captured[0].type).toBe('planner:run');
+  expect(captured[1].type).toBe('navable:assistant');
+  expect(captured[1].purpose).toBe('page');
+  expect(captured[1].pageContext).toBe(true);
+  expect(captured[1].pageStructure.title).toBe('Quiz');
+  expect(String(captured[1].pageStructure.excerpt || '')).toContain("Development of James Watt's steam engine in 1763.");
+});
