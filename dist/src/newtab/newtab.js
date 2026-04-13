@@ -231,8 +231,34 @@ function getVoiceStatusEls() {
   };
 }
 
+function stripOpenIntentPrefixes(transcript) {
+  let s = String(transcript || '').trim().toLowerCase();
+  if (!s) return '';
+
+  const patterns = [
+    /^(?:hey\s+navable|navable|please|pls)\b[\s,]*/,
+    /^(?:can you|could you|would you|will you)\b[\s,]*/,
+    /^(?:peux[- ]?tu|pourrais[- ]?tu|tu peux|svp|stp|s['’]?il te pla[îi]t)\b[\s,]*/,
+    /^(?:لو سمحت|من فضلك|رجاءً?|رجاء|ممكن|بتقدر|تقدر)\b[\s،]*/
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of patterns) {
+      const next = s.replace(pattern, '').trim();
+      if (next !== s) {
+        s = next;
+        changed = true;
+      }
+    }
+  }
+
+  return s;
+}
+
 function extractOpenSiteQuery(transcript) {
-  const s = String(transcript || '').trim().toLowerCase();
+  const s = stripOpenIntentPrefixes(transcript);
   if (!s) return null;
 
   // Arabic website intents.
@@ -246,7 +272,7 @@ function extractOpenSiteQuery(transcript) {
       .trim()
       .replace(/^(le|la|les|un|une)\b/, '')
       .trim()
-      .replace(/^(site|page|onglet)\b/, '')
+      .replace(/^(site|page|onglet|application|appli)\b/, '')
       .trim();
   }
 
@@ -262,7 +288,9 @@ function extractOpenSiteQuery(transcript) {
     .trim()
     .replace(/^(new\s+)?tab\b/, '')
     .trim()
-    .replace(/^(website|site|page)\b/, '')
+    .replace(/^(website|site|page|app)\b/, '')
+    .trim()
+    .replace(/\bfor me\b/g, '')
     .trim()
     .replace(/\bplease\b/g, '')
     .trim();
@@ -309,6 +337,84 @@ function parseVoiceCommand(transcript) {
   if (q) return { type: 'open_site', query: q };
 
   return null;
+}
+
+function isSessionFollowUpText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+    /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+    /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
+  );
+}
+
+let newtabAssistantSession = null;
+
+function trimAssistantMemoryText(text, maxLen = 240) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.length > maxLen ? `${raw.slice(0, Math.max(0, maxLen - 3)).trim()}...` : raw;
+}
+
+function extractAssistantEntity(text) {
+  const raw = trimAssistantMemoryText(text, 160);
+  if (!raw || isSessionFollowUpText(raw)) return '';
+  return trimAssistantMemoryText(
+    raw
+      .replace(/^[“"'`]+|[”"'`]+$/g, '')
+      .replace(/^(who|what|when|where|why|how)\s+(is|are|was|were)\s+/i, '')
+      .replace(/^(explain|define|compare|tell me about|more about|what about)\s+/i, '')
+      .replace(/^(qui|que|qu[' ]?est[- ]?ce que|qu[' ]?est-ce que|explique|definis|définis|compare|parle[- ]?moi de|dis[- ]?moi)\s+/i, '')
+      .replace(/^(من|ما هو|ما هي|ما|اشرح|عر[ّ]ف|عرف|احكيلي عن|قل لي عن|خبرني عن|شو هو|ايش هو)\s+/i, '')
+      .replace(/^(the|a|an|le|la|les|un|une|ال)\s+/i, '')
+      .replace(/[?!.]+$/g, ''),
+    80
+  );
+}
+
+function buildNewtabAssistantSessionContext() {
+  if (!newtabAssistantSession) return null;
+  return {
+    lastPurpose: newtabAssistantSession.lastPurpose || '',
+    lastUserUtterance: newtabAssistantSession.lastUserUtterance || '',
+    lastEntity: newtabAssistantSession.lastEntity || '',
+    lastAssistantReply: newtabAssistantSession.lastAssistantReply || '',
+    lastAnswer: newtabAssistantSession.lastAnswer || '',
+    lastPage: null,
+    lastAction: newtabAssistantSession.lastAction || '',
+    outputLanguage: newtabAssistantSession.outputLanguage || '',
+    detectedLanguage: newtabAssistantSession.detectedLanguage || '',
+    recognitionProvider: newtabAssistantSession.recognitionProvider || '',
+    domainHabits: null
+  };
+}
+
+function rememberNewtabAssistantTurn(info = {}) {
+  const existing = newtabAssistantSession || {};
+  const purpose = info.purpose || existing.lastPurpose || '';
+  const speech = trimAssistantMemoryText(info.speech || info.description, 260);
+  const answer = trimAssistantMemoryText(info.answer, 260);
+  newtabAssistantSession = {
+    lastPurpose: purpose,
+    lastUserUtterance: trimAssistantMemoryText(info.input, 180) || existing.lastUserUtterance || '',
+    lastEntity: extractAssistantEntity(info.input) || existing.lastEntity || '',
+    lastAssistantReply: speech || answer || existing.lastAssistantReply || '',
+    lastAnswer: answer || existing.lastAnswer || '',
+    lastAction: existing.lastAction || '',
+    outputLanguage: trimAssistantMemoryText(info.outputLanguage, 24) || existing.outputLanguage || '',
+    detectedLanguage: trimAssistantMemoryText(info.detectedLanguage, 24) || existing.detectedLanguage || '',
+    recognitionProvider: trimAssistantMemoryText(info.recognitionProvider, 24) || existing.recognitionProvider || ''
+  };
+}
+
+function assistantQuestionPurposeForText(text, sessionContext = null) {
+  if (!isSessionFollowUpText(text)) return 'answer';
+  const priorPurpose = sessionContext && sessionContext.lastPurpose
+    ? String(sessionContext.lastPurpose).trim().toLowerCase()
+    : '';
+  if (priorPurpose === 'answer') return 'answer';
+  return 'auto';
 }
 
 let newtabRecognizer = null;
@@ -670,9 +776,11 @@ async function openSiteFromVoice(query) {
   await openUrl(url);
 }
 
-async function assistantQuestionFromVoice(questionText) {
+async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   const q = String(questionText || '').trim();
   if (!q) return false;
+  const sessionContext = buildNewtabAssistantSessionContext();
+  const purpose = assistantQuestionPurposeForText(q, sessionContext);
 
   await ensureOutputLanguageReady();
   setNewtabMicMessage(translate('answering_question'), 'polite');
@@ -683,10 +791,23 @@ async function assistantQuestionFromVoice(questionText) {
         type: 'navable:assistant',
         input: q,
         outputLanguage: currentOutputLanguage(),
+        purpose,
         pageContext: false,
-        autoExecutePlan: false
+        autoExecutePlan: false,
+        detectedLanguage: turnContext.detectedLanguage || '',
+        recognitionProvider: turnContext.recognitionProvider || ''
       });
       if (res?.ok && res.speech) {
+        const rememberedPurpose = purpose === 'auto' ? (res.mode === 'page' ? 'page' : 'answer') : purpose;
+        rememberNewtabAssistantTurn({
+          input: q,
+          purpose: rememberedPurpose,
+          speech: res.speech,
+          answer: res.answer || '',
+          outputLanguage: currentOutputLanguage(),
+          detectedLanguage: turnContext.detectedLanguage || '',
+          recognitionProvider: turnContext.recognitionProvider || ''
+        });
         setNewtabMicMessage(String(res.speech), 'assertive');
         return true;
       }
@@ -704,11 +825,27 @@ async function assistantQuestionFromVoice(questionText) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         input: q,
-        outputLanguage: currentOutputLanguage()
+        outputLanguage: currentOutputLanguage(),
+        purpose,
+        sessionContext
       })
     });
     const data = await response.json().catch(() => ({}));
+    if (response.ok && data?.action?.type === 'open_site' && data.action.query) {
+      await openSiteFromVoice(data.action.query);
+      return true;
+    }
     if (response.ok && data?.speech) {
+      const rememberedPurpose = purpose === 'auto' ? (data.mode === 'page' ? 'page' : 'answer') : purpose;
+      rememberNewtabAssistantTurn({
+        input: q,
+        purpose: rememberedPurpose,
+        speech: data.speech,
+        answer: data.answer || '',
+        outputLanguage: currentOutputLanguage(),
+        detectedLanguage: turnContext.detectedLanguage || '',
+        recognitionProvider: turnContext.recognitionProvider || ''
+      });
       setNewtabMicMessage(String(data.speech), 'assertive');
       return true;
     }
@@ -733,7 +870,10 @@ async function handleNewtabTranscript(transcript, detectedLanguage, provider) {
     const languageReady = ensureOutputLanguageReady();
     const cmd = parseVoiceCommand(transcript);
     if (!cmd) {
-      if (await assistantQuestionFromVoice(transcript)) return true;
+      if (await assistantQuestionFromVoice(transcript, {
+        detectedLanguage: detectedLanguage || '',
+        recognitionProvider: provider || ''
+      })) return true;
       await languageReady;
       setNewtabMicMessage(translate('newtab_try_open'), 'polite');
       return true;
