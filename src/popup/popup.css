@@ -196,6 +196,27 @@ body {
   gap: 8px;
 }
 
+.nv-popup-typed {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--nv-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.nv-popup-typed-input {
+  min-height: 94px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.nv-popup-typed-note {
+  margin: 0;
+  max-width: none;
+  text-align: left;
+}
+
 .nv-popup-help-group {
   padding: 10px 11px;
   border-radius: 16px;

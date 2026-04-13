@@ -27,6 +27,15 @@ function setDescription(text) {
   el.textContent = text || '';
 }
 
+function setTypedCommandAvailability(enabled, hintText) {
+  const input = document.getElementById('typedCommandInput');
+  const button = document.getElementById('btnTypedSend');
+  const hint = document.getElementById('typedCommandHint');
+  if (input) input.disabled = !enabled;
+  if (button) button.disabled = !enabled;
+  if (hint && hintText) hint.textContent = hintText;
+}
+
 function setHelpPanelState(helpBtn, helpPanel, open) {
   if (!helpBtn || !helpPanel) return;
   const isOpen = !!open;
@@ -66,6 +75,19 @@ async function refreshMicStatus() {
       btn2.textContent = 'Voice not available';
       status2.textContent = 'Voice input not available in this browser/page.';
     }
+  }
+}
+
+async function refreshTypedCommandState() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!isSupportedTab(tab)) {
+      setTypedCommandAvailability(false, 'Open an http, https, or file page to send a typed test command.');
+      return;
+    }
+    setTypedCommandAvailability(true, 'Uses the same parser and assistant path as voice. Press Ctrl+Enter or Cmd+Enter to send.');
+  } catch (_err) {
+    setTypedCommandAvailability(false, 'Open a supported page to send a typed test command.');
   }
 }
 
@@ -150,6 +172,35 @@ async function handleReadFocusedClick() {
   }
 }
 
+async function handleTypedCommandSubmit(event) {
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+  const input = document.getElementById('typedCommandInput');
+  const q = input ? String(input.value || '').trim() : '';
+  if (!q) {
+    setStatus('Type a command or question first.', true);
+    return;
+  }
+
+  try {
+    setStatus('Sending typed command…');
+    setDescription('');
+    const res = await sendToActiveTab({ type: 'navable:runTypedCommand', text: q });
+    if (!res) {
+      setStatus('Open a supported page to send a typed test command.', true);
+      return;
+    }
+    if (res.ok) {
+      setStatus('Typed command sent.');
+      setDescription(res.speech || 'The page handled the typed command.');
+      return;
+    }
+    setStatus(res.error || 'Could not send typed command.', true);
+  } catch (e) {
+    console.error(e);
+    setStatus('Typed command failed.', true);
+  }
+}
+
 function wirePopup() {
   const micBtn = document.getElementById('btnMicToggle');
   if (micBtn) {
@@ -187,7 +238,19 @@ function wirePopup() {
     });
   }
 
+  const typedForm = document.getElementById('typedCommandForm');
+  const typedInput = document.getElementById('typedCommandInput');
+  if (typedForm) typedForm.addEventListener('submit', handleTypedCommandSubmit);
+  if (typedInput) {
+    typedInput.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        handleTypedCommandSubmit(event);
+      }
+    });
+  }
+
   refreshMicStatus();
+  refreshTypedCommandState();
 }
 
 document.addEventListener('DOMContentLoaded', wirePopup);

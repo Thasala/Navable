@@ -262,6 +262,14 @@
         }
         return true;
       }
+      if (msg && msg.type === 'navable:runTypedCommand') {
+        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (handled) {
+          sendResponse && sendResponse({ ok: !!handled, speech: lastSpoken || '' });
+        }).catch(function (err) {
+          sendResponse && sendResponse({ ok: false, error: String(err || 'typed command failed') });
+        });
+        return true;
+      }
       if (msg && msg.type === 'navable:executePlan') {
         runPlan(msg.plan || { steps: [] }, { silentOutput: !!msg.silentOutput }).then(function (res) {
           sendResponse && sendResponse(res);
