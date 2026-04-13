@@ -407,15 +407,47 @@ function tokenizeIntentText(text) {
     .filter((token) => token && token.length > 1 && !INTENT_STOPWORDS.has(token));
 }
 
-function scoreIntentLabel(label, tokens) {
-  const lower = String(label || '').toLowerCase();
-  if (!lower || !tokens.length) return 0;
+const FIELD_LIKE_INTENT_TOKENS = ['password', 'email', 'username', 'search', 'phone', 'code', 'otp', 'pin', 'field', 'input', 'box'];
+const BUTTON_LIKE_INTENT_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send'];
+const LINK_LIKE_INTENT_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin'];
+const HEADING_LIKE_INTENT_TOKENS = ['heading', 'section', 'title', 'part'];
+
+function hasAnyIntentToken(tokens, candidates) {
+  return tokens.some((token) => candidates.includes(token));
+}
+
+function inferIntentTargetTypes(normalized, tokens) {
+  if (hasAnyIntentToken(tokens, FIELD_LIKE_INTENT_TOKENS) || /\b(field|input|box|search|champ)\b|حقل|بحث|ابحث|دو[ّو]?ر/.test(normalized)) {
+    return ['input', 'button', 'link', 'heading'];
+  }
+  if (hasAnyIntentToken(tokens, BUTTON_LIKE_INTENT_TOKENS) || /\b(button|press|tap|activate|bouton)\b|زر|اضغط|فع[ّ]?ل/.test(normalized)) {
+    return ['button', 'link', 'input', 'heading'];
+  }
+  if (hasAnyIntentToken(tokens, HEADING_LIKE_INTENT_TOKENS) || /\b(section|heading|part|titre)\b|عنوان|قسم|جزء/.test(normalized)) {
+    return ['heading', 'link', 'button', 'input'];
+  }
+  if (hasAnyIntentToken(tokens, LINK_LIKE_INTENT_TOKENS) || /\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح|وديني|خذني|روح/.test(normalized)) {
+    return ['link', 'button', 'heading', 'input'];
+  }
+  return ['link', 'button', 'heading', 'input'];
+}
+
+function scoreIntentCandidate(candidate, tokens, targetTypes) {
+  const label = String(candidate?.label || '').toLowerCase();
+  const meta = String(candidate?.meta || '').toLowerCase();
+  if ((!label && !meta) || !tokens.length) return 0;
   let score = 0;
   for (const token of tokens) {
-    if (lower === token) score += 5;
-    else if (lower.startsWith(token) || lower.endsWith(token)) score += 3;
-    else if (lower.includes(token)) score += token.length >= 5 ? 2 : 1;
+    if (label === token) score += 10;
+    else if (label.startsWith(token) || label.endsWith(token)) score += 6;
+    else if (label.includes(token)) score += token.length >= 5 ? 4 : 2;
+    else if (meta.includes(token)) score += token.length >= 5 ? 3 : 1;
+    if (candidate?.target === 'input' && token === 'password' && String(candidate?.inputType || '').toLowerCase() === 'password') score += 14;
+    if (candidate?.target === 'input' && token === 'email' && String(candidate?.inputType || '').toLowerCase() === 'email') score += 12;
+    if (candidate?.target === 'input' && token === 'search' && String(candidate?.inputType || '').toLowerCase() === 'search') score += 11;
   }
+  const typeIndex = targetTypes.indexOf(candidate?.target || '');
+  if (typeIndex >= 0) score += Math.max(0, 8 - typeIndex * 2);
   return score;
 }
 
@@ -424,16 +456,33 @@ function collectIntentCandidates(structure, targetTypes) {
   const targets = Array.isArray(targetTypes) && targetTypes.length ? targetTypes : ['link', 'button', 'heading', 'input'];
   for (const target of targets) {
     if (target === 'link' && structure && Array.isArray(structure.links)) {
-      structure.links.forEach((item) => candidates.push({ target: 'link', label: item?.label || '' }));
+      structure.links.forEach((item) => candidates.push({
+        target: 'link',
+        label: item?.label || '',
+        meta: `${item?.href || ''}`
+      }));
     }
     if (target === 'button' && structure && Array.isArray(structure.buttons)) {
-      structure.buttons.forEach((item) => candidates.push({ target: 'button', label: item?.label || '' }));
+      structure.buttons.forEach((item) => candidates.push({
+        target: 'button',
+        label: item?.label || '',
+        meta: `${item?.tag || ''}`
+      }));
     }
     if (target === 'heading' && structure && Array.isArray(structure.headings)) {
-      structure.headings.forEach((item) => candidates.push({ target: 'heading', label: item?.label || '' }));
+      structure.headings.forEach((item) => candidates.push({
+        target: 'heading',
+        label: item?.label || '',
+        meta: `${item?.level != null ? 'level ' + item.level : ''}`
+      }));
     }
     if (target === 'input' && structure && Array.isArray(structure.inputs)) {
-      structure.inputs.forEach((item) => candidates.push({ target: 'input', label: item?.label || '' }));
+      structure.inputs.forEach((item) => candidates.push({
+        target: 'input',
+        label: item?.label || '',
+        meta: `${item?.name || ''} ${item?.placeholder || ''}`,
+        inputType: item?.inputType || ''
+      }));
     }
   }
   return candidates;
@@ -444,16 +493,11 @@ function chooseIntentTarget(text, structure) {
   const tokens = tokenizeIntentText(normalized);
   if (!tokens.length || !structure) return null;
 
-  let targetTypes = ['link', 'button', 'heading', 'input'];
-  if (/\b(button|press|tap|activate|bouton)\b|زر|اضغط|فع[ّ]?ل/.test(normalized)) targetTypes = ['button', 'link'];
-  else if (/\b(link|open|visit|launch|website|site|lien|ouvre|visite)\b|رابط|افتح|وديني|خذني|روح/.test(normalized)) targetTypes = ['link', 'heading', 'button'];
-  else if (/\b(section|heading|part|titre)\b|عنوان|قسم|جزء/.test(normalized)) targetTypes = ['heading', 'link'];
-  else if (/\b(field|input|box|search|champ)\b|حقل|بحث|ابحث|دو[ّو]?ر/.test(normalized)) targetTypes = ['input', 'button', 'link'];
-
+  const targetTypes = inferIntentTargetTypes(normalized, tokens);
   const candidates = collectIntentCandidates(structure, targetTypes);
   let best = null;
   for (const candidate of candidates) {
-    const score = scoreIntentLabel(candidate.label, tokens);
+    const score = scoreIntentCandidate(candidate, tokens, targetTypes);
     if (!score) continue;
     if (!best || score > best.score) best = { ...candidate, score };
   }

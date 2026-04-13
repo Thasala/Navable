@@ -407,6 +407,247 @@
     // alt text if image link/button
     var img = el.querySelector && el.querySelector('img[alt]');
     if (img && img.getAttribute('alt')) return img.getAttribute('alt').trim();
+    // svg title if present
+    var svgTitle = el.querySelector && el.querySelector('svg title');
+    if (svgTitle && svgTitle.textContent) {
+      t = String(svgTitle.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) return t;
+    }
+    // button-like input values
+    if (el.tagName === 'INPUT') {
+      var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+      if (inputType === 'button' || inputType === 'submit' || inputType === 'reset') {
+        var buttonValue = el.getAttribute('value');
+        if (buttonValue) return buttonValue.trim();
+      }
+    }
+    var nameAttr = el.getAttribute && el.getAttribute('name');
+    if (nameAttr) {
+      t = humanizeIdentifier(nameAttr);
+      if (t) return t;
+    }
+    var elementId = el.id || '';
+    if (elementId) {
+      t = humanizeIdentifier(elementId);
+      if (t) return t;
+    }
+    if (el.tagName === 'A' && el.getAttribute) {
+      t = humanizeUrlFragment(el.getAttribute('href') || '');
+      if (t) return t;
+    }
+    t = fallbackLabelForElement(el);
+    if (t) return t;
+    return '';
+  }
+
+  function normalizeMatchText(text) {
+    var raw = String(text || '');
+    if (!raw) return '';
+    raw = raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+    if (typeof raw.normalize === 'function') {
+      try {
+        raw = raw.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+      } catch (_err) {
+        // ignore normalize failures
+      }
+    }
+    return raw.toLowerCase().replace(/[^\w\u0600-\u06FF\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function humanizeIdentifier(value) {
+    var normalized = normalizeMatchText(value);
+    if (!normalized) return '';
+    return normalized.replace(/\b(btn|cta|lnk|nav|icon|field|input)\b/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function humanizeUrlFragment(value) {
+    var raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+      if (/^(https?:)?\/\//i.test(raw)) {
+        var url = new URL(raw, location.href);
+        var path = url.pathname || '';
+        var segs = path.split('/').filter(Boolean);
+        var lastSeg = segs.length ? segs[segs.length - 1] : '';
+        if (lastSeg) return humanizeIdentifier(lastSeg);
+        if (url.hash) return humanizeIdentifier(url.hash.replace(/^#/, ''));
+        return humanizeIdentifier(url.hostname.replace(/^www\./, ''));
+      }
+    } catch (_err) {
+      // ignore URL parse failures
+    }
+    if (raw.charAt(0) === '#') return humanizeIdentifier(raw.slice(1));
+    return humanizeIdentifier(raw);
+  }
+
+  function fallbackLabelForElement(el) {
+    if (!el) return '';
+    var type = getType(el);
+    if (type === 'link') {
+      var href = el.getAttribute && el.getAttribute('href');
+      var hrefLabel = humanizeUrlFragment(href);
+      if (hrefLabel) return hrefLabel;
+      return 'unlabeled link';
+    }
+    if (type === 'button') {
+      var buttonType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+      if (buttonType === 'submit') return 'submit button';
+      if (buttonType === 'reset') return 'reset button';
+      return 'unlabeled button';
+    }
+    if (type === 'input') {
+      var inputType = String((el.getAttribute && el.getAttribute('type')) || (el.tagName || '')).toLowerCase();
+      if (inputType) return humanizeIdentifier(inputType) || 'input';
+      return 'input';
+    }
+    return '';
+  }
+
+  var DEFAULT_AUTO_TARGET_ORDER = ['link', 'button', 'heading', 'input'];
+  var ACTION_RETRY_DELAYS_MS = [0, 120, 350, 800];
+  var ACTIONABLE_BUTTON_ROLES = {
+    button: true,
+    menuitem: true,
+    tab: true,
+    option: true,
+    radio: true,
+    checkbox: true,
+    switch: true
+  };
+  var BUTTON_LIKE_INPUT_TYPES = {
+    button: true,
+    submit: true,
+    reset: true,
+    checkbox: true,
+    radio: true,
+    image: true
+  };
+  var FIELD_LIKE_TOKENS = ['password', 'email', 'username', 'search', 'phone', 'code', 'otp', 'pin', 'field', 'input', 'box'];
+  var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send'];
+  var LINK_LIKE_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin', 'sign in', 'sign-in', 'learn more', 'read more'];
+  var HEADING_LIKE_TOKENS = ['heading', 'section', 'title', 'part'];
+  var SUPPORTED_COMMAND_VERBS = ['click', 'focus', 'open', 'press', 'activate', 'read', 'scroll'];
+  var COMMAND_VERB_ALIASES = {
+    lick: 'click',
+    clik: 'click',
+    focu: 'focus',
+    scrol: 'scroll',
+    pres: 'press',
+    activte: 'activate'
+  };
+
+  function splitCommandWords(text) {
+    return String(text || '').trim().split(/\s+/).filter(Boolean);
+  }
+
+  function isEditDistanceAtMostOne(a, b) {
+    var left = String(a || '');
+    var right = String(b || '');
+    if (!left || !right) return false;
+    if (left === right) return true;
+    if (Math.abs(left.length - right.length) > 1) return false;
+
+    var i = 0;
+    var j = 0;
+    var edits = 0;
+    while (i < left.length && j < right.length) {
+      if (left.charCodeAt(i) === right.charCodeAt(j)) {
+        i += 1;
+        j += 1;
+        continue;
+      }
+      edits += 1;
+      if (edits > 1) return false;
+      if (left.length > right.length) i += 1;
+      else if (right.length > left.length) j += 1;
+      else {
+        i += 1;
+        j += 1;
+      }
+    }
+    if (i < left.length || j < right.length) edits += 1;
+    return edits <= 1;
+  }
+
+  function hasPlausibleCommandRemainder(parts) {
+    if (!parts || !parts.length) return false;
+    var filtered = parts.filter(function (part) {
+      return /[a-z0-9\u0600-\u06FF]/i.test(part) && !/^(the|a|an|to|for|please|me|this)$/i.test(part);
+    });
+    return filtered.length > 0;
+  }
+
+  function recoverLeadingVerb(token, remainderWords) {
+    var raw = String(token || '').trim().toLowerCase();
+    if (!raw) return raw;
+    if (COMMAND_VERB_ALIASES[raw] && hasPlausibleCommandRemainder(remainderWords)) return COMMAND_VERB_ALIASES[raw];
+    for (var i = 0; i < SUPPORTED_COMMAND_VERBS.length; i++) {
+      var verb = SUPPORTED_COMMAND_VERBS[i];
+      if (raw === verb) return raw;
+      if (!hasPlausibleCommandRemainder(remainderWords)) continue;
+      if (isEditDistanceAtMostOne(raw, verb)) return verb;
+      if (verb.length === raw.length + 1 && verb.indexOf(raw) === 1) return verb;
+    }
+    return raw;
+  }
+
+  function normalizeCommandTextForIntent(text) {
+    var words = splitCommandWords(String(text || '').trim().toLowerCase());
+    if (!words.length) return '';
+    words[0] = recoverLeadingVerb(words[0], words.slice(1));
+    return words.join(' ').trim();
+  }
+
+  function hasAnyIntentToken(tokens, candidates) {
+    if (!tokens || !tokens.length || !candidates || !candidates.length) return false;
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = normalizeMatchText(candidates[i]);
+      if (!candidate) continue;
+      for (var j = 0; j < tokens.length; j++) {
+        if (tokens[j] === candidate) return true;
+      }
+    }
+    return false;
+  }
+
+  function inferPreferredTargetTypes(label, actionType) {
+    var normalized = normalizeMatchText(label);
+    var tokens = normalized ? normalized.split(' ').filter(Boolean) : [];
+    var hasField = hasAnyIntentToken(tokens, FIELD_LIKE_TOKENS);
+    var hasButton = hasAnyIntentToken(tokens, BUTTON_LIKE_TOKENS);
+    var hasLink = hasAnyIntentToken(tokens, LINK_LIKE_TOKENS);
+    var hasHeading = hasAnyIntentToken(tokens, HEADING_LIKE_TOKENS);
+
+    if (actionType === 'focus') {
+      if (hasField) return ['input', 'button', 'link', 'heading'];
+      if (hasButton) return ['button', 'link', 'input', 'heading'];
+      if (hasLink) return ['link', 'button', 'heading', 'input'];
+      if (hasHeading) return ['heading', 'link', 'button', 'input'];
+      return ['button', 'link', 'input', 'heading'];
+    }
+    if (actionType === 'activate' || actionType === 'click') {
+      if (hasButton) return ['button', 'link', 'input', 'heading'];
+      if (hasField) return ['button', 'input', 'link', 'heading'];
+      return ['link', 'button', 'heading', 'input'];
+    }
+    if (actionType === 'open') {
+      if (hasField) return ['input', 'link', 'button', 'heading'];
+      return ['link', 'button', 'heading', 'input'];
+    }
+    if (actionType === 'read') {
+      if (hasHeading) return ['heading', 'link', 'button', 'input'];
+      if (hasField) return ['input', 'button', 'link', 'heading'];
+    }
+    return DEFAULT_AUTO_TARGET_ORDER.slice();
+  }
+
+  function preferredTypeFromExplicitLanguage(label) {
+    var normalized = normalizeMatchText(label);
+    var tokens = normalized ? normalized.split(' ').filter(Boolean) : [];
+    if (hasAnyIntentToken(tokens, FIELD_LIKE_TOKENS)) return 'input';
+    if (hasAnyIntentToken(tokens, BUTTON_LIKE_TOKENS)) return 'button';
+    if (hasAnyIntentToken(tokens, HEADING_LIKE_TOKENS)) return 'heading';
+    if (hasAnyIntentToken(tokens, LINK_LIKE_TOKENS)) return 'link';
     return '';
   }
 
@@ -414,13 +655,88 @@
     return 'n' + idCounter++;
   }
 
+  function normalizedRole(el) {
+    if (!el || !el.getAttribute) return '';
+    return String(el.getAttribute('role') || '').toLowerCase().trim();
+  }
+
+  function getTabIndexValue(el) {
+    if (!el || !el.getAttribute) return null;
+    var raw = el.getAttribute('tabindex');
+    if (raw == null || raw === '') return null;
+    var parsed = parseInt(raw, 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  function hasPointerCursor(el) {
+    try {
+      var view = el && el.ownerDocument && el.ownerDocument.defaultView;
+      var style = view && view.getComputedStyle ? view.getComputedStyle(el) : null;
+      return !!(style && style.cursor === 'pointer');
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function isButtonLikeInput(el) {
+    if (!el || (el.tagName || '').toLowerCase() !== 'input') return false;
+    var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    return !!BUTTON_LIKE_INPUT_TYPES[inputType];
+  }
+
+  function isSemanticallyDiscoverableActionable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    var role = normalizedRole(el);
+    if (tag === 'button' || tag === 'summary') return true;
+    if (tag === 'label' && el.getAttribute && el.getAttribute('for')) {
+      var labeledControl = resolveLabelProxyTarget(el);
+      return getType(labeledControl) === 'button';
+    }
+    if (role === 'link' || ACTIONABLE_BUTTON_ROLES[role]) return true;
+    if (isButtonLikeInput(el)) return true;
+    if (el.hasAttribute && el.hasAttribute('onclick')) return true;
+    return getTabIndexValue(el) >= 0 && hasPointerCursor(el);
+  }
+
+  function isNativelyFocusable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (/^(input|select|textarea|button|summary)$/.test(tag)) return true;
+    if (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) return true;
+    return getTabIndexValue(el) != null;
+  }
+
+  function resolveLabelProxyTarget(el) {
+    if (!el || (el.tagName || '').toLowerCase() !== 'label' || !el.getAttribute) return null;
+    var forId = el.getAttribute('for');
+    if (!forId) return null;
+    try {
+      return el.ownerDocument && el.ownerDocument.getElementById(forId);
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function focusElementForNavigation(el) {
+    if (!el) return false;
+    var focusTarget = resolveLabelProxyTarget(el) || el;
+    if (!focusTarget || typeof focusTarget.focus !== 'function') return false;
+    if (!isNativelyFocusable(focusTarget) && focusTarget.setAttribute) {
+      focusTarget.setAttribute('tabindex', '-1');
+    }
+    focusTarget.focus();
+    return true;
+  }
+
   function getType(el) {
     var tag = (el.tagName || '').toLowerCase();
-    var role = (el.getAttribute && el.getAttribute('role')) || '';
+    var role = normalizedRole(el);
     if (tag === 'a' || role === 'link') return 'link';
-    if (tag === 'button' || role === 'button') return 'button';
     if (/^h[1-6]$/.test(tag)) return 'heading';
-    if (tag === 'input' || tag === 'select' || tag === 'textarea') return 'input';
+    if (tag === 'input') return isButtonLikeInput(el) ? 'button' : 'input';
+    if (tag === 'select' || tag === 'textarea') return 'input';
+    if (isSemanticallyDiscoverableActionable(el)) return 'button';
     return 'other';
   }
 
@@ -447,10 +763,19 @@
     var selector = [
       'a[href]', '[role="link"]',
       'button',
+      'summary',
+      'label[for]',
       '[role="button"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[role="option"]',
+      '[role="radio"]',
+      '[role="checkbox"]',
+      '[role="switch"]',
       'input',
       'select',
       'textarea',
+      '[onclick]',
       '[tabindex]:not([tabindex="-1"])',
       'h1, h2, h3, h4, h5, h6'
     ].join(',');
@@ -465,11 +790,45 @@
       if (!el.dataset.navableId) el.dataset.navableId = nextId();
       el.dataset.navableLabel = label;
       var type = getType(el);
+      if (type === 'other') return;
       el.dataset.navableType = type;
-      items.push({ id: el.dataset.navableId, label: label, tag: el.tagName.toLowerCase(), type: type });
+      var tag = el.tagName.toLowerCase();
+      items.push({
+        id: el.dataset.navableId,
+        label: label,
+        tag: tag,
+        type: type,
+        aliases: collectAliasesForElement(el, label),
+        inputType: type === 'input' ? String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase() : '',
+        name: type === 'input' ? String((el.getAttribute && el.getAttribute('name')) || '') : '',
+        placeholder: type === 'input' ? String((el.getAttribute && el.getAttribute('placeholder')) || '') : '',
+        href: type === 'link' ? String((el.getAttribute && el.getAttribute('href')) || '') : ''
+      });
     });
     index.items = items;
     return index;
+  }
+
+  function collectAliasesForElement(el, label) {
+    var aliases = [];
+
+    function pushAlias(value) {
+      var normalized = normalizeMatchText(value);
+      if (!normalized) return;
+      if (aliases.indexOf(normalized) >= 0) return;
+      aliases.push(normalized);
+    }
+
+    pushAlias(label);
+    if (!el || !el.getAttribute) return aliases;
+    pushAlias(el.getAttribute('aria-label'));
+    pushAlias(el.getAttribute('title'));
+    pushAlias(el.getAttribute('placeholder'));
+    pushAlias(el.getAttribute('value'));
+    pushAlias(humanizeIdentifier(el.getAttribute('name')));
+    pushAlias(humanizeIdentifier(el.id || ''));
+    if ((el.tagName || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
+    return aliases;
   }
 
   function clearOverlay() {
@@ -517,7 +876,7 @@
     if (!document.body) return;
     if (observer) observer.disconnect();
     observer = new MutationObserver(scheduleRescan);
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'aria-labelledby', 'title', 'hidden', 'style'] });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'aria-labelledby', 'title', 'hidden', 'aria-hidden', 'style', 'class', 'role', 'tabindex', 'onclick', 'for', 'href', 'type', 'name', 'placeholder'] });
   }
 
   // Initial scan
@@ -560,21 +919,37 @@
   function extractExcerpt(doc) {
     var root = (doc && doc.querySelector && (doc.querySelector('main') || doc.querySelector('article'))) || (doc && doc.body);
     if (!root) return '';
-    var nodes = Array.prototype.slice.call(root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li'));
+    var nodes = Array.prototype.slice.call(
+      root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,label,legend,button,[role="radio"],[role="checkbox"],[role="option"]')
+    );
     var maxChars = 1200;
     var total = 0;
     var parts = [];
+    var seenText = new Set();
     for (var i = 0; i < nodes.length; i++) {
       if (parts.length >= 24) break;
       var el = nodes[i];
       if (isHidden(el) || isNavableUiElement(el)) continue;
+      var tag = (el.tagName || '').toLowerCase();
+      if (tag === 'label') {
+        var control = null;
+        var forId = el.getAttribute && el.getAttribute('for');
+        if (forId) control = el.ownerDocument.getElementById(forId);
+        if (!control) control = el.querySelector && el.querySelector('input,select,textarea');
+        if (control && isSensitiveInput(control)) continue;
+      }
       var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!text || text.length < 12) continue;
+      var role = (el.getAttribute && el.getAttribute('role')) || '';
+      var minChars = (tag === 'label' || tag === 'legend' || tag === 'button' || role === 'radio' || role === 'checkbox' || role === 'option') ? 3 : 12;
+      if (!text || text.length < minChars) continue;
+      var dedupeKey = text.toLowerCase();
+      if (seenText.has(dedupeKey)) continue;
       var remaining = maxChars - total;
       if (remaining <= 0) break;
       if (text.length > remaining) text = text.slice(0, remaining);
       parts.push(text);
       total += text.length;
+      seenText.add(dedupeKey);
     }
     return parts.join(' ');
   }
@@ -615,15 +990,19 @@
       } else if (it.type === 'input') {
         var el = document.querySelector('[data-navable-id="' + it.id + '"]');
         if (el) {
-          if (isSensitiveInput(el)) {
-            // Exclude sensitive fields (e.g., passwords, card numbers) from the snapshot.
+          var sensitiveInput = isSensitiveInput(el);
+          var paymentInput = isPaymentLikeInput(el);
+          if (paymentInput) {
+            // Exclude high-risk payment fields from the snapshot.
             sensitiveInputCount += 1;
             return;
           }
+          if (sensitiveInput) sensitiveInputCount += 1;
           entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
-          entry.name = (el.getAttribute && el.getAttribute('name')) || '';
+          entry.name = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('name')) || '');
           entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
-          entry.placeholder = (el.getAttribute && el.getAttribute('placeholder')) || '';
+          entry.placeholder = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('placeholder')) || '');
+          if (sensitiveInput) entry.sensitive = true;
         }
         inputs.push(entry);
       }
@@ -691,29 +1070,34 @@
     return 'Links: ' + items.join(' ') + more;
   }
 
-  function getElementByRef(type, label, n) {
-    if (label) return findByLabel(type, label);
-    return pickNth(type, n || 1);
+  function isPasswordInput(el) {
+    if (!el) return false;
+    var type = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    var name = String((el.getAttribute && el.getAttribute('name')) || '').toLowerCase();
+    var id = String(el.id || '').toLowerCase();
+    return type === 'password' || name.indexOf('password') >= 0 || id.indexOf('password') >= 0;
   }
 
-  function isSensitiveInput(el) {
+  function isPaymentLikeInput(el) {
     if (!el) return false;
     var type = (el.getAttribute && el.getAttribute('type')) || '';
     var name = (el.getAttribute && el.getAttribute('name')) || '';
     var id = el.id || '';
     var hay = (type + ' ' + name + ' ' + id).toLowerCase();
-    if (type.toLowerCase() === 'password') return true;
-    if (hay.includes('password')) return true;
     if (hay.includes('card') || hay.includes('credit')) return true;
     return false;
   }
 
-  function runToolStep(step) {
+  function isSensitiveInput(el) {
+    return isPasswordInput(el) || isPaymentLikeInput(el);
+  }
+
+  async function runToolStep(step) {
     step = step || {};
     var action = step.action;
     if (!action) return { ok: false, message: 'No action' };
     if (action === 'scroll') {
-      execCommand({ type: 'scroll', dir: step.direction || step.dir || 'down' });
+      await execCommand({ type: 'scroll', dir: step.direction || step.dir || 'down' });
       return { ok: true, message: 'Scrolled ' + (step.direction || step.dir || 'down') };
     }
     if (action === 'announce') {
@@ -721,40 +1105,52 @@
       return { ok: true, message: 'Announced' };
     }
     if (action === 'read_title') {
-      execCommand({ type: 'read', what: 'title' });
+      await execCommand({ type: 'read', what: 'title' });
       return { ok: true, message: 'Read title' };
     }
     if (action === 'read_selection') {
-      execCommand({ type: 'read', what: 'selection' });
+      await execCommand({ type: 'read', what: 'selection' });
       return { ok: true, message: 'Read selection' };
     }
     if (action === 'read_focused') {
-      execCommand({ type: 'read', what: 'focused' });
+      await execCommand({ type: 'read', what: 'focused' });
       return { ok: true, message: 'Read focused' };
     }
     if (action === 'read_heading') {
       if (step.label) {
-        execCommand({ type: 'read', target: 'heading', label: step.label });
+        await execCommand({ type: 'read', target: 'heading', label: step.label });
       } else {
-        execCommand({ type: 'read', target: 'heading', n: step.n || 1 });
+        await execCommand({ type: 'read', target: 'heading', n: step.n || 1 });
       }
       return { ok: true, message: 'Read heading' };
     }
     if (action === 'focus_element') {
-      var el = getElementByRef(step.targetType || step.target, step.label, step.n);
-      if (!el) return { ok: false, message: 'Element not found' };
-      try { el.focus(); } catch (_err) { /* ignore */ }
+      var focused = await performElementActionWithRetry(step.targetType || step.target, step.label, step.n, step, function (el) {
+        if (!el.isConnected) return false;
+        return focusElementForNavigation(el);
+      });
+      if (!focused.ok || !focused.element) {
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, focused.resolution, step.label) };
+      }
       return { ok: true, message: 'Focused element' };
     }
     if (action === 'click_element') {
-      var elc = getElementByRef(step.targetType || step.target, step.label, step.n);
-      if (!elc) return { ok: false, message: 'Element not found' };
-      try { elc.click(); } catch (_err) { /* ignore */ }
+      var clicked = await performElementActionWithRetry(step.targetType || step.target, step.label, step.n, step, function (el) {
+        if (!el.isConnected) return false;
+        el.click();
+        return true;
+      });
+      if (!clicked.ok || !clicked.element) {
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, clicked.resolution, step.label) };
+      }
       return { ok: true, message: 'Clicked element' };
     }
     if (action === 'fill_text') {
-      var elin = getElementByRef(step.targetType || step.target || 'input', step.label, step.n);
-      if (!elin) return { ok: false, message: 'Element not found' };
+      var fillResolution = await resolveElementReferenceWithRetry(step.targetType || step.target || 'input', step.label, step.n, step);
+      if (!fillResolution.ok || !fillResolution.element) {
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label) };
+      }
+      var elin = fillResolution.element;
       var isInput = elin.tagName === 'INPUT' || elin.tagName === 'TEXTAREA';
       var isContentEditable = elin.isContentEditable;
       if (!isInput && !isContentEditable) return { ok: false, message: 'Target not fillable' };
@@ -777,7 +1173,7 @@
     }
     if (action === 'move_heading') {
       var dir = step.direction || step.dir || 'next';
-      execCommand({ type: 'move', target: 'heading', dir: dir === 'prev' ? 'prev' : 'next' });
+      await execCommand({ type: 'move', target: 'heading', dir: dir === 'prev' ? 'prev' : 'next' });
       return { ok: true, message: 'Moved heading ' + (dir === 'prev' ? 'previous' : 'next') };
     }
     if (action === 'wait_for_user_input') {
@@ -802,7 +1198,7 @@
     try {
       for (var i = 0; i < plan.steps.length; i++) {
         var step = plan.steps[i];
-        var res = runToolStep(step);
+        var res = await runToolStep(step);
         if (!res.ok) return { ok: false, error: res.message || 'Step failed', step: step };
         if (step.pauseMs) {
           await new Promise(function (resolve) { setTimeout(resolve, step.pauseMs); });
@@ -1261,10 +1657,33 @@
     );
   }
 
+  function isCurrentPageReferenceText(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t) return false;
+    return (
+      /\b(?:this|current)\s+(?:page|screen|site)\b/.test(t) ||
+      /\b(?:on|in)\s+(?:this|the current)\s+(?:page|screen|site)\b/.test(t) ||
+      /\b(?:sur|dans)\s+(?:cette|la)\s+(?:page|ecran|écran|site)\b/.test(t) ||
+      /(?:في|على|ب)\s+(?:هاي|هذه|هاد|هذي)\s+(?:الصفحة|الشاشة|الموقع)/.test(t) ||
+      /(?:الصفحة|الشاشة|الموقع)\s+(?:الحالية|هاي|هذه)/.test(t)
+    );
+  }
+
+  function isPageQuestionRequestText(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t || !isCurrentPageReferenceText(t)) return false;
+    return (
+      /\b(answer|correct answer|question|quiz|exercise|problem|prompt|choice|choices|option|options|solve|read|explain)\b/.test(t) ||
+      /\b(r[ée]ponse|question|quiz|exercice|probl[èe]me|choix|option|options|r[ée]soudre|lire|explique)\b/.test(t) ||
+      /(سؤال|اسئلة|أسئلة|جواب|الجواب|إجابة|اجابة|حل|خيارات|خيار|اختيار|اقر[أا]|اشرح)/.test(t)
+    );
+  }
+
   function isPageAssistantQuestionText(text) {
     var t = String(text || '').trim().toLowerCase();
     if (!t) return false;
     if (isSummaryCommandText(t)) return true;
+    if (isPageQuestionRequestText(t)) return true;
     return (
       /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
       /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
@@ -1375,12 +1794,29 @@
     return 'answer';
   }
 
+  function extractTrailingPhraseAfterVerb(t, verbPattern) {
+    var raw = String(t || '').trim();
+    if (!raw) return '';
+    var next = raw.replace(verbPattern, '').trim();
+    next = next.replace(/^(on|onto|to|the|a|an)\s+/, '').trim();
+    return next;
+  }
+
+  function stripLeadingTargetFillers(text) {
+    var next = String(text || '').trim();
+    if (!next) return '';
+    next = next.replace(/^(on|onto|to)\s+/, '').trim();
+    next = next.replace(/^(the|a|an)\s+/, '').trim();
+    return next;
+  }
+
   function parseCommand(text) {
     var original = String(text || '');
-    var t = original.trim().toLowerCase();
+    var t = normalizeCommandTextForIntent(original.trim().toLowerCase());
     if (!t) return null;
     var num = extractNumber(t);
     var label;
+    var inferredType;
 
     // Help / examples.
     if (
@@ -1411,18 +1847,56 @@
     if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا|شو العنصر الحالي|ايش العنصر الحالي|وين انا واقف|على شو انا/])) return { type: 'read', what: 'focused' };
 
     // Explicit label-based intents first
-    if ((/^open/.test(t) || /^click/.test(t)) && /link/.test(t) && (label = extractLabel(t, 'link'))) return { type: 'open', target: 'link', label: label };
-    if ((/^focus/.test(t) || /focus .*button/.test(t)) && /button/.test(t) && (label = extractLabel(t, 'button'))) return { type: 'focus', target: 'button', label: label };
-    if (/^read/.test(t) && /heading/.test(t) && (label = extractLabel(t, 'heading'))) return { type: 'read', target: 'heading', label: label };
-    if ((/^press/.test(t) || /^activate/.test(t)) && /button/.test(t) && (label = extractLabel(t, 'button'))) return { type: 'activate', target: 'button', label: label };
+    if ((/^open/.test(t) || /^click/.test(t)) && /link/.test(t) && (label = extractLabel(t, 'link'))) return { type: 'open', target: 'link', label: label, n: num != null ? num : null };
+    if ((/^focus/.test(t) || /focus .*button/.test(t)) && /button/.test(t) && (label = extractLabel(t, 'button'))) return { type: 'focus', target: 'button', label: label, n: num != null ? num : null };
+    if (/^read/.test(t) && /heading/.test(t) && (label = extractLabel(t, 'heading'))) return { type: 'read', target: 'heading', label: label, n: num != null ? num : null };
+    if ((/^press/.test(t) || /^activate/.test(t)) && /button/.test(t) && (label = extractLabel(t, 'button'))) return { type: 'activate', target: 'button', label: label, n: num != null ? num : null };
 
     // activate focused or this element
     if (/^(activate|press|click)( (the )?(focus|focused|this))?$/.test(t)) return { type: 'activate', target: 'focused' };
 
     // Shorthand label forms (“go to pricing”, “click docs”, “press continue”)
-    if (/^go to /.test(t)) return { type: 'open', target: 'link', label: t.replace(/^go to\s+/, '').trim() };
-    if (/^click\s+/.test(t) && !/link|button|heading/.test(t)) return { type: 'open', target: 'link', label: t.replace(/^click\s+/, '').trim() };
-    if (/^press\s+/.test(t) && !/link|button|heading/.test(t)) return { type: 'activate', target: 'button', label: t.replace(/^press\s+/, '').trim() };
+    if (/^go to /.test(t)) {
+      label = stripLeadingTargetFillers(t.replace(/^go to\s+/, '').trim());
+      return {
+        type: 'open',
+        target: 'auto',
+        label: label,
+        n: num != null ? num : null,
+        preferredTypes: inferPreferredTargetTypes(label, 'open')
+      };
+    }
+    if (/^click\s+/.test(t) && !/link|button|heading/.test(t)) {
+      label = stripLeadingTargetFillers(t.replace(/^click\s+/, '').trim());
+      return {
+        type: 'activate',
+        target: 'auto',
+        label: label,
+        n: num != null ? num : null,
+        preferredTypes: inferPreferredTargetTypes(label, 'click')
+      };
+    }
+    if (/^press\s+/.test(t) && !/link|button|heading/.test(t)) {
+      label = stripLeadingTargetFillers(t.replace(/^press\s+/, '').trim());
+      return {
+        type: 'activate',
+        target: 'auto',
+        label: label,
+        n: num != null ? num : null,
+        preferredTypes: inferPreferredTargetTypes(label, 'activate')
+      };
+    }
+    if (/^focus\s+/.test(t) && !/button|heading|focus .*button/.test(t)) {
+      label = extractTrailingPhraseAfterVerb(t, /^focus\s+/);
+      inferredType = preferredTypeFromExplicitLanguage(label);
+      return {
+        type: 'focus',
+        target: inferredType || 'auto',
+        label: label,
+        n: num != null ? num : null,
+        preferredTypes: inferPreferredTargetTypes(label, 'focus')
+      };
+    }
 
     // Heading position (fallback to 1 when no ordinal present)
     if (/read .*heading/.test(t) || /^read heading/.test(t)) {
@@ -1513,21 +1987,218 @@
     return label || null;
   }
 
-  function findByLabel(type, label) {
+  function countMatchingTokens(queryTokens, candidateTokens) {
+    if (!queryTokens.length || !candidateTokens.length) return 0;
+    var count = 0;
+    for (var i = 0; i < queryTokens.length; i++) {
+      if (candidateTokens.indexOf(queryTokens[i]) >= 0) count += 1;
+    }
+    return count;
+  }
+
+  function scoreItemMatch(item, query, queryTokens, preferredTypes) {
+    if (!item) return 0;
+    var best = 0;
+    var aliases = Array.isArray(item.aliases) ? item.aliases : [];
+    for (var i = 0; i < aliases.length; i++) {
+      var alias = aliases[i];
+      if (!alias) continue;
+      if (alias === query) best = Math.max(best, i === 0 ? 1000 : 920);
+      else if (alias.indexOf(query) === 0) best = Math.max(best, i === 0 ? 860 : 780);
+      else if (alias.indexOf(query) >= 0) best = Math.max(best, i === 0 ? 720 : 640);
+      if (queryTokens.length) {
+        var aliasTokens = alias.split(' ').filter(Boolean);
+        var matchedTokens = countMatchingTokens(queryTokens, aliasTokens);
+        if (matchedTokens === queryTokens.length) best = Math.max(best, 560 + matchedTokens);
+        else if (matchedTokens >= Math.max(1, Math.ceil(queryTokens.length * 0.6))) best = Math.max(best, 360 + matchedTokens);
+      }
+    }
+    if (best > 0 && Array.isArray(preferredTypes) && preferredTypes.length) {
+      var typeIndex = preferredTypes.indexOf(item.type);
+      if (typeIndex >= 0) best += Math.max(0, 90 - typeIndex * 20);
+    }
+    if (best > 0 && item.type === 'input') {
+      var normalizedInputType = String(item.inputType || '').toLowerCase();
+      if (queryTokens.indexOf('password') >= 0 && normalizedInputType === 'password') best += 180;
+      if (queryTokens.indexOf('email') >= 0 && normalizedInputType === 'email') best += 160;
+      if ((queryTokens.indexOf('search') >= 0 || queryTokens.indexOf('query') >= 0) && normalizedInputType === 'search') best += 150;
+    }
+    return best;
+  }
+
+  function targetPlural(type) {
+    if (type === 'link') return 'links';
+    if (type === 'button') return 'buttons';
+    if (type === 'heading') return 'headings';
+    if (type === 'input') return 'inputs';
+    return 'elements';
+  }
+
+  function resolutionFailureMessage(type, resolution, label) {
+    if (!resolution || resolution.reason === 'not_found') {
+      if (type === 'heading') return translate('not_found_heading');
+      if (type === 'link') return translate('not_found_link');
+      if (type === 'button') return translate('not_found_button');
+      return translate('not_found_generic', { target: localizeTarget(type || 'element') });
+    }
+    if (resolution.reason === 'ambiguous') {
+      return translate('ambiguous_target', {
+        count: resolution.count || 0,
+        target: targetPlural(type || 'element'),
+        value: String(label || '').trim()
+      });
+    }
+    return translate('not_found_generic', { target: localizeTarget(type || 'element') });
+  }
+
+  function resolveElementReference(type, label, n, opts) {
     rescan();
-    var items = index.items.filter(function (it) { return it.type === type; });
-    if (!items.length) return null;
-    var norm = function (s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); };
-    var L = norm(label);
-    var candidate = null;
-    // exact match first
-    for (var i = 0; i < items.length; i++) { if (norm(items[i].label) === L) { candidate = items[i]; break; } }
-    // startswith
-    if (!candidate) for (var j = 0; j < items.length; j++) { if (norm(items[j].label).startsWith(L)) { candidate = items[j]; break; } }
-    // includes
-    if (!candidate) candidate = items.find(function (it) { return norm(it.label).includes(L); }) || null;
-    if (!candidate) return null;
-    return document.querySelector('[data-navable-id="' + candidate.id + '"]');
+    var preferredTypes =
+      opts && Array.isArray(opts.preferredTypes) && opts.preferredTypes.length
+        ? opts.preferredTypes.slice()
+        : (type && type !== 'auto' ? [type] : DEFAULT_AUTO_TARGET_ORDER.slice());
+    var allowCrossType = !type || type === 'auto';
+    var items = index.items.filter(function (it) {
+      if (allowCrossType) return preferredTypes.indexOf(it.type) >= 0;
+      return it.type === type;
+    });
+    if (!items.length) {
+      return { ok: false, reason: 'not_found', count: 0, matches: [] };
+    }
+    if (!label) {
+      var idx = (n === -1) ? (items.length - 1) : (Math.max(1, n || 1) - 1);
+      var chosen = items[idx];
+      if (!chosen) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+      return {
+        ok: true,
+        item: chosen,
+        element: document.querySelector('[data-navable-id="' + chosen.id + '"]')
+      };
+    }
+
+    var normalizedQuery = normalizeMatchText(label);
+    if (!normalizedQuery) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+    var queryTokens = normalizedQuery.split(' ').filter(Boolean);
+    var ranked = items.map(function (item, indexInType) {
+      return { item: item, index: indexInType, score: scoreItemMatch(item, normalizedQuery, queryTokens, preferredTypes) };
+    }).filter(function (entry) {
+      return entry.score > 0;
+    }).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      var aTypeRank = preferredTypes.indexOf(a.item.type);
+      var bTypeRank = preferredTypes.indexOf(b.item.type);
+      if (aTypeRank !== bTypeRank) return aTypeRank - bTypeRank;
+      return a.index - b.index;
+    });
+
+    if (!ranked.length) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+
+    var bestScore = ranked[0].score;
+    var topMatches = ranked.filter(function (entry) { return entry.score === bestScore; });
+    if (n != null) {
+      var resolvedIndex = n === -1 ? (topMatches.length - 1) : (Math.max(1, n) - 1);
+      var exactChoice = topMatches[resolvedIndex];
+      if (!exactChoice) {
+        return {
+          ok: false,
+          reason: 'ambiguous',
+          count: topMatches.length,
+          matches: topMatches.map(function (entry) { return entry.item; })
+        };
+      }
+      return {
+        ok: true,
+        item: exactChoice.item,
+        element: document.querySelector('[data-navable-id="' + exactChoice.item.id + '"]')
+      };
+    }
+
+    if (topMatches.length > 1) {
+      return {
+        ok: false,
+        reason: 'ambiguous',
+        count: topMatches.length,
+        matches: topMatches.map(function (entry) { return entry.item; })
+      };
+    }
+
+    return {
+      ok: true,
+      item: topMatches[0].item,
+      element: document.querySelector('[data-navable-id="' + topMatches[0].item.id + '"]')
+    };
+  }
+
+  function waitFor(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms || 0)); });
+  }
+
+  async function resolveElementReferenceWithRetry(type, label, n, opts) {
+    var lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+    for (var i = 0; i < ACTION_RETRY_DELAYS_MS.length; i++) {
+      var delay = ACTION_RETRY_DELAYS_MS[i];
+      if (delay > 0) await waitFor(delay);
+      rescan();
+      var resolution = resolveElementReference(type, label, n, opts);
+      lastResolution = resolution;
+      if (!resolution.ok) {
+        if (resolution.reason === 'ambiguous') return resolution;
+        continue;
+      }
+      if (!resolution.element || !resolution.element.isConnected) {
+        lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+        continue;
+      }
+      return resolution;
+    }
+    return lastResolution;
+  }
+
+  async function performElementActionWithRetry(type, label, n, opts, actionFn) {
+    var lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+    for (var i = 0; i < ACTION_RETRY_DELAYS_MS.length; i++) {
+      var delay = ACTION_RETRY_DELAYS_MS[i];
+      if (delay > 0) await waitFor(delay);
+      rescan();
+      var resolution = resolveElementReference(type, label, n, opts);
+      lastResolution = resolution;
+      if (!resolution.ok) {
+        if (resolution.reason === 'ambiguous') return { ok: false, resolution: resolution };
+        continue;
+      }
+      var element = resolution.element;
+      if (!element || !element.isConnected) {
+        lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+        continue;
+      }
+      try {
+        var actionResult = actionFn(element, resolution);
+        if (actionResult === false) {
+          lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+          continue;
+        }
+        return { ok: true, resolution: resolution, element: element };
+      } catch (_err) {
+        lastResolution = { ok: false, reason: 'not_found', count: 0, matches: [] };
+      }
+    }
+    return { ok: false, resolution: lastResolution };
+  }
+
+  function commandTargetType(cmd, fallbackType) {
+    if (cmd && cmd.target && cmd.target !== 'auto') return cmd.target;
+    return fallbackType || 'element';
+  }
+
+  async function resolveCommandElement(cmd, fallbackType, actionKind) {
+    var targetType = cmd && cmd.target ? cmd.target : fallbackType;
+    var preferredTypes =
+      cmd && Array.isArray(cmd.preferredTypes) && cmd.preferredTypes.length
+        ? cmd.preferredTypes
+        : inferPreferredTargetTypes(cmd && cmd.label ? cmd.label : '', actionKind || 'focus');
+    return resolveElementReferenceWithRetry(targetType || fallbackType || 'auto', cmd && cmd.label ? cmd.label : '', cmd && cmd.n, {
+      preferredTypes: preferredTypes
+    });
   }
 
   var lastIndexByType = {};
@@ -1553,7 +2224,7 @@
     return document.querySelector('[data-navable-id="' + chosen.id + '"]');
   }
 
-  function execCommand(cmd) {
+  async function execCommand(cmd) {
     if (!cmd) {
       var now = Date.now();
       if (now - lastUnknownCmdAt < 5000) return;
@@ -1563,7 +2234,7 @@
     }
     if (cmd.type === 'help') { speakHelp(); return; }
     if (cmd.type === 'open_site') {
-      openSiteRequest(cmd.query, cmd.newTab !== false);
+      await openSiteRequest(cmd.query, cmd.newTab !== false);
       return;
     }
     if (cmd.type === 'scroll') {
@@ -1614,8 +2285,9 @@
       return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
-      var elhL = findByLabel('heading', cmd.label);
-      if (!elhL) { speak(translate('not_found_heading')); return; }
+      var headingResolution = await resolveCommandElement(cmd, 'heading', 'read');
+      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label)); return; }
+      var elhL = headingResolution.element;
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
       speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
       console.log('[Navable] Action: read heading by label', cmd.label);
@@ -1630,12 +2302,36 @@
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
-      var ellL = findByLabel('link', cmd.label);
-      if (!ellL) { speak(translate('not_found_link')); return; }
+      var openResult = await performElementActionWithRetry('link', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || ['link']
+      }, function (el) {
+        if (!el.isConnected) return false;
+        el.click();
+        return true;
+      });
+      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label)); return; }
+      var ellL = openResult.element;
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
       speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
-      ellL.click();
       console.log('[Navable] Action: open link by label', cmd.label);
+      return;
+    }
+    if (cmd.type === 'open' && cmd.target === 'auto' && cmd.label) {
+      var autoOpenResult = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || inferPreferredTargetTypes(cmd.label, 'open')
+      }, function (el) {
+        if (!el.isConnected) return false;
+        el.click();
+        return true;
+      });
+      if (!autoOpenResult.ok || !autoOpenResult.element) {
+        speak(resolutionFailureMessage(commandTargetType(cmd, 'link'), autoOpenResult.resolution, cmd.label));
+        return;
+      }
+      var autoOpen = autoOpenResult.element;
+      var autoOpenLabel = autoOpen.dataset.navableLabel || autoOpen.innerText || autoOpen.textContent || '';
+      speak(translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }));
+      console.log('[Navable] Action: open auto target', cmd.label);
       return;
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
@@ -1649,18 +2345,38 @@
       return;
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
-      var elbL = findByLabel('button', cmd.label);
-      if (!elbL) { speak(translate('not_found_button')); return; }
-      try { elbL.focus(); } catch (_err) { /* focus failed */ }
+      var focusButtonResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || ['button']
+      }, function (el) {
+        if (!el.isConnected) return false;
+        return focusElementForNavigation(el);
+      });
+      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label)); return; }
+      var elbL = focusButtonResult.element;
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
       speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button by label', cmd.label);
       return;
     }
+    if (cmd.type === 'focus' && cmd.label && (cmd.target === 'input' || cmd.target === 'auto')) {
+      var focusResolution = await performElementActionWithRetry(cmd.target === 'input' ? 'input' : 'auto', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || inferPreferredTargetTypes(cmd.label, 'focus')
+      }, function (el) {
+        if (!el.isConnected) return false;
+        return focusElementForNavigation(el);
+      });
+      var focusType = commandTargetType(cmd, 'input');
+      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(focusType, focusResolution.resolution, cmd.label)); return; }
+      var focusElement = focusResolution.element;
+      var focusLabel = focusElement.dataset.navableLabel || focusElement.innerText || focusElement.textContent || '';
+      speak(translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }));
+      console.log('[Navable] Action: focus target by label', cmd.label);
+      return;
+    }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
       if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
-      try { elb.focus(); } catch (_err) { /* focus failed */ }
+      try { focusElementForNavigation(elb); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
       speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
       console.log('[Navable] Action: focus button', cmd.n);
@@ -1677,13 +2393,38 @@
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
-      var ab = findByLabel('button', cmd.label);
-      if (!ab) { speak(translate('not_found_button')); return; }
+      var activateResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || ['button']
+      }, function (el) {
+        if (!el.isConnected) return false;
+        el.focus();
+        el.click();
+        return true;
+      });
+      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label)); return; }
+      var ab = activateResult.element;
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
-      try { ab.focus(); } catch (_err) { /* focus failed */ }
-      try { ab.click(); } catch (_err) { /* click failed */ }
       speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
       console.log('[Navable] Action: activate button by label', cmd.label);
+      return;
+    }
+    if (cmd.type === 'activate' && cmd.target === 'auto' && cmd.label) {
+      var autoActivateResolution = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
+        preferredTypes: cmd.preferredTypes || inferPreferredTargetTypes(cmd.label, 'activate')
+      }, function (el) {
+        if (!el.isConnected) return false;
+        el.focus();
+        el.click();
+        return true;
+      });
+      if (!autoActivateResolution.ok || !autoActivateResolution.element) {
+        speak(resolutionFailureMessage(commandTargetType(cmd, 'button'), autoActivateResolution.resolution, cmd.label));
+        return;
+      }
+      var autoActivate = autoActivateResolution.element;
+      var autoActivateLabel = autoActivate.dataset.navableLabel || autoActivate.innerText || autoActivate.textContent || '';
+      speak(translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }));
+      console.log('[Navable] Action: activate auto target', cmd.label);
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
@@ -1923,7 +2664,7 @@
         return true;
       }
       if (cmd) {
-        execCommand(cmd);
+        await execCommand(cmd);
         return true;
       }
       if (await tryIntentFallback(text, pageStructure)) return true;
@@ -1932,7 +2673,7 @@
         recognitionProvider: provider || ''
       })) return true;
       await languageReady;
-      execCommand(null);
+      await execCommand(null);
       return true;
     } finally {
       finishVoiceTurn({ delayMs: 900 });
