@@ -792,7 +792,8 @@
     var parts = raw.split(/\s+/).filter(Boolean);
     if (!parts.length) return '';
     var loweredParts = parts.map(function (part) { return String(part || '').toLowerCase(); });
-    parts[0] = recoverLeadingVerb(loweredParts[0], loweredParts.slice(1));
+    var recovered = recoverLeadingVerb(loweredParts[0], loweredParts.slice(1));
+    parts[0] = recovered !== loweredParts[0] ? recovered : parts[0];
     return parts.join(' ').trim();
   }
 
