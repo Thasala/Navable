@@ -73,10 +73,30 @@ function announce(text, mode = 'polite') {
   const msg = String(text || '').trim();
   if (!msg) return;
   try {
-    if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
-      window.NavableAnnounce.speak(msg, {
-        mode: mode === 'assertive' ? 'assertive' : 'polite',
-        lang: outputLocale(currentOutputLanguage())
+    const options = {
+      mode: mode === 'assertive' ? 'assertive' : 'polite',
+      lang: outputLocale(currentOutputLanguage())
+    };
+    if (prefersNewtabChromeTtsOutput() && window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
+      window.NavableAnnounce.output(msg, options);
+    } else if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
+      window.NavableAnnounce.speak(msg, options);
+    } else if (window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
+      window.NavableAnnounce.output(msg, options);
+    }
+
+    if (prefersNewtabChromeTtsOutput()) {
+      const playbackToken = beginNewtabTtsPlayback();
+      requestNewtabChromeTtsSpeak(msg, options).then((spoken) => {
+        finishNewtabTtsPlayback(playbackToken, spoken ? 450 : 0);
+        if (spoken) return;
+        try {
+          if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
+            window.NavableAnnounce.speak(msg, options);
+          }
+        } catch (_err2) {
+          // ignore
+        }
       });
     }
   } catch (_err) {
@@ -103,6 +123,64 @@ function normalizeLanguageMode(mode, fallbackLanguage) {
   if (!String(mode || '').trim()) return 'auto';
   const normalized = normalizeOutputLanguage(mode || fallbackLanguage || 'en-US');
   return normalized === 'ar' || normalized === 'en' ? normalized : 'auto';
+}
+
+function normalizeOutputMode(mode) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'chrome_tts' || raw === 'chrome-tts' || raw === 'chrome tts') return 'chrome_tts';
+  return 'screen_reader';
+}
+
+function prefersNewtabChromeTtsOutput() {
+  return normalizeOutputMode(newtabOutputMode) === 'chrome_tts';
+}
+
+function requestNewtabChromeTtsSpeak(text, opts = {}) {
+  return new Promise((resolve) => {
+    const msg = String(text || '').trim();
+    if (!msg || !chrome?.runtime?.sendMessage) {
+      resolve(false);
+      return;
+    }
+    try {
+      const maybePromise = chrome.runtime.sendMessage({
+        type: 'navable:tts',
+        action: 'speak',
+        text: msg,
+        lang: opts.lang || outputLocale(currentOutputLanguage())
+      }, (response) => {
+        const lastError = chrome?.runtime?.lastError?.message ? String(chrome.runtime.lastError.message) : '';
+        if (lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(!!(response && response.ok));
+      });
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then((response) => {
+          resolve(!!(response && response.ok));
+        }).catch(() => {
+          resolve(false);
+        });
+      }
+    } catch (_err) {
+      resolve(false);
+    }
+  });
+}
+
+function requestNewtabChromeTtsStop() {
+  if (!chrome?.runtime?.sendMessage) return;
+  try {
+    const maybePromise = chrome.runtime.sendMessage({ type: 'navable:tts', action: 'stop' }, () => {
+      void chrome?.runtime?.lastError;
+    });
+    if (maybePromise && typeof maybePromise.catch === 'function') {
+      maybePromise.catch(() => {});
+    }
+  } catch (_err) {
+    // ignore
+  }
 }
 
 function currentLanguageMode() {
@@ -423,6 +501,7 @@ let newtabVoiceReady = false;
 let newtabVoiceLang = 'en-US';
 let newtabConfiguredVoiceLang = 'en-US';
 let newtabLanguageMode = 'auto';
+let newtabOutputMode = 'screen_reader';
 let newtabOutputLanguage = 'en';
 let newtabRecognizerRefreshTimer = null;
 let newtabLastRecognitionResultAt = 0;
@@ -430,6 +509,9 @@ let newtabLastRecognitionLocaleRotateAt = 0;
 let newtabVoiceTurnInFlight = false;
 let newtabVoiceTurnResumeTimer = null;
 let newtabPausedForVisibility = false;
+let newtabTtsPlaybackInFlight = false;
+let newtabTtsPlaybackToken = 0;
+let newtabTtsPlaybackResumeTimer = null;
 
 function clearNewtabRecognizerRefreshTimer() {
   if (!newtabRecognizerRefreshTimer) return;
@@ -451,6 +533,49 @@ function clearNewtabVoiceTurnResumeTimer() {
   newtabVoiceTurnResumeTimer = null;
 }
 
+function clearNewtabTtsPlaybackResumeTimer() {
+  if (!newtabTtsPlaybackResumeTimer) return;
+  try {
+    clearTimeout(newtabTtsPlaybackResumeTimer);
+  } catch (_err) {
+    // ignore
+  }
+  newtabTtsPlaybackResumeTimer = null;
+}
+
+function beginNewtabTtsPlayback() {
+  newtabTtsPlaybackToken += 1;
+  clearNewtabTtsPlaybackResumeTimer();
+  newtabTtsPlaybackInFlight = true;
+  const oldRecognizer = newtabRecognizer;
+  newtabRecognizer = null;
+  try {
+    oldRecognizer && oldRecognizer.stop();
+  } catch (_err) {
+    // ignore
+  }
+  refreshNewtabMicUi();
+  return newtabTtsPlaybackToken;
+}
+
+function finishNewtabTtsPlayback(token, cooldownMs = 450) {
+  if (token !== newtabTtsPlaybackToken) return;
+  clearNewtabTtsPlaybackResumeTimer();
+  newtabTtsPlaybackResumeTimer = setTimeout(() => {
+    if (token !== newtabTtsPlaybackToken) return;
+    newtabTtsPlaybackResumeTimer = null;
+    newtabTtsPlaybackInFlight = false;
+    refreshNewtabMicUi();
+    if (newtabVoiceTurnInFlight || !shouldNewtabListen()) return;
+    ensureNewtabRecognizer()
+      .then((recognizer) => {
+        if (!recognizer || newtabVoiceTurnInFlight || !shouldNewtabListen()) return;
+        recognizer.start();
+      })
+      .catch(() => {});
+  }, Math.max(0, cooldownMs));
+}
+
 function isNewtabVisibleForVoice() {
   try {
     return !document.visibilityState || document.visibilityState === 'visible';
@@ -460,7 +585,13 @@ function isNewtabVisibleForVoice() {
 }
 
 function shouldNewtabListen() {
-  return !!(newtabWantsListening && !newtabVoiceTurnInFlight && !newtabPausedForVisibility && isNewtabVisibleForVoice());
+  return !!(
+    newtabWantsListening &&
+    !newtabVoiceTurnInFlight &&
+    !newtabPausedForVisibility &&
+    !newtabTtsPlaybackInFlight &&
+    isNewtabVisibleForVoice()
+  );
 }
 
 function maybeRotateNewtabRecognitionLocale() {
@@ -514,6 +645,11 @@ function refreshNewtabMicUi() {
     status.textContent = translate('processing_request');
     return;
   }
+  if (newtabTtsPlaybackInFlight) {
+    btn.textContent = 'Speaking…';
+    status.textContent = 'Playing Navable reply…';
+    return;
+  }
   if (newtabPausedForVisibility) {
     btn.textContent = 'Listening paused';
     status.textContent = translate('listening_paused_hidden');
@@ -533,16 +669,17 @@ function setNewtabMicMessage(text, mode = 'polite') {
 async function loadNewtabVoiceSettings() {
   return new Promise((resolve) => {
     try {
-      if (!chrome?.storage?.sync?.get) return resolve({ language: 'en-US', languageMode: 'auto' });
+      if (!chrome?.storage?.sync?.get) return resolve({ language: 'en-US', languageMode: 'auto', outputMode: 'screen_reader' });
       chrome.storage.sync.get({ navable_settings: {} }, (res) => {
         const s = (res && res.navable_settings) || {};
         resolve({
           language: s.language || 'en-US',
-          languageMode: normalizeLanguageMode(s.languageMode, s.language || 'en-US')
+          languageMode: normalizeLanguageMode(s.languageMode, s.language || 'en-US'),
+          outputMode: normalizeOutputMode(s.outputMode)
         });
       });
     } catch (_err) {
-      resolve({ language: 'en-US', languageMode: 'auto' });
+      resolve({ language: 'en-US', languageMode: 'auto', outputMode: 'screen_reader' });
     }
   });
 }
@@ -551,6 +688,7 @@ async function ensureNewtabRecognizer() {
   const settings = await loadNewtabVoiceSettings();
   const previousConfiguredVoiceLang = newtabConfiguredVoiceLang;
   const previousConfiguredOutputLanguage = lockedOutputLanguage() || normalizeOutputLanguage(previousConfiguredVoiceLang || 'en-US');
+  newtabOutputMode = normalizeOutputMode(settings.outputMode);
   newtabLanguageMode = normalizeLanguageMode(settings.languageMode, settings.language || 'en-US');
   newtabConfiguredVoiceLang = (() => {
     const configured = newtabRecognitionLocaleFor(settings.language || 'en-US');
@@ -910,6 +1048,11 @@ async function startNewtabListening() {
 
   if (!shouldNewtabListen()) return;
 
+  if (prefersNewtabChromeTtsOutput()) {
+    setNewtabMicMessage(translate('newtab_listening'), 'polite');
+    return;
+  }
+
   const recognizer = await ensureNewtabRecognizer();
   if (!recognizer) {
     newtabWantsListening = false;
@@ -950,6 +1093,9 @@ async function toggleNewtabListening() {
 
 function wireNewtabVoice() {
   newtabVoiceReady = true;
+  loadNewtabVoiceSettings().then((settings) => {
+    newtabOutputMode = normalizeOutputMode(settings.outputMode);
+  }).catch(() => {});
   refreshNewtabMicUi();
 
   const { btn } = getVoiceStatusEls();
@@ -987,10 +1133,21 @@ function wireNewtabVoice() {
   window.addEventListener(
     'pagehide',
     () => {
+      requestNewtabChromeTtsStop();
       if (newtabWantsListening) stopNewtabListening({ announce: false });
     },
     { capture: true }
   );
+
+  if (chrome?.storage?.onChanged?.addListener) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'sync' || !changes.navable_settings) return;
+      const nextSettings = changes.navable_settings.newValue || {};
+      const nextOutputMode = normalizeOutputMode(nextSettings.outputMode);
+      if (nextOutputMode !== newtabOutputMode) requestNewtabChromeTtsStop();
+      newtabOutputMode = nextOutputMode;
+    });
+  }
 
   if (!isVoiceSupported()) {
     const { btn: btn2 } = getVoiceStatusEls();
