@@ -1754,10 +1754,6 @@
     });
   }
 
-  function normalizeEmailFieldValue(text) {
-    return buildEmailFieldValue(parseEmailParts(text));
-  }
-
   function normalizeEmailSpeechText(text) {
     var raw = String(text || '').trim().toLowerCase();
     if (!raw) return '';
@@ -1776,7 +1772,7 @@
       .replace(/\bminus\b/g, ' - ')
       .replace(/\bslash\b/g, ' / ')
       .replace(/\bbackslash\b/g, ' \\ ')
-      .replace(/\s*([@._+\-\/\\])\s*/g, '$1')
+      .replace(/\s*([@._+\-/\\])\s*/g, '$1')
       .replace(/\s+/g, '')
       .trim();
   }
@@ -1784,7 +1780,7 @@
   function sanitizeEmailLocalPartText(text) {
     return String(text || '')
       .replace(/@.*$/g, '')
-      .replace(/[^a-z0-9._+\-\/\\]/g, '')
+      .replace(/[^a-z0-9._+\-/\\]/g, '')
       .trim();
   }
 
@@ -2088,16 +2084,6 @@
       cmd.type === 'repeat' ||
       cmd.type === 'stop'
     );
-  }
-
-  function combineFormProgressMessage(prefix, session, previousIndex) {
-    var message = String(prefix || '').trim();
-    if (!session) return message;
-    if (typeof previousIndex === 'number' && session.currentIndex !== previousIndex) {
-      var nextField = currentFormField(session);
-      if (nextField) message += ' ' + describeFormField(session, nextField);
-    }
-    return message.trim();
   }
 
   function formFieldKindLabel(field) {
