@@ -139,6 +139,28 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
         });
       }
     },
+    tts: {
+      _spoken: [],
+      _stopCount: 0,
+      speak(text, options, cb) {
+        chrome.tts._spoken.push({
+          text: String(text || ''),
+          options: options || {}
+        });
+        if (typeof cb === 'function') setTimeout(() => cb(), 0);
+        if (options && typeof options.onEvent === 'function') {
+          setTimeout(() => {
+            try { options.onEvent({ type: 'start' }); } catch (_err) { /* ignore */ }
+          }, 0);
+          setTimeout(() => {
+            try { options.onEvent({ type: 'end' }); } catch (_err2) { /* ignore */ }
+          }, 10);
+        }
+      },
+      stop() {
+        chrome.tts._stopCount += 1;
+      }
+    },
     storage: {
       sync: syncStorage,
       session: sessionStorage,
@@ -251,6 +273,91 @@ function configuredOutputLanguage(settings = {}, requestedOutputLanguage = '') {
   const mode = normalizeLanguageMode(settings.languageMode, settings.language || 'en-US');
   if (mode !== 'auto') return mode;
   return normalizeOutputLanguage(settings.language || 'en-US');
+}
+
+function supportsExtensionTts() {
+  return !!(chrome && chrome.tts && typeof chrome.tts.speak === 'function');
+}
+
+function stopExtensionTts() {
+  return new Promise((resolve) => {
+    if (!supportsExtensionTts()) {
+      resolve(false);
+      return;
+    }
+    try {
+      if (typeof chrome.tts.stop === 'function') chrome.tts.stop();
+      resolve(true);
+    } catch (_err) {
+      resolve(false);
+    }
+  });
+}
+
+function speakWithExtensionTts(text, opts = {}) {
+  return new Promise((resolve) => {
+    const message = String(text || '').trim();
+    if (!message || !supportsExtensionTts()) {
+      resolve({ ok: false, error: 'tts unavailable' });
+      return;
+    }
+
+    try {
+      if (typeof chrome.tts.stop === 'function') chrome.tts.stop();
+    } catch (_err) {
+      // ignore
+    }
+
+    const speakOptions = {
+      enqueue: false,
+      lang: typeof opts.lang === 'string' && opts.lang.trim() ? String(opts.lang).trim() : undefined,
+      desiredEventTypes: ['start', 'end', 'interrupted', 'cancelled', 'error']
+    };
+    let finished = false;
+    const fallbackMs = Math.min(20000, Math.max(2500, message.length * 90));
+    const fallbackTimer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      resolve({ ok: true, eventType: 'timeout' });
+    }, fallbackMs);
+
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+      try { clearTimeout(fallbackTimer); } catch (_err) { /* ignore */ }
+      resolve(result);
+    }
+
+    speakOptions.onEvent = (event) => {
+      const type = event && event.type ? String(event.type) : '';
+      if (!type) return;
+      if (type === 'error') {
+        finish({
+          ok: false,
+          error: event && event.errorMessage ? String(event.errorMessage) : 'tts error',
+          eventType: type
+        });
+        return;
+      }
+      if (type === 'end' || type === 'interrupted' || type === 'cancelled') {
+        finish({ ok: true, eventType: type });
+      }
+    };
+
+    try {
+      chrome.tts.speak(message, speakOptions, () => {
+        const lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+          ? String(chrome.runtime.lastError.message)
+          : '';
+        if (lastError) {
+          finish({ ok: false, error: lastError });
+          return;
+        }
+      });
+    } catch (err) {
+      finish({ ok: false, error: String(err || 'tts failed') });
+    }
+  });
 }
 
 function canonicalizeLocale(lang) {
@@ -1891,6 +1998,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: String(err || 'planner failed') });
     });
     return true;
+  }
+  if (msg && msg.type === 'navable:tts') {
+    if (msg.action === 'stop') {
+      stopExtensionTts().then((ok) => {
+        sendResponse({ ok: !!ok });
+      }).catch((err) => {
+        sendResponse({ ok: false, error: String(err || 'tts stop failed') });
+      });
+      return true;
+    }
+    if (msg.action === 'speak') {
+      speakWithExtensionTts(msg.text || '', {
+        lang: msg.lang || ''
+      }).then((res) => {
+        sendResponse(res);
+      }).catch((err) => {
+        sendResponse({ ok: false, error: String(err || 'tts failed') });
+      });
+      return true;
+    }
   }
   if (msg && msg.type === 'bus:request') {
     if (msg.kind === 'planner:run') {

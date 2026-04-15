@@ -9,6 +9,12 @@ function normalizeLanguageMode(mode, _locale) {
   return 'auto';
 }
 
+function normalizeOutputMode(mode) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'chrome_tts' || raw === 'chrome-tts' || raw === 'chrome tts') return 'chrome_tts';
+  return 'screen_reader';
+}
+
 function localeForLanguageMode(mode, locale) {
   const normalized = normalizeLanguageMode(mode, locale);
   const current = String(locale || '').trim();
@@ -22,6 +28,7 @@ function loadSettings() {
   chrome.storage.sync.get({ navable_settings: {} }, (res) => {
     const s = res.navable_settings || {};
     const languageMode = document.getElementById('languageMode');
+    const outputMode = document.getElementById('outputMode');
     const continuous = document.getElementById('continuous');
     const aiEnabled = document.getElementById('aiEnabled');
     const aiMode = document.getElementById('aiMode');
@@ -30,6 +37,7 @@ function loadSettings() {
 
     currentLanguageLocale = s.language || 'en-US';
     if (languageMode) languageMode.value = normalizeLanguageMode(s.languageMode, currentLanguageLocale);
+    if (outputMode) outputMode.value = normalizeOutputMode(s.outputMode);
     if (continuous) continuous.checked = typeof s.autostart === 'boolean' ? s.autostart : true;
     if (aiEnabled) aiEnabled.checked = !!s.aiEnabled;
     if (aiMode) aiMode.value = s.aiMode || 'off';
@@ -41,6 +49,7 @@ function loadSettings() {
 function saveSettings() {
   if (!chrome || !chrome.storage || !chrome.storage.sync) return;
   const languageMode = document.getElementById('languageMode');
+  const outputMode = document.getElementById('outputMode');
   const continuous = document.getElementById('continuous');
   const aiEnabled = document.getElementById('aiEnabled');
   const aiMode = document.getElementById('aiMode');
@@ -52,6 +61,7 @@ function saveSettings() {
   const navable_settings = {
     language: currentLanguageLocale,
     languageMode: normalizedLanguageMode,
+    outputMode: normalizeOutputMode(outputMode ? outputMode.value : 'screen_reader'),
     overlay: false,
     autostart: continuous ? continuous.checked : true,
     aiEnabled: aiEnabled ? aiEnabled.checked : false,
@@ -73,6 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (
       e.target &&
       (e.target.id === 'languageMode' ||
+        e.target.id === 'outputMode' ||
         e.target.id === 'continuous' ||
         e.target.id === 'aiEnabled' ||
         e.target.id === 'aiMode' ||

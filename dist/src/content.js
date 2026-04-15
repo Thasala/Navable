@@ -14,16 +14,35 @@
   function announce(text, opts) {
     try {
       const options = opts || { mode: 'polite' };
+      const msg = String(text || '').trim();
+      const useChromeTts = prefersChromeTtsOutput();
+      if (!msg) return;
       if (typeof window.NavableAnnounce === 'function') {
-        window.NavableAnnounce(text, options);
+        window.NavableAnnounce(msg, options);
         return;
       }
-      if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
-        window.NavableAnnounce.speak(text, options);
+      if (window.NavableAnnounce && useChromeTts && typeof window.NavableAnnounce.output === 'function') {
+        window.NavableAnnounce.output(msg, options);
+      } else if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
+        window.NavableAnnounce.speak(msg, options);
         return;
+      } else if (window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
+        window.NavableAnnounce.output(msg, options);
       }
-      if (window.NavableAnnounce && typeof window.NavableAnnounce.output === 'function') {
-        window.NavableAnnounce.output(text, options);
+
+      if (useChromeTts) {
+        var playbackToken = beginTtsPlayback();
+        requestChromeTtsSpeak(msg, options).then(function (spoken) {
+          finishTtsPlayback(playbackToken, spoken ? 450 : 0);
+          if (spoken) return;
+          try {
+            if (window.NavableAnnounce && typeof window.NavableAnnounce.speak === 'function') {
+              window.NavableAnnounce.speak(msg, options);
+            }
+          } catch (_err) {
+            // ignore
+          }
+        });
       }
     } catch (_e) {
       // no-op
@@ -55,9 +74,74 @@
     return normalized === 'ar' || normalized === 'en' ? normalized : 'auto';
   }
 
+  function normalizeOutputMode(mode) {
+    var raw = String(mode || '').trim().toLowerCase();
+    if (raw === 'chrome_tts' || raw === 'chrome-tts' || raw === 'chrome tts') return 'chrome_tts';
+    return 'screen_reader';
+  }
+
   function configuredLanguageMode(state) {
     var source = state || settings || {};
     return normalizeLanguageMode(source.languageMode, source.language || 'en-US');
+  }
+
+  function configuredOutputMode(state) {
+    var source = state || settings || {};
+    return normalizeOutputMode(source.outputMode);
+  }
+
+  function prefersChromeTtsOutput(state) {
+    return configuredOutputMode(state) === 'chrome_tts';
+  }
+
+  function requestChromeTtsSpeak(text, opts) {
+    return new Promise(function (resolve) {
+      var message = String(text || '').trim();
+      if (!message || !(chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function')) {
+        resolve(false);
+        return;
+      }
+      try {
+        var maybePromise = chrome.runtime.sendMessage({
+          type: 'navable:tts',
+          action: 'speak',
+          text: message,
+          lang: opts && opts.lang ? String(opts.lang) : outputLocale(currentOutputLanguage())
+        }, function (response) {
+          var lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+            ? String(chrome.runtime.lastError.message)
+            : '';
+          if (lastError) {
+            resolve(false);
+            return;
+          }
+          resolve(!!(response && response.ok));
+        });
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then(function (response) {
+            resolve(!!(response && response.ok));
+          }).catch(function () {
+            resolve(false);
+          });
+        }
+      } catch (_err) {
+        resolve(false);
+      }
+    });
+  }
+
+  function requestChromeTtsStop() {
+    if (!(chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function')) return;
+    try {
+      var maybePromise = chrome.runtime.sendMessage({ type: 'navable:tts', action: 'stop' }, function () {
+        void chrome.runtime.lastError;
+      });
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(function () {});
+      }
+    } catch (_err) {
+      // ignore
+    }
   }
 
   function lockedOutputLanguage(state) {
@@ -343,7 +427,7 @@
   var overlayMarkers = [];
   var observer; // mutation observer
   var scanDebounce;
-  var settings = { language: 'en-US', languageMode: 'auto', overlay: false, autostart: true };
+  var settings = { language: 'en-US', languageMode: 'auto', outputMode: 'screen_reader', overlay: false, autostart: true };
 
   function isHidden(el) {
     if (!el || !el.isConnected) return true;
@@ -682,6 +766,19 @@
   var HEADING_LIKE_TOKENS = ['heading', 'section', 'title', 'part'];
   var EMAIL_FIELD_TOKENS = ['email', 'e mail', 'mail'];
   var LONG_TEXT_FIELD_TOKENS = ['description', 'message', 'comment', 'comments', 'bio', 'about', 'notes', 'details', 'summary', 'experience', 'objective', 'cover letter'];
+  var GENERIC_FORM_LABEL_TEXT = {
+    input: true,
+    'unnamed input': true,
+    text: true,
+    textarea: true,
+    select: true,
+    checkbox: true,
+    radio: true,
+    option: true,
+    field: true,
+    control: true
+  };
+  var DESCRIPTIVE_PLACEHOLDER_TOKENS = ['enter', 'type', 'search', 'find', 'choose', 'select', 'pick', 'your', 'email', 'mail', 'name', 'phone', 'mobile', 'number', 'address', 'city', 'country', 'state', 'zip', 'postal', 'password', 'username', 'date', 'birth', 'message', 'comment', 'description', 'subject', 'company', 'organization', 'gender'];
   var FORM_CONFIRMATION_MAX_CORRECTIONS = 3;
   var EMAIL_SEGMENT_MAX_CORRECTIONS = 2;
   var SPELLED_VALUE_TOKEN_MAP = {
@@ -1103,12 +1200,13 @@
 
   function buildIndexedItemForElement(el, labelOverride, typeOverride) {
     if (!el || el.nodeType !== 1) return null;
-    var label = String(labelOverride || textOf(el) || '').trim();
+    var type = typeOverride || getType(el);
+    if (type === 'other') return null;
+    var inferredLabel = type === 'input' ? getFormControlLabel(el) : textOf(el);
+    var label = String(labelOverride || inferredLabel || '').trim();
     if (!label) return null;
     if (!el.dataset.navableId) el.dataset.navableId = nextId();
     el.dataset.navableLabel = label;
-    var type = typeOverride || getType(el);
-    if (type === 'other') return null;
     el.dataset.navableType = type;
     var tag = (el.tagName || '').toLowerCase();
     var item = {
@@ -1487,12 +1585,244 @@
     return el.closest ? (el.closest('form,[role="form"],dialog,[role="dialog"],main,section,article') || document.body) : document.body;
   }
 
-  function getFormControlLabel(el) {
-    var label = textOf(el);
-    if (label) return label;
+  function normalizeInlineText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function cleanFormLabelText(value) {
+    var text = normalizeInlineText(value);
+    if (!text) return '';
+    text = text
+      .replace(/\s*\(\s*required\s*\)\s*$/i, '')
+      .replace(/\s*\*+\s*$/g, '')
+      .replace(/\s*:\s*$/g, '')
+      .trim();
+    return text;
+  }
+
+  function getWrappingLabelForControl(el) {
+    var parent = el && el.parentElement;
+    while (parent && parent !== el.ownerDocument.body) {
+      if ((parent.tagName || '').toLowerCase() === 'label') return parent;
+      parent = parent.parentElement;
+    }
+    return null;
+  }
+
+  function getAssociatedLabelElementsForControl(el) {
+    var labels = [];
+    var seen = new Set();
+
+    function pushLabel(labelEl) {
+      if (!labelEl || seen.has(labelEl)) return;
+      seen.add(labelEl);
+      labels.push(labelEl);
+    }
+
+    try {
+      if (el && el.labels && el.labels.length) {
+        Array.prototype.slice.call(el.labels).forEach(pushLabel);
+      }
+    } catch (_err) {
+      // ignore labels collection failures
+    }
+
+    pushLabel(findAssociatedLabelForControl(el));
+    pushLabel(getWrappingLabelForControl(el));
+    return labels;
+  }
+
+  function readReferencedText(el, attrName) {
+    var ids = String((el && el.getAttribute && el.getAttribute(attrName)) || '').trim();
+    if (!ids) return '';
+    var parts = ids.split(/\s+/).map(function (id) {
+      var ref = findElementByIdScoped(el, id);
+      return ref ? cleanFormLabelText(String(ref.innerText || ref.textContent || '')) : '';
+    }).filter(Boolean);
+    return cleanFormLabelText(parts.join(' '));
+  }
+
+  function elementContainsUnignoredFormControls(el, ignoredElements) {
+    if (!el || !el.querySelectorAll) return false;
+    var ignored = Array.isArray(ignoredElements) ? ignoredElements.filter(Boolean) : [];
+    var controls = el.querySelectorAll('input,select,textarea,button,[role="textbox"],[role="combobox"],[role="checkbox"],[role="radio"]');
+    outer: for (var i = 0; i < controls.length; i++) {
+      var control = controls[i];
+      for (var j = 0; j < ignored.length; j++) {
+        var ignoredEl = ignored[j];
+        if (control === ignoredEl || (ignoredEl.contains && ignoredEl.contains(control))) continue outer;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function readStandaloneElementText(el, ignoredElements) {
+    if (!el || isHidden(el)) return '';
+    if (elementContainsUnignoredFormControls(el, ignoredElements)) return '';
+    var labelledby = readReferencedText(el, 'aria-labelledby');
+    if (labelledby) return labelledby;
     var aria = el.getAttribute && el.getAttribute('aria-label');
-    if (aria) return aria.trim();
-    return 'Unnamed input';
+    if (aria) return cleanFormLabelText(aria);
+    var title = el.getAttribute && el.getAttribute('title');
+    if (title) return cleanFormLabelText(title);
+    var text = cleanFormLabelText(String(el.innerText || el.textContent || ''));
+    if (!text || text.length > 90) return '';
+    return text;
+  }
+
+  function isLikelyExampleFormText(value) {
+    var text = normalizeInlineText(value);
+    if (!text) return false;
+    if (/\b(?:example|sample|for example|e\.?g\.?)\b/i.test(text)) return true;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return true;
+    if (/^\+?\d[\d\s()./-]{5,}$/.test(text)) return true;
+    if (/^\d{1,4}[/. -]\d{1,4}(?:[/. -]\d{1,4})?$/.test(text)) return true;
+    if (/^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{2,4}$/i.test(text)) return true;
+    if (/^(?:dd|mm|yyyy|yy|hh|ss|month|day|year)(?:[/. -](?:dd|mm|yyyy|yy|hh|ss|month|day|year))+$/i.test(text)) return true;
+    return false;
+  }
+
+  function isDescriptivePlaceholderText(value, el) {
+    var text = cleanFormLabelText(value);
+    if (!text || isLikelyExampleFormText(text)) return false;
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    if (DESCRIPTIVE_PLACEHOLDER_TOKENS.some(function (token) { return normalized.indexOf(normalizeMatchText(token)) >= 0; })) return true;
+    var inputType = String((el && el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (inputType === 'search') return true;
+    return normalized.split(' ').length <= 3 && normalized.length >= 3;
+  }
+
+  function pushFormLabelCandidate(candidates, value, score, source, opts) {
+    var text = cleanFormLabelText(value);
+    if (!text) return;
+    var normalized = normalizeMatchText(text);
+    if (!normalized || GENERIC_FORM_LABEL_TEXT[normalized]) return;
+    if (opts && opts.blocked && opts.blocked.has(normalized)) return;
+
+    var nextScore = Number(score || 0);
+    if (isLikelyExampleFormText(text)) nextScore -= 60;
+    if (source === 'placeholder' && !isDescriptivePlaceholderText(text, opts && opts.control)) return;
+    if (source === 'nearby' && text.length > 60) nextScore -= 20;
+    if (nextScore <= 0) return;
+
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i].normalized !== normalized) continue;
+      if (nextScore > candidates[i].score || (nextScore === candidates[i].score && text.length < candidates[i].text.length)) {
+        candidates[i] = {
+          text: text,
+          normalized: normalized,
+          score: nextScore,
+          source: source
+        };
+      }
+      return;
+    }
+
+    candidates.push({
+      text: text,
+      normalized: normalized,
+      score: nextScore,
+      source: source
+    });
+  }
+
+  function chooseBestFormLabel(candidates) {
+    if (!Array.isArray(candidates) || !candidates.length) return '';
+    candidates.sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.text.length !== b.text.length) return a.text.length - b.text.length;
+      return a.text.localeCompare(b.text);
+    });
+    return candidates[0] ? candidates[0].text : '';
+  }
+
+  function getFormNameOrIdLabel(el) {
+    if (!el || !el.getAttribute) return '';
+    var nameText = cleanFormLabelText(humanizeIdentifier(el.getAttribute('name') || ''));
+    if (nameText) return nameText;
+    return cleanFormLabelText(humanizeIdentifier(el.id || ''));
+  }
+
+  function getSharedFormNameLabel(elements) {
+    if (!Array.isArray(elements) || !elements.length) return '';
+    var shared = '';
+    for (var i = 0; i < elements.length; i++) {
+      var next = getFormNameOrIdLabel(elements[i]);
+      if (!next) return '';
+      if (!shared) {
+        shared = next;
+        continue;
+      }
+      if (normalizeMatchText(shared) !== normalizeMatchText(next)) return '';
+    }
+    return shared;
+  }
+
+  function collectNearbyFormLabelCandidates(baseEl, opts) {
+    var candidates = [];
+    var ignored = opts && Array.isArray(opts.ignoredElements) ? opts.ignoredElements : [];
+    var boundary = (opts && opts.boundary) || getFormContainerForControl(baseEl) || document.body;
+    var current = baseEl;
+    var depth = 0;
+
+    while (current && current !== boundary && current !== document.body && depth < 5) {
+      var currentLabelledby = readReferencedText(current, 'aria-labelledby');
+      if (currentLabelledby) pushFormLabelCandidate(candidates, currentLabelledby, 96 - depth * 8, 'container_aria', opts);
+
+      var currentAria = current.getAttribute && current.getAttribute('aria-label');
+      if (currentAria) pushFormLabelCandidate(candidates, currentAria, 92 - depth * 8, 'container_aria', opts);
+
+      var sibling = current.previousElementSibling;
+      var siblingOffset = 0;
+      while (sibling && siblingOffset < 2) {
+        pushFormLabelCandidate(candidates, readStandaloneElementText(sibling, ignored), 90 - depth * 10 - siblingOffset * 6, 'nearby', opts);
+        sibling = sibling.previousElementSibling;
+        siblingOffset += 1;
+      }
+
+      current = current.parentElement;
+      depth += 1;
+    }
+
+    return candidates;
+  }
+
+  function getSharedAncestorForElements(elements) {
+    if (!Array.isArray(elements) || !elements.length) return null;
+    var current = elements[0];
+    while (current) {
+      var containsAll = elements.every(function (el) { return current.contains(el); });
+      if (containsAll) return current;
+      current = current.parentElement;
+    }
+    return elements[0].parentElement || null;
+  }
+
+  function getExplicitFormControlLabel(el, opts) {
+    var candidates = [];
+    pushFormLabelCandidate(candidates, readReferencedText(el, 'aria-labelledby'), 120, 'aria', opts);
+    pushFormLabelCandidate(candidates, el && el.getAttribute && el.getAttribute('aria-label'), 116, 'aria', opts);
+
+    getAssociatedLabelElementsForControl(el).forEach(function (labelEl, index) {
+      pushFormLabelCandidate(candidates, readStandaloneElementText(labelEl, [el]), 114 - index * 2, 'label', opts);
+    });
+
+    pushFormLabelCandidate(candidates, getLegendLabelForControl(el), 104, 'legend', opts);
+    return chooseBestFormLabel(candidates);
+  }
+
+  function getFormControlLabel(el) {
+    var candidates = [];
+    var opts = { control: el };
+    pushFormLabelCandidate(candidates, getExplicitFormControlLabel(el, opts), 120, 'explicit', opts);
+    collectNearbyFormLabelCandidates(el, opts).forEach(function (candidate) {
+      pushFormLabelCandidate(candidates, candidate.text, candidate.score, candidate.source, opts);
+    });
+    pushFormLabelCandidate(candidates, getFormNameOrIdLabel(el), 86, 'name', opts);
+    pushFormLabelCandidate(candidates, el && el.getAttribute && el.getAttribute('placeholder'), 48, 'placeholder', opts);
+    return chooseBestFormLabel(candidates) || 'Unnamed input';
   }
 
   function getLegendLabelForControl(el) {
@@ -1502,18 +1832,51 @@
     return legend ? String(textOf(legend) || '').trim() : '';
   }
 
-  function buildRadioGroupField(radios) {
+  function getRadioOptionLabel(radio, index) {
+    var candidates = [];
+    var opts = { control: radio };
+    pushFormLabelCandidate(candidates, getExplicitFormControlLabel(radio, opts), 120, 'explicit', opts);
+    pushFormLabelCandidate(candidates, radio && radio.getAttribute && radio.getAttribute('value'), 72, 'value', opts);
+    pushFormLabelCandidate(candidates, getFormNameOrIdLabel(radio), 58, 'name', opts);
+    return chooseBestFormLabel(candidates) || ('Option ' + (index + 1));
+  }
+
+  function getRadioGroupLabel(radios, options) {
     var first = radios[0];
-    var label = getLegendLabelForControl(first) || getFormControlLabel(first) || 'Choices';
+    var optionLabels = Array.isArray(options) ? options : [];
+    var blocked = new Set(optionLabels.map(function (option) {
+      return normalizeMatchText(option && option.label ? option.label : '');
+    }).filter(Boolean));
+    var sharedAncestor = getSharedAncestorForElements(radios) || first;
+    var opts = {
+      control: first,
+      blocked: blocked,
+      ignoredElements: radios,
+      boundary: getFormContainerForControl(sharedAncestor)
+    };
+    var candidates = [];
+
+    pushFormLabelCandidate(candidates, getLegendLabelForControl(first), 130, 'legend', opts);
+    pushFormLabelCandidate(candidates, readReferencedText(sharedAncestor, 'aria-labelledby'), 122, 'container_aria', opts);
+    pushFormLabelCandidate(candidates, sharedAncestor && sharedAncestor.getAttribute && sharedAncestor.getAttribute('aria-label'), 118, 'container_aria', opts);
+    collectNearbyFormLabelCandidates(sharedAncestor, opts).forEach(function (candidate) {
+      pushFormLabelCandidate(candidates, candidate.text, candidate.score, candidate.source, opts);
+    });
+    pushFormLabelCandidate(candidates, getSharedFormNameLabel(radios), 84, 'name', opts);
+    return chooseBestFormLabel(candidates) || (optionLabels[0] && optionLabels[0].label) || 'Choices';
+  }
+
+  function buildRadioGroupField(radios) {
     var required = radios.some(function (radio) { return !!(radio.hasAttribute && radio.hasAttribute('required')); });
     var options = radios.map(function (radio, index) {
-      var optionLabel = getFormControlLabel(radio) || ('Option ' + (index + 1));
+      var optionLabel = getRadioOptionLabel(radio, index);
       return {
         label: optionLabel,
         value: String((radio.getAttribute && radio.getAttribute('value')) || optionLabel),
         element: radio
       };
     });
+    var label = getRadioGroupLabel(radios, options);
     return {
       kind: 'radio',
       label: label,
@@ -3041,6 +3404,9 @@
   var voiceTurnInFlight = false;
   var voiceTurnResumeTimer = null;
   var suppressedSpeechDepth = 0;
+  var ttsPlaybackInFlight = false;
+  var ttsPlaybackToken = 0;
+  var ttsPlaybackResumeTimer = null;
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -3066,6 +3432,31 @@
     voiceTurnResumeTimer = null;
   }
 
+  function clearTtsPlaybackResumeTimer() {
+    if (!ttsPlaybackResumeTimer) return;
+    try { clearTimeout(ttsPlaybackResumeTimer); } catch (_err) { /* ignore */ }
+    ttsPlaybackResumeTimer = null;
+  }
+
+  function beginTtsPlayback() {
+    ttsPlaybackToken += 1;
+    clearTtsPlaybackResumeTimer();
+    ttsPlaybackInFlight = true;
+    syncListening({ announce: false });
+    return ttsPlaybackToken;
+  }
+
+  function finishTtsPlayback(token, cooldownMs) {
+    if (token !== ttsPlaybackToken) return;
+    clearTtsPlaybackResumeTimer();
+    ttsPlaybackResumeTimer = setTimeout(function () {
+      if (token !== ttsPlaybackToken) return;
+      ttsPlaybackResumeTimer = null;
+      ttsPlaybackInFlight = false;
+      syncListening({ announce: false });
+    }, Math.max(0, typeof cooldownMs === 'number' ? cooldownMs : 450));
+  }
+
   function getLiveRegion(mode) {
     var m = mode === 'assertive' ? 'assertive' : 'polite';
     return document.getElementById('navable-live-region-' + m);
@@ -3083,8 +3474,12 @@
     if (!isTransient) {
       lastSpoken = msg;
       clearTransientRestoreTimer();
-      // Rely on the ARIA live region + screen reader; do not use browser text-to-speech.
       announce(lastSpoken, { mode: mode, lang: lang });
+      return;
+    }
+
+    if (prefersChromeTtsOutput()) {
+      announce(msg, { mode: mode, lang: lang });
       return;
     }
 
@@ -3132,6 +3527,7 @@
   function computeShouldListen() {
     if (outputOpen) return false;
     if (voiceTurnInFlight) return false;
+    if (ttsPlaybackInFlight) return false;
     if (!isPageActiveForVoice()) return false;
     if (manualListening === true) return true;
     if (manualListening === false) return false;
@@ -3280,6 +3676,11 @@
     if (!recognizer) {
       if (opts.announce !== false) speak(translate('speech_not_available'));
       listening = false;
+      return;
+    }
+    if (opts.announce && prefersChromeTtsOutput()) {
+      listening = false;
+      speak(translate('listening_help'));
       return;
     }
     listening = true;
@@ -4740,7 +5141,11 @@
       return;
     }
     if (cmd.type === 'repeat') { if (lastSpoken) speak(lastSpoken); return; }
-    if (cmd.type === 'stop') { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ } return; }
+    if (cmd.type === 'stop') {
+      requestChromeTtsStop();
+      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ }
+      return;
+    }
   }
 
   async function runSummaryRequest(commandText, pageStructure) {
@@ -5018,18 +5423,22 @@
 	        var s = res && res.navable_settings ? res.navable_settings : settings;
 	        var autostart = typeof s.autostart === 'boolean' ? s.autostart : true;
 	        var nextLanguageMode = normalizeLanguageMode(s.languageMode, s.language || 'en-US');
+	        var nextOutputMode = normalizeOutputMode(s.outputMode);
 	        var nextSettings = {
 	          language: s.language || 'en-US',
 	          languageMode: nextLanguageMode,
+	          outputMode: nextOutputMode,
 	          overlay: !!s.overlay,
 	          autostart: autostart
 	        };
+	        var previousOutputMode = configuredOutputMode(settings);
 	        var nextRecogLang = configuredRecognitionLocale(nextSettings);
 	        var recogLangChanged = String(nextRecogLang).toLowerCase() !== String(recogLang || '').toLowerCase();
 	        settings = nextSettings;
 	        settingsLoaded = true;
 	        recogLang = nextRecogLang;
 	        outputLanguage = lockedOutputLanguage(settings) || normalizeOutputLanguage(settings.language || 'en-US');
+	        if (previousOutputMode !== nextOutputMode) requestChromeTtsStop();
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	        if (recogLangChanged) refreshRecognizer({ restart: true });
 	        else syncListening({ announce: false });
@@ -5039,18 +5448,22 @@
 	        var s2 = changes.navable_settings.newValue || settings;
 	        var autostart2 = typeof s2.autostart === 'boolean' ? s2.autostart : true;
 	        var nextLanguageMode2 = normalizeLanguageMode(s2.languageMode, s2.language || 'en-US');
+	        var nextOutputMode2 = normalizeOutputMode(s2.outputMode);
 	        var nextSettings2 = {
 	          language: s2.language || 'en-US',
 	          languageMode: nextLanguageMode2,
+	          outputMode: nextOutputMode2,
 	          overlay: !!s2.overlay,
 	          autostart: autostart2
 	        };
+	        var previousOutputMode2 = configuredOutputMode(settings);
 	        var nextRecogLang2 = configuredRecognitionLocale(nextSettings2);
 	        var recogLangChanged2 = String(nextRecogLang2).toLowerCase() !== String(recogLang || '').toLowerCase();
 	        settings = nextSettings2;
 	        settingsLoaded = true;
 	        recogLang = nextRecogLang2;
 	        outputLanguage = lockedOutputLanguage(settings) || normalizeOutputLanguage(settings.language || 'en-US');
+	        if (previousOutputMode2 !== nextOutputMode2) requestChromeTtsStop();
 	        if (settings.overlay) { overlayOn = true; drawOverlay(); } else { overlayOn = false; clearOverlay(); }
 	        if (recogLangChanged2) refreshRecognizer({ restart: true });
 	        else syncListening({ announce: false });

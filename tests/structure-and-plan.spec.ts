@@ -295,6 +295,38 @@ test('runPlan executes focus/click/fill steps via tools', async ({ page }) => {
   expect(val).toBe('Navable');
 });
 
+test('runPlan resolves nearby sibling labels for inputs without explicit label wiring', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form>
+        <div class="row">
+          <div class="label-col">Email</div>
+          <div class="input-col">
+            <input type="email" placeholder="name@example.com" />
+          </div>
+        </div>
+      </form>
+    </main>
+  `);
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.runPlan);
+
+  const res = await page.evaluate(async () => {
+    // @ts-ignore
+    return (window as any).NavableTools.runPlan({
+      steps: [
+        { action: 'fill_text', targetType: 'input', label: 'Email', value: 'hazem@example.com' }
+      ]
+    });
+  });
+
+  expect(res.ok).toBe(true);
+  const val = await page.$eval('input[type="email"]', (el) => (el as HTMLInputElement).value);
+  expect(val).toBe('hazem@example.com');
+});
+
 test('typed form mode can guide fill, select, check, and submit a form', async ({ page }) => {
   await page.setContent(`
     <main>
@@ -454,6 +486,71 @@ test('typed form mode can handle radio choice groups', async ({ page }) => {
   const confirm = await typed('yes');
   expect(confirm).toMatchObject({ ok: true });
   expect(String((confirm as any).speech || '')).toContain('That was the last field');
+});
+
+test('typed form mode review prefers semantic field labels over placeholders and option text', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form>
+        <div class="row">
+          <div class="label-col">Email</div>
+          <div class="input-col">
+            <input type="email" value="hazemsalameh3456@gmail.com" placeholder="name@example.com" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="label-col">Gender</div>
+          <div class="input-col">
+            <label><input type="radio" name="gender" value="male" /> Male</label>
+            <label><input type="radio" name="gender" value="female" /> Female</label>
+            <label><input type="radio" name="gender" value="other" checked /> Other</label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label-col">Date of Birth</div>
+          <div class="input-col">
+            <input type="text" value="15 Apr 2026" />
+          </div>
+        </div>
+      </form>
+    </main>
+  `);
+  await installTypedCommandHarness(page);
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__contentListeners?.length > 0);
+
+  async function typed(text: string) {
+    return await page.evaluate(async (utterance) => {
+      // @ts-ignore
+      const listener = (window as any).__contentListeners[0];
+      return await new Promise((resolve, reject) => {
+        try {
+          listener({ type: 'navable:runTypedCommand', text: utterance, detectedLanguage: 'en' }, {}, resolve);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }, text);
+  }
+
+  const start = await typed('form mode');
+  expect(start).toMatchObject({ ok: true });
+  expect(String((start as any).speech || '')).toContain('Field 1 of 3: Email');
+  expect(String((start as any).speech || '')).not.toContain('name@example.com');
+
+  const review = await typed('review form');
+  expect(review).toMatchObject({ ok: true });
+  const speech = String((review as any).speech || '');
+  expect(speech).toContain('Email: hazemsalameh3456@gmail.com');
+  expect(speech).toContain('Gender: Other');
+  expect(speech).toContain('Date of Birth: 15 Apr 2026');
+  expect(speech).not.toContain('name@example.com:');
+  expect(speech).not.toContain('Male: Other');
+  expect(speech).not.toContain('15 Apr 2026: 15 Apr 2026');
 });
 
 test('typed form mode prefers a real auth form over a small search form', async ({ page }) => {
