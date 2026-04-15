@@ -243,6 +243,155 @@ test('content pauses listening during a spoken turn and resumes automatically af
   expect(stats.start).toBeGreaterThanOrEqual(2);
 });
 
+test('chrome tts output keeps listening paused until playback finishes', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Voice</h1>
+      <p>Testing TTS pause.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const stats = { start: 0, stop: 0, langs: [] as string[] };
+    let resolveTts: ((value: any) => void) | null = null;
+
+    function createFakeRecognizer() {
+      const listeners: Record<string, Array<(payload?: unknown) => void>> = {
+        result: [],
+        error: [],
+        start: [],
+        end: []
+      };
+
+      return {
+        start() {
+          stats.start += 1;
+          listeners.start.forEach((fn) => fn({ provider: 'native' }));
+        },
+        stop() {
+          stats.stop += 1;
+          listeners.end.forEach((fn) => fn({ provider: 'native' }));
+        },
+        on(type: string, handler: (payload?: unknown) => void) {
+          if (!listeners[type]) listeners[type] = [];
+          listeners[type].push(handler);
+          return this;
+        }
+      };
+    }
+
+    // @ts-ignore
+    window.__speechStats = stats;
+    // @ts-ignore
+    window.__finishTts = () => {
+      if (resolveTts) {
+        resolveTts({ ok: true });
+        resolveTts = null;
+      }
+    };
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: ({ lang }: { lang: string }) => {
+        stats.langs.push(String(lang || ''));
+        return createFakeRecognizer();
+      }
+    };
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: (payload: any) => {
+          if (payload.type === 'planner:run') {
+            return Promise.resolve({ ok: false, unhandled: true, plan: { steps: [] } });
+          }
+          if (payload.type === 'navable:assistant') {
+            return Promise.resolve({
+              ok: true,
+              speech: "The moon is Earth's natural satellite.",
+              answer: "The moon is Earth's natural satellite.",
+              plan: { steps: [] }
+            });
+          }
+          if (payload.type === 'navable:tts' && payload.action === 'speak') {
+            return new Promise((resolve) => {
+              resolveTts = resolve;
+            });
+          }
+          if (payload.type === 'navable:tts' && payload.action === 'stop') {
+            if (resolveTts) {
+              resolveTts({ ok: true });
+              resolveTts = null;
+            }
+            return Promise.resolve({ ok: true });
+          }
+          return Promise.resolve({ ok: false });
+        },
+        onMessage: {
+          addListener() {}
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US', autostart: true, overlay: false, outputMode: 'chrome_tts' } });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__speechStats?.start === 1);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__turnPromise = (window as any).NavableTools.handleTranscript('What is the moon?', 'en', 'native');
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.stop || 0) >= 1;
+  });
+
+  await page.waitForTimeout(1300);
+
+  const beforeTtsFinishes = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(beforeTtsFinishes.start).toBe(1);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    window.__finishTts();
+  });
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await window.__turnPromise;
+  });
+
+  await page.waitForFunction(() => {
+    // @ts-ignore
+    return (window.__speechStats?.start || 0) >= 2;
+  });
+
+  const stats = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__speechStats;
+  });
+
+  expect(stats.stop).toBeGreaterThanOrEqual(1);
+  expect(stats.start).toBeGreaterThanOrEqual(2);
+});
+
 test('content resumes listening after a spoken turn even when the page loses focus', async ({ page }) => {
   await page.setContent(`
     <main>

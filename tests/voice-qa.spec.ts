@@ -67,6 +67,95 @@ test('unknown spoken question falls back to a brief AI answer', async ({ page })
   await expect(page.locator('#navable-output-text')).toHaveValue(/Ada Lovelace/);
 });
 
+test('chrome tts mode speaks only Navable output for assistant replies', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Home</h1>
+      <p>Welcome.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    window.fetch = async (url, init) => {
+      if (!String(url).includes('/api/assistant')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.input !== 'Who is Ada Lovelace?') {
+        throw new Error(`Unexpected input: ${String(body.input || '')}`);
+      }
+
+      return {
+        ok: true,
+        async json() {
+          return {
+            mode: 'answer',
+            speech: 'Ada Lovelace was a mathematician who wrote the first published algorithm for a machine.',
+            summary: '',
+            answer: 'Ada Lovelace was a mathematician who wrote the first published algorithm for a machine.',
+            suggestions: [],
+            plan: { steps: [] }
+          };
+        }
+      };
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    (window as any).__ttsCalls = [];
+    // @ts-ignore
+    (window as any).chrome.tts.speak = (text: string, options: any, cb?: () => void) => {
+      // @ts-ignore
+      (window as any).__ttsCalls.push({ text, lang: options?.lang || '' });
+      if (typeof cb === 'function') cb();
+      if (typeof options?.onEvent === 'function') {
+        options.onEvent({ type: 'start' });
+        options.onEvent({ type: 'end' });
+      }
+    };
+    // @ts-ignore
+    (window as any).chrome.tts.stop = () => {};
+    // @ts-ignore
+    (window as any).chrome.storage.sync.get = (_defaults: any, cb: (res: any) => void) => {
+      cb({
+        navable_settings: {
+          aiEnabled: true,
+          aiMode: 'summary',
+          language: 'en-US',
+          autostart: false,
+          outputMode: 'chrome_tts'
+        }
+      });
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('Who is Ada Lovelace?', 'en');
+  });
+
+  await expect(page.locator('#navable-output-text')).toHaveValue(/Ada Lovelace/);
+
+  const ttsCalls = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).__ttsCalls;
+  });
+
+  expect(ttsCalls.at(-1)?.text || '').toContain('Ada Lovelace');
+  await expect(page.locator('#navable-live-region-assertive')).toHaveCount(0);
+});
+
 test('short spoken questions on content tabs stay on the answer path', async ({ page }) => {
   await page.setContent(`
     <main>
