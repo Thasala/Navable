@@ -351,11 +351,165 @@
     var ariaHidden = el.getAttribute && el.getAttribute('aria-hidden');
     if (ariaHidden === 'true') return true;
     // detached or no layout
-    if (!el.ownerDocument || !el.ownerDocument.documentElement.contains(el)) return true;
+    if (!el.ownerDocument) return true;
+    var rootNode = getRootNodeForElement(el);
+    if (rootNode && rootNode.nodeType === 11) {
+      if (!rootNode.host || !rootNode.host.isConnected) return true;
+    } else if (!el.ownerDocument.documentElement.contains(el)) {
+      return true;
+    }
     var style = el.ownerDocument.defaultView.getComputedStyle(el);
     if (!style) return false;
     if (style.display === 'none' || style.visibility === 'hidden') return true;
     return false;
+  }
+
+  function escapeAttributeValue(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
+  function getRootNodeForElement(el) {
+    try {
+      return el && el.getRootNode ? el.getRootNode() : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function getContextRootsForElement(el) {
+    var roots = [];
+    if (!el) return roots;
+    var rootNode = getRootNodeForElement(el);
+    if (rootNode) roots.push(rootNode);
+    if (el.ownerDocument && roots.indexOf(el.ownerDocument) < 0) roots.push(el.ownerDocument);
+    return roots;
+  }
+
+  function findElementByIdInRoot(root, id) {
+    if (!root || !id) return null;
+    try {
+      if (typeof root.getElementById === 'function') return root.getElementById(id);
+      if (root.querySelector) return root.querySelector('[id="' + escapeAttributeValue(id) + '"]');
+    } catch (_err) {
+      return null;
+    }
+    return null;
+  }
+
+  function findElementByIdScoped(el, id) {
+    if (!id) return null;
+    var roots = getContextRootsForElement(el);
+    for (var i = 0; i < roots.length; i++) {
+      var found = findElementByIdInRoot(roots[i], id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function findAssociatedLabelForControl(el) {
+    var id = el && el.id ? String(el.id).trim() : '';
+    if (!id) return null;
+    var roots = getContextRootsForElement(el);
+    for (var i = 0; i < roots.length; i++) {
+      var root = roots[i];
+      if (!root || !root.querySelector) continue;
+      try {
+        var label = root.querySelector('label[for="' + escapeAttributeValue(id) + '"]');
+        if (label) return label;
+      } catch (_err) {
+        // ignore selector failures
+      }
+    }
+    return null;
+  }
+
+  function getSameOriginFrameDocument(frameEl) {
+    try {
+      if (!frameEl || (frameEl.tagName || '').toLowerCase() !== 'iframe') return null;
+      var childDoc = frameEl.contentDocument;
+      if (!childDoc || !childDoc.documentElement) return null;
+      return childDoc;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function forEachDescendantElement(root, callback) {
+    if (!root || !callback) return;
+    try {
+      var ownerDoc = root.nodeType === 9 ? root : root.ownerDocument;
+      if (!ownerDoc || !ownerDoc.createTreeWalker) return;
+      var walker = ownerDoc.createTreeWalker(root, 1, null);
+      var node = walker.nextNode();
+      while (node) {
+        callback(node);
+        node = walker.nextNode();
+      }
+    } catch (_err) {
+      // ignore traversal failures
+    }
+  }
+
+  function collectSearchRoots(startRoot) {
+    var roots = [];
+    var seen = new Set();
+
+    function visit(root) {
+      if (!root || seen.has(root)) return;
+      seen.add(root);
+      roots.push(root);
+      forEachDescendantElement(root, function (el) {
+        if (el && el.shadowRoot) visit(el.shadowRoot);
+        var childDoc = getSameOriginFrameDocument(el);
+        if (childDoc) visit(childDoc);
+      });
+    }
+
+    visit(startRoot || document);
+    return roots;
+  }
+
+  function getGlobalClientRect(el) {
+    if (!el || !el.getBoundingClientRect) return null;
+    var rect = el.getBoundingClientRect();
+    var left = rect.left;
+    var top = rect.top;
+    var win = el.ownerDocument && el.ownerDocument.defaultView;
+    try {
+      while (win && win.frameElement) {
+        var frameRect = win.frameElement.getBoundingClientRect();
+        left += frameRect.left;
+        top += frameRect.top;
+        win = win.parent;
+      }
+    } catch (_err) {
+      // ignore frame coordinate failures
+    }
+    return {
+      left: left,
+      top: top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function getDeepActiveElement(startDoc) {
+    var active = startDoc && startDoc.activeElement ? startDoc.activeElement : null;
+    var seen = new Set();
+    while (active && !seen.has(active)) {
+      seen.add(active);
+      if (active.shadowRoot && active.shadowRoot.activeElement) {
+        active = active.shadowRoot.activeElement;
+        continue;
+      }
+      var childDoc = getSameOriginFrameDocument(active);
+      if (childDoc && childDoc.activeElement && childDoc.activeElement !== childDoc.body && childDoc.activeElement !== childDoc.documentElement) {
+        active = childDoc.activeElement;
+        continue;
+      }
+      break;
+    }
+    return active;
   }
 
   function textOf(el) {
@@ -368,7 +522,7 @@
     var labelledby = el.getAttribute && el.getAttribute('aria-labelledby');
     if (labelledby) {
       var parts = labelledby.split(/\s+/).map(function (id) {
-        var n = el.ownerDocument.getElementById(id);
+        var n = findElementByIdScoped(el, id);
         return n ? n.textContent : '';
       });
       t = parts.join(' ').trim();
@@ -379,7 +533,7 @@
       // by for=
       var id = el.id && el.id.trim();
       if (id) {
-        var lab = el.ownerDocument.querySelector('label[for="' + id.replace(/"/g, '') + '"]');
+        var lab = findAssociatedLabelForControl(el);
         if (lab && lab.textContent) return lab.textContent.trim();
       }
       // wrapped label
@@ -504,7 +658,7 @@
   }
 
   var DEFAULT_AUTO_TARGET_ORDER = ['link', 'button', 'heading', 'input'];
-  var ACTION_RETRY_DELAYS_MS = [0, 120, 350, 800];
+  var ACTION_RETRY_DELAYS_MS = [0, 120, 350, 800, 1400];
   var ACTIONABLE_BUTTON_ROLES = {
     button: true,
     menuitem: true,
@@ -526,14 +680,48 @@
   var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send'];
   var LINK_LIKE_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin', 'sign in', 'sign-in', 'learn more', 'read more'];
   var HEADING_LIKE_TOKENS = ['heading', 'section', 'title', 'part'];
-  var SUPPORTED_COMMAND_VERBS = ['click', 'focus', 'open', 'press', 'activate', 'read', 'scroll'];
+  var EMAIL_FIELD_TOKENS = ['email', 'e mail', 'mail'];
+  var LONG_TEXT_FIELD_TOKENS = ['description', 'message', 'comment', 'comments', 'bio', 'about', 'notes', 'details', 'summary', 'experience', 'objective', 'cover letter'];
+  var FORM_CONFIRMATION_MAX_CORRECTIONS = 3;
+  var EMAIL_SEGMENT_MAX_CORRECTIONS = 2;
+  var SPELLED_VALUE_TOKEN_MAP = {
+    dot: '.',
+    period: '.',
+    point: '.',
+    at: '@',
+    underscore: '_',
+    dash: '-',
+    hyphen: '-',
+    minus: '-',
+    plus: '+',
+    slash: '/',
+    backslash: '\\',
+    space: ' '
+  };
+  var SUPPORTED_COMMAND_VERBS = ['click', 'focus', 'open', 'press', 'activate', 'read', 'scroll', 'fill', 'type', 'enter', 'select', 'choose', 'pick', 'check', 'submit'];
   var COMMAND_VERB_ALIASES = {
     lick: 'click',
     clik: 'click',
     focu: 'focus',
     scrol: 'scroll',
     pres: 'press',
-    activte: 'activate'
+    activte: 'activate',
+    phil: 'fill',
+    fll: 'fill',
+    selct: 'select',
+    chek: 'check',
+    submt: 'submit'
+  };
+  var SUMMARY_VERB_ALIASES = {
+    discribe: 'describe',
+    dicribe: 'describe',
+    descrbe: 'describe',
+    descripe: 'describe',
+    desribe: 'describe',
+    summerize: 'summarize',
+    sumarize: 'summarize',
+    summrize: 'summarize',
+    summarise: 'summarize'
   };
 
   function splitCommandWords(text) {
@@ -596,6 +784,40 @@
     if (!words.length) return '';
     words[0] = recoverLeadingVerb(words[0], words.slice(1));
     return words.join(' ').trim();
+  }
+
+  function normalizeLeadingVerbPreserveRemainder(text) {
+    var raw = String(text || '').trim();
+    if (!raw) return '';
+    var parts = raw.split(/\s+/).filter(Boolean);
+    if (!parts.length) return '';
+    var loweredParts = parts.map(function (part) { return String(part || '').toLowerCase(); });
+    var recovered = recoverLeadingVerb(loweredParts[0], loweredParts.slice(1));
+    parts[0] = recovered !== loweredParts[0] ? recovered : parts[0];
+    return parts.join(' ').trim();
+  }
+
+  function hasCurrentPageReferenceText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return (
+      /\b(?:this|current|the)\s+(?:page|screen|site|website|app)\b/.test(normalized) ||
+      /\b(?:on|in)\s+(?:this|the|the current)\s+(?:page|screen|site|website|app)\b/.test(normalized) ||
+      /\b(?:sur|dans)\s+(?:cette|la)\s+(?:page|ecran|site)\b/.test(normalized) ||
+      /(?:في|على|ب)\s+(?:هاي|هذه|هاد|هذي)\s+(?:الصفحة|الشاشة|الموقع)/.test(normalized) ||
+      /(?:الصفحة|الشاشة|الموقع)\s+(?:الحالية|هاي|هذه)/.test(normalized)
+    );
+  }
+
+  function normalizeCurrentContextIntentText(text) {
+    var raw = normalizeLeadingVerbPreserveRemainder(text);
+    if (!raw || !hasCurrentPageReferenceText(raw)) return raw;
+    var parts = raw.split(/\s+/).filter(Boolean);
+    if (!parts.length) return raw;
+    var first = normalizeMatchText(parts[0]);
+    if (!first || !SUMMARY_VERB_ALIASES[first]) return raw;
+    parts[0] = SUMMARY_VERB_ALIASES[first];
+    return parts.join(' ').trim();
   }
 
   function hasAnyIntentToken(tokens, candidates) {
@@ -678,6 +900,61 @@
     }
   }
 
+  function getParentElementOrHost(el) {
+    if (!el) return null;
+    if (el.parentElement) return el.parentElement;
+    var rootNode = getRootNodeForElement(el);
+    return rootNode && rootNode.host ? rootNode.host : null;
+  }
+
+  function hasInteractiveStateAttributes(el) {
+    if (!el || !el.getAttribute) return false;
+    return !!(
+      el.hasAttribute('aria-expanded') ||
+      el.hasAttribute('aria-pressed') ||
+      el.hasAttribute('aria-selected') ||
+      el.hasAttribute('aria-checked') ||
+      el.hasAttribute('aria-controls') ||
+      el.hasAttribute('aria-haspopup') ||
+      el.hasAttribute('aria-current')
+    );
+  }
+
+  function hasCompactActionableFootprint(el, label) {
+    if (!el || !el.getBoundingClientRect) return false;
+    try {
+      var rect = el.getBoundingClientRect();
+      if (!rect || rect.width < 24 || rect.height < 16) return false;
+      if (rect.height > 160) return false;
+      if (rect.width > window.innerWidth * 0.98 && rect.height > 120) return false;
+      if ((el.childElementCount || 0) > 12) return false;
+      if (String(label || '').trim().length > 120) return false;
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function isImplicitPointerActionable(el, label) {
+    if (!el || el.nodeType !== 1) return false;
+    if (!hasPointerCursor(el)) return false;
+    if (!hasCompactActionableFootprint(el, label)) return false;
+    var text = String(label || '').trim();
+    if (text && text.split(/\s+/).length <= 12) return true;
+    return hasInteractiveStateAttributes(el);
+  }
+
+  function quickGenericActionableLabel(el) {
+    if (!el || !el.getAttribute) return '';
+    var aria = el.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    var title = el.getAttribute('title');
+    if (title) return title.trim();
+    var directText = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (directText) return directText.slice(0, 120);
+    return '';
+  }
+
   function isButtonLikeInput(el) {
     if (!el || (el.tagName || '').toLowerCase() !== 'input') return false;
     var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
@@ -695,8 +972,10 @@
     }
     if (role === 'link' || ACTIONABLE_BUTTON_ROLES[role]) return true;
     if (isButtonLikeInput(el)) return true;
+    if (hasInteractiveStateAttributes(el)) return true;
     if (el.hasAttribute && el.hasAttribute('onclick')) return true;
-    return getTabIndexValue(el) >= 0 && hasPointerCursor(el);
+    if (getTabIndexValue(el) >= 0 && hasPointerCursor(el)) return true;
+    return isImplicitPointerActionable(el, quickGenericActionableLabel(el));
   }
 
   function isNativelyFocusable(el) {
@@ -712,7 +991,7 @@
     var forId = el.getAttribute('for');
     if (!forId) return null;
     try {
-      return el.ownerDocument && el.ownerDocument.getElementById(forId);
+      return findElementByIdScoped(el, forId);
     } catch (_err) {
       return null;
     }
@@ -772,41 +1051,79 @@
       '[role="radio"]',
       '[role="checkbox"]',
       '[role="switch"]',
+      '[aria-expanded]',
+      '[aria-pressed]',
+      '[aria-selected]',
+      '[aria-checked]',
+      '[aria-controls]',
+      '[aria-haspopup]',
       'input',
       'select',
       'textarea',
       '[onclick]',
+      '[style*="cursor: pointer"]',
       '[tabindex]:not([tabindex="-1"])',
       'h1, h2, h3, h4, h5, h6'
     ].join(',');
-    var nodes = Array.prototype.slice.call(d.querySelectorAll(selector));
-    nodes.forEach(function (el) {
-      if (seen.has(el)) return;
-      seen.add(el);
-      if (isHidden(el)) return;
-      if (isNavableUiElement(el)) return;
-      var label = textOf(el);
-      if (!label) return; // skip unlabeled entries for now
-      if (!el.dataset.navableId) el.dataset.navableId = nextId();
-      el.dataset.navableLabel = label;
-      var type = getType(el);
-      if (type === 'other') return;
-      el.dataset.navableType = type;
-      var tag = el.tagName.toLowerCase();
-      items.push({
-        id: el.dataset.navableId,
-        label: label,
-        tag: tag,
-        type: type,
-        aliases: collectAliasesForElement(el, label),
-        inputType: type === 'input' ? String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase() : '',
-        name: type === 'input' ? String((el.getAttribute && el.getAttribute('name')) || '') : '',
-        placeholder: type === 'input' ? String((el.getAttribute && el.getAttribute('placeholder')) || '') : '',
-        href: type === 'link' ? String((el.getAttribute && el.getAttribute('href')) || '') : ''
+    collectSearchRoots(d).forEach(function (root) {
+      var nodes = [];
+      try {
+        nodes = Array.prototype.slice.call(root.querySelectorAll(selector));
+      } catch (_err) {
+        nodes = [];
+      }
+      nodes.forEach(function (el) {
+        if (seen.has(el)) return;
+        seen.add(el);
+        if (isHidden(el)) return;
+        if (isNavableUiElement(el)) return;
+        var item = buildIndexedItemForElement(el);
+        if (!item) return;
+        items.push(item);
       });
     });
     index.items = items;
     return index;
+  }
+
+  function getIndexedElement(itemOrId) {
+    var item = itemOrId;
+    if (!itemOrId) return null;
+    if (typeof itemOrId === 'string') {
+      item = index.items.find(function (entry) { return entry.id === itemOrId; }) || null;
+    }
+    if (!item) return null;
+    if (item.element && item.element.isConnected) return item.element;
+    if (item.id) {
+      var refreshed = index.items.find(function (entry) { return entry.id === item.id; });
+      if (refreshed && refreshed.element && refreshed.element.isConnected) return refreshed.element;
+    }
+    return null;
+  }
+
+  function buildIndexedItemForElement(el, labelOverride, typeOverride) {
+    if (!el || el.nodeType !== 1) return null;
+    var label = String(labelOverride || textOf(el) || '').trim();
+    if (!label) return null;
+    if (!el.dataset.navableId) el.dataset.navableId = nextId();
+    el.dataset.navableLabel = label;
+    var type = typeOverride || getType(el);
+    if (type === 'other') return null;
+    el.dataset.navableType = type;
+    var tag = (el.tagName || '').toLowerCase();
+    var item = {
+      id: el.dataset.navableId,
+      label: label,
+      tag: tag,
+      type: type,
+      aliases: collectAliasesForElement(el, label),
+      inputType: type === 'input' ? String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase() : '',
+      name: type === 'input' ? String((el.getAttribute && el.getAttribute('name')) || '') : '',
+      placeholder: type === 'input' ? String((el.getAttribute && el.getAttribute('placeholder')) || '') : '',
+      href: type === 'link' ? String((el.getAttribute && el.getAttribute('href')) || '') : ''
+    };
+    Object.defineProperty(item, 'element', { value: el, enumerable: false, configurable: true });
+    return item;
   }
 
   function collectAliasesForElement(el, label) {
@@ -839,9 +1156,10 @@
   function drawOverlay() {
     clearOverlay();
     index.items.forEach(function (it) {
-      var el = document.querySelector('[data-navable-id="' + it.id + '"]');
+      var el = getIndexedElement(it);
       if (!el) return;
-      var r = el.getBoundingClientRect();
+      var r = getGlobalClientRect(el);
+      if (!r) return;
       var m = document.createElement('div');
       m.textContent = it.id.replace(/^n/, '');
       Object.assign(m.style, {
@@ -898,65 +1216,80 @@
   function extractLandmarks(doc) {
     var roles = ['main', 'navigation', 'banner', 'contentinfo', 'search', 'form', 'complementary', 'region'];
     var selectors = roles.map(function (r) { return '[role="' + r + '"]'; }).concat(['main', 'nav', 'header', 'footer', 'form']);
-    var nodes = Array.prototype.slice.call((doc || document).querySelectorAll(selectors.join(',')));
     var seen = new Set();
     var landmarks = [];
-    nodes.forEach(function (el) {
-      if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
-      seen.add(el);
-      var role = el.getAttribute && el.getAttribute('role');
-      var tag = (el.tagName || '').toLowerCase();
-      var label = textOf(el);
-      if (!label) {
-        var h = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6');
-        if (h) label = textOf(h);
+    collectSearchRoots(doc || document).forEach(function (root) {
+      var nodes = [];
+      try {
+        nodes = Array.prototype.slice.call(root.querySelectorAll(selectors.join(',')));
+      } catch (_err) {
+        nodes = [];
       }
-      landmarks.push({ role: role || tag, tag: tag, label: label || '' });
+      nodes.forEach(function (el) {
+        if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
+        seen.add(el);
+        var role = el.getAttribute && el.getAttribute('role');
+        var tag = (el.tagName || '').toLowerCase();
+        var label = textOf(el);
+        if (!label) {
+          var h = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6');
+          if (h) label = textOf(h);
+        }
+        landmarks.push({ role: role || tag, tag: tag, label: label || '' });
+      });
     });
     return landmarks;
   }
 
   function extractExcerpt(doc) {
-    var root = (doc && doc.querySelector && (doc.querySelector('main') || doc.querySelector('article'))) || (doc && doc.body);
-    if (!root) return '';
-    var nodes = Array.prototype.slice.call(
-      root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,label,legend,button,[role="radio"],[role="checkbox"],[role="option"]')
-    );
     var maxChars = 1200;
     var total = 0;
     var parts = [];
     var seenText = new Set();
-    for (var i = 0; i < nodes.length; i++) {
-      if (parts.length >= 24) break;
-      var el = nodes[i];
-      if (isHidden(el) || isNavableUiElement(el)) continue;
-      var tag = (el.tagName || '').toLowerCase();
-      if (tag === 'label') {
-        var control = null;
-        var forId = el.getAttribute && el.getAttribute('for');
-        if (forId) control = el.ownerDocument.getElementById(forId);
-        if (!control) control = el.querySelector && el.querySelector('input,select,textarea');
-        if (control && isSensitiveInput(control)) continue;
+    collectSearchRoots(doc || document).forEach(function (searchRoot) {
+      if (parts.length >= 24 || total >= maxChars) return;
+      var root = (searchRoot && searchRoot.querySelector && (searchRoot.querySelector('main') || searchRoot.querySelector('article'))) || searchRoot.body || searchRoot;
+      if (!root || !root.querySelectorAll) return;
+      var nodes = [];
+      try {
+        nodes = Array.prototype.slice.call(
+          root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,label,legend,button,[role="radio"],[role="checkbox"],[role="option"]')
+        );
+      } catch (_err) {
+        nodes = [];
       }
-      var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      var role = (el.getAttribute && el.getAttribute('role')) || '';
-      var minChars = (tag === 'label' || tag === 'legend' || tag === 'button' || role === 'radio' || role === 'checkbox' || role === 'option') ? 3 : 12;
-      if (!text || text.length < minChars) continue;
-      var dedupeKey = text.toLowerCase();
-      if (seenText.has(dedupeKey)) continue;
-      var remaining = maxChars - total;
-      if (remaining <= 0) break;
-      if (text.length > remaining) text = text.slice(0, remaining);
-      parts.push(text);
-      total += text.length;
-      seenText.add(dedupeKey);
-    }
+      for (var i = 0; i < nodes.length; i++) {
+        if (parts.length >= 24) break;
+        var el = nodes[i];
+        if (isHidden(el) || isNavableUiElement(el)) continue;
+        var tag = (el.tagName || '').toLowerCase();
+        if (tag === 'label') {
+          var control = null;
+          var forId = el.getAttribute && el.getAttribute('for');
+          if (forId) control = findElementByIdScoped(el, forId);
+          if (!control) control = el.querySelector && el.querySelector('input,select,textarea');
+          if (control && isSensitiveInput(control)) continue;
+        }
+        var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+        var role = (el.getAttribute && el.getAttribute('role')) || '';
+        var minChars = (tag === 'label' || tag === 'legend' || tag === 'button' || role === 'radio' || role === 'checkbox' || role === 'option') ? 3 : 12;
+        if (!text || text.length < minChars) continue;
+        var dedupeKey = text.toLowerCase();
+        if (seenText.has(dedupeKey)) continue;
+        var remaining = maxChars - total;
+        if (remaining <= 0) break;
+        if (text.length > remaining) text = text.slice(0, remaining);
+        parts.push(text);
+        total += text.length;
+        seenText.add(dedupeKey);
+      }
+    });
     return parts.join(' ');
   }
 
   function buildPageStructure() {
     rescan();
-    var active = document.activeElement;
+    var active = getDeepActiveElement(document);
     if (isNavableUiElement(active)) active = null;
     var activeId = active && active.dataset ? active.dataset.navableId : null;
     var activeLabel = '';
@@ -978,7 +1311,7 @@
         if (m) entry.level = parseInt(m[1], 10);
         headings.push(entry);
       } else if (it.type === 'link') {
-        var linkEl = document.querySelector('[data-navable-id="' + it.id + '"]');
+        var linkEl = getIndexedElement(it);
         if (linkEl && linkEl.getAttribute) {
           entry.href = linkEl.getAttribute('href') || '';
         } else {
@@ -988,7 +1321,7 @@
       } else if (it.type === 'button') {
         buttons.push(entry);
       } else if (it.type === 'input') {
-        var el = document.querySelector('[data-navable-id="' + it.id + '"]');
+        var el = getIndexedElement(it);
         if (el) {
           var sensitiveInput = isSensitiveInput(el);
           var paymentInput = isPaymentLikeInput(el);
@@ -1070,6 +1403,37 @@
     return 'Links: ' + items.join(' ') + more;
   }
 
+  function listButtonsText(structure) {
+    if (!structure || !structure.buttons || !structure.buttons.length) {
+      return 'No buttons on this page.';
+    }
+    var items = structure.buttons.slice(0, 10).map(function (b, idx) {
+      var label = b.label || 'Unnamed button';
+      return (idx + 1) + '. ' + label + '.';
+    });
+    var more = structure.buttons.length > 10 ? ' And more buttons not listed.' : '';
+    return 'Buttons: ' + items.join(' ') + more;
+  }
+
+  function listInputsText(structure) {
+    if (!structure || !structure.inputs || !structure.inputs.length) {
+      return 'No input fields on this page.';
+    }
+    var items = structure.inputs.slice(0, 10).map(function (input, idx) {
+      var label = input.label || input.name || input.placeholder || 'Unnamed input';
+      return (idx + 1) + '. ' + label + '.';
+    });
+    var more = structure.inputs.length > 10 ? ' And more input fields not listed.' : '';
+    return 'Inputs: ' + items.join(' ') + more;
+  }
+
+  function listTargetText(target, structure) {
+    if (target === 'heading') return listHeadingsText(structure);
+    if (target === 'button') return listButtonsText(structure);
+    if (target === 'input') return listInputsText(structure);
+    return listLinksText(structure);
+  }
+
   function isPasswordInput(el) {
     if (!el) return false;
     var type = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
@@ -1090,6 +1454,1414 @@
 
   function isSensitiveInput(el) {
     return isPasswordInput(el) || isPaymentLikeInput(el);
+  }
+
+  var activeFormSession = null;
+
+  function getEligibleFormControlElements() {
+    var controls = [];
+    var seen = new Set();
+    collectSearchRoots(document).forEach(function (root) {
+      var nodes = [];
+      try {
+        nodes = Array.prototype.slice.call(root.querySelectorAll('input,select,textarea'));
+      } catch (_err) {
+        nodes = [];
+      }
+      nodes.forEach(function (el) {
+        if (!el || seen.has(el)) return;
+        seen.add(el);
+        if (isHidden(el) || isNavableUiElement(el)) return;
+        var tag = (el.tagName || '').toLowerCase();
+        var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+        if (tag === 'input' && /^(hidden|button|submit|reset|image|file)$/.test(inputType)) return;
+        controls.push(el);
+      });
+    });
+    return controls;
+  }
+
+  function getFormContainerForControl(el) {
+    if (!el) return null;
+    if (el.form) return el.form;
+    return el.closest ? (el.closest('form,[role="form"],dialog,[role="dialog"],main,section,article') || document.body) : document.body;
+  }
+
+  function getFormControlLabel(el) {
+    var label = textOf(el);
+    if (label) return label;
+    var aria = el.getAttribute && el.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    return 'Unnamed input';
+  }
+
+  function getLegendLabelForControl(el) {
+    var fieldset = el && el.closest ? el.closest('fieldset') : null;
+    if (!fieldset) return '';
+    var legend = fieldset.querySelector && fieldset.querySelector('legend');
+    return legend ? String(textOf(legend) || '').trim() : '';
+  }
+
+  function buildRadioGroupField(radios) {
+    var first = radios[0];
+    var label = getLegendLabelForControl(first) || getFormControlLabel(first) || 'Choices';
+    var required = radios.some(function (radio) { return !!(radio.hasAttribute && radio.hasAttribute('required')); });
+    var options = radios.map(function (radio, index) {
+      var optionLabel = getFormControlLabel(radio) || ('Option ' + (index + 1));
+      return {
+        label: optionLabel,
+        value: String((radio.getAttribute && radio.getAttribute('value')) || optionLabel),
+        element: radio
+      };
+    });
+    return {
+      kind: 'radio',
+      label: label,
+      required: required,
+      options: options,
+      elements: radios,
+      history: [],
+      focusElement: function () {
+        var checked = radios.find(function (radio) { return !!radio.checked; }) || radios[0];
+        return focusElementForNavigation(checked);
+      }
+    };
+  }
+
+  function buildFormFieldDescriptor(el) {
+    if (!el) return null;
+    var tag = (el.tagName || '').toLowerCase();
+    var inputType = String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase();
+    if (inputType === 'radio') return null;
+    if (inputType === 'checkbox') {
+      return {
+        kind: 'checkbox',
+        label: getFormControlLabel(el),
+        required: !!(el.hasAttribute && el.hasAttribute('required')),
+        options: [],
+        elements: [el],
+        history: [],
+        focusElement: function () { return focusElementForNavigation(el); }
+      };
+    }
+    if (tag === 'select') {
+      var selectOptions = Array.prototype.slice.call(el.options || []).map(function (option) {
+        return {
+          label: String(option.textContent || option.label || option.value || '').replace(/\s+/g, ' ').trim(),
+          value: String(option.value || option.textContent || '').trim(),
+          option: option
+        };
+      }).filter(function (option) { return !!option.label; });
+      return {
+        kind: 'select',
+        label: getFormControlLabel(el),
+        required: !!(el.hasAttribute && el.hasAttribute('required')),
+        options: selectOptions,
+        elements: [el],
+        history: [],
+        focusElement: function () { return focusElementForNavigation(el); }
+      };
+    }
+    return {
+      kind: 'text',
+      label: getFormControlLabel(el),
+      required: !!(el.hasAttribute && el.hasAttribute('required')),
+      options: [],
+      inputType: inputType,
+      elements: [el],
+      history: [],
+      focusElement: function () { return focusElementForNavigation(el); }
+    };
+  }
+
+  function scoreFormGroup(group) {
+    if (!group || !Array.isArray(group.controls)) return -1;
+    var score = group.controls.length * 10 + (group.requiredCount || 0) * 8;
+    var container = group.container;
+    if (container && (container.tagName || '').toLowerCase() === 'form') score += 12;
+    group.controls.forEach(function (control) {
+      var tag = (control.tagName || '').toLowerCase();
+      var inputType = String((control.getAttribute && control.getAttribute('type')) || '').toLowerCase();
+      if (inputType === 'password') score += 40;
+      if (inputType === 'email') score += 24;
+      if (tag === 'select' || inputType === 'checkbox' || inputType === 'radio') score += 6;
+      if (control.hasAttribute && control.hasAttribute('required')) score += 10;
+    });
+    return score;
+  }
+
+  function chooseBestFormGroup(groups) {
+    if (!groups.length) return null;
+    var active = getDeepActiveElement(document);
+    if (active) {
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].controls.some(function (control) { return control === active || (control.contains && control.contains(active)); })) {
+          return groups[i];
+        }
+      }
+    }
+    groups.sort(function (a, b) {
+      var scoreDiff = scoreFormGroup(b) - scoreFormGroup(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      if (b.controls.length !== a.controls.length) return b.controls.length - a.controls.length;
+      return b.requiredCount - a.requiredCount;
+    });
+    return groups[0];
+  }
+
+  function buildFormSession() {
+    var controls = getEligibleFormControlElements();
+    if (!controls.length) return null;
+    var groups = [];
+    var byContainer = new Map();
+    controls.forEach(function (control) {
+      var container = getFormContainerForControl(control);
+      var entry = byContainer.get(container);
+      if (!entry) {
+        entry = { container: container, controls: [], requiredCount: 0 };
+        byContainer.set(container, entry);
+        groups.push(entry);
+      }
+      entry.controls.push(control);
+      if (control.hasAttribute && control.hasAttribute('required')) entry.requiredCount += 1;
+    });
+    var group = chooseBestFormGroup(groups);
+    if (!group || !group.controls.length) return null;
+
+    var fields = [];
+    var seenRadioGroups = new Set();
+    group.controls.forEach(function (control) {
+      var inputType = String((control.getAttribute && control.getAttribute('type')) || '').toLowerCase();
+      if (inputType === 'radio') {
+        var radioName = String(control.name || control.getAttribute('name') || '').trim();
+        var radioKey = radioName || String(control.dataset.navableId || nextId());
+        if (seenRadioGroups.has(radioKey)) return;
+        seenRadioGroups.add(radioKey);
+        var radios = group.controls.filter(function (candidate) {
+          return candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
+            String(candidate.name || candidate.getAttribute('name') || '') === String(control.name || control.getAttribute('name') || '');
+        });
+        if (!radios.length) radios = [control];
+        fields.push(buildRadioGroupField(radios));
+        return;
+      }
+      var descriptor = buildFormFieldDescriptor(control);
+      if (descriptor) fields.push(descriptor);
+    });
+
+    if (!fields.length) return null;
+    return {
+      createdAt: Date.now(),
+      container: group.container,
+      fields: fields,
+      currentIndex: 0
+    };
+  }
+
+  function ensureFormSession(opts) {
+    opts = opts || {};
+    var existing = getCurrentFormSession();
+    if (existing) return existing;
+    var session = buildFormSession();
+    if (!session) {
+      if (opts.speakFailure !== false) speak(translate('form_mode_empty'));
+      return null;
+    }
+    activeFormSession = session;
+    focusCurrentFormField(session);
+    if (opts.announce !== false) {
+      speak(translate('form_mode_started', { summary: describeFormField(session, currentFormField(session)) }));
+    }
+    return session;
+  }
+
+  function getCurrentFormSession() {
+    if (!activeFormSession || !Array.isArray(activeFormSession.fields) || !activeFormSession.fields.length) return null;
+    return activeFormSession;
+  }
+
+  function clearFormSession() {
+    activeFormSession = null;
+  }
+
+  function currentFormField(session) {
+    if (!session || !Array.isArray(session.fields) || !session.fields.length) return null;
+    var idx = Math.max(0, Math.min(session.fields.length - 1, Number(session.currentIndex || 0)));
+    return session.fields[idx] || null;
+  }
+
+  function getPendingFormConfirmation(session) {
+    if (!session || !session.pendingConfirmation || typeof session.pendingConfirmation !== 'object') return null;
+    return session.pendingConfirmation;
+  }
+
+  function clearPendingFormConfirmation(session) {
+    if (!session || !session.pendingConfirmation) return;
+    delete session.pendingConfirmation;
+  }
+
+  function currentPendingFormField(session) {
+    if (!session) return null;
+    var pending = getPendingFormConfirmation(session);
+    if (!pending || pending.fieldIndex == null) return currentFormField(session);
+    var index = Math.max(0, Math.min(session.fields.length - 1, Number(pending.fieldIndex || 0)));
+    return session.fields[index] || currentFormField(session);
+  }
+
+  function fieldAliases(field) {
+    var aliases = [];
+    function pushAlias(value) {
+      var normalized = normalizeMatchText(value);
+      if (!normalized) return;
+      if (aliases.indexOf(normalized) >= 0) return;
+      aliases.push(normalized);
+    }
+    if (!field) return aliases;
+    pushAlias(field.label);
+    (field.elements || []).forEach(function (el) {
+      if (!el || !el.getAttribute) return;
+      pushAlias(el.getAttribute('name'));
+      pushAlias(el.getAttribute('id'));
+      pushAlias(el.getAttribute('placeholder'));
+      pushAlias(el.getAttribute('aria-label'));
+    });
+    return aliases;
+  }
+
+  function fieldAliasListText(field) {
+    return fieldAliases(field).join(' ');
+  }
+
+  function isEmailLikeFormField(field) {
+    if (!field || field.kind !== 'text') return false;
+    if (String(field.inputType || '').toLowerCase() === 'email') return true;
+    var aliasText = fieldAliasListText(field);
+    return EMAIL_FIELD_TOKENS.some(function (token) {
+      return aliasText.indexOf(normalizeMatchText(token)) >= 0;
+    });
+  }
+
+  function isLongTextFormField(field) {
+    if (!field || field.kind !== 'text') return false;
+    var element = field.elements && field.elements[0];
+    if (!element) return false;
+    var tag = String(element.tagName || '').toLowerCase();
+    if (tag === 'textarea' || !!element.isContentEditable) return true;
+    var rows = Number((element.getAttribute && element.getAttribute('rows')) || 0);
+    if (rows >= 3) return true;
+    var aliasText = fieldAliasListText(field);
+    return LONG_TEXT_FIELD_TOKENS.some(function (token) {
+      return aliasText.indexOf(normalizeMatchText(token)) >= 0;
+    });
+  }
+
+  function normalizeEmailSpeechText(text) {
+    var raw = String(text || '').trim().toLowerCase();
+    if (!raw) return '';
+    return raw
+      .replace(/\bat sign\b/g, ' @ ')
+      .replace(/\bat\b/g, ' @ ')
+      .replace(/\bfull stop\b/g, ' . ')
+      .replace(/\bperiod\b/g, ' . ')
+      .replace(/\bpoint\b/g, ' . ')
+      .replace(/\bdot\b/g, ' . ')
+      .replace(/\bunderscore\b/g, ' _ ')
+      .replace(/\bplus sign\b/g, ' + ')
+      .replace(/\bplus\b/g, ' + ')
+      .replace(/\bhyphen\b/g, ' - ')
+      .replace(/\bdash\b/g, ' - ')
+      .replace(/\bminus\b/g, ' - ')
+      .replace(/\bslash\b/g, ' / ')
+      .replace(/\bbackslash\b/g, ' \\ ')
+      .replace(/\s*([@._+\-/\\])\s*/g, '$1')
+      .replace(/\s+/g, '')
+      .trim();
+  }
+
+  function sanitizeEmailLocalPartText(text) {
+    return String(text || '')
+      .replace(/@.*$/g, '')
+      .replace(/[^a-z0-9._+\-/\\]/g, '')
+      .trim();
+  }
+
+  function sanitizeEmailDomainLabelText(text) {
+    var raw = String(text || '');
+    if (!raw) return '';
+    if (raw.indexOf('@') >= 0) raw = raw.slice(raw.indexOf('@') + 1);
+    if (raw.indexOf('.') >= 0) raw = raw.slice(0, raw.indexOf('.'));
+    return raw
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/^-+/g, '')
+      .replace(/-+$/g, '')
+      .trim();
+  }
+
+  function sanitizeEmailSuffixText(text) {
+    var raw = String(text || '');
+    if (!raw) return '';
+    if (raw.indexOf('@') >= 0) raw = raw.slice(raw.indexOf('@') + 1);
+    if (raw.indexOf('.') >= 0) raw = raw.slice(raw.lastIndexOf('.') + 1);
+    return raw
+      .replace(/[^a-z0-9.-]/g, '')
+      .replace(/^\.+/g, '')
+      .replace(/\.+$/g, '')
+      .trim();
+  }
+
+  function cloneEmailParts(parts) {
+    return {
+      local: String(parts && parts.local || ''),
+      domain: String(parts && parts.domain || ''),
+      suffix: String(parts && parts.suffix || '')
+    };
+  }
+
+  function buildEmailFieldValue(parts) {
+    var emailParts = cloneEmailParts(parts);
+    if (!emailParts.local) return '';
+    var value = emailParts.local;
+    if (emailParts.domain) value += '@' + emailParts.domain;
+    if (emailParts.domain && emailParts.suffix) value += '.' + emailParts.suffix;
+    return value;
+  }
+
+  function buildEmailFieldValueUpToSegment(parts, segment) {
+    var emailParts = cloneEmailParts(parts);
+    if (!emailParts.local) return '';
+    if (segment === 'local') return emailParts.local;
+    if (segment === 'domain') return buildEmailFieldValue({ local: emailParts.local, domain: emailParts.domain });
+    return buildEmailFieldValue(emailParts);
+  }
+
+  function parseEmailParts(text) {
+    var normalized = normalizeEmailSpeechText(text);
+    if (!normalized) return null;
+    var atIndex = normalized.indexOf('@');
+    if (atIndex < 0) return null;
+    var local = sanitizeEmailLocalPartText(normalized.slice(0, atIndex));
+    if (!local) return null;
+    var afterAt = normalized.slice(atIndex + 1);
+    var lastDot = afterAt.lastIndexOf('.');
+    var domain = lastDot >= 0
+      ? sanitizeEmailDomainLabelText(afterAt.slice(0, lastDot))
+      : sanitizeEmailDomainLabelText(afterAt);
+    var suffix = lastDot >= 0 ? sanitizeEmailSuffixText(afterAt.slice(lastDot + 1)) : '';
+    return {
+      local: local,
+      domain: domain,
+      suffix: suffix
+    };
+  }
+
+  function extractEmailSegmentValue(text, segment) {
+    var parsed = parseEmailParts(text);
+    if (parsed && parsed[segment]) return parsed[segment];
+    var normalized = normalizeEmailSpeechText(text);
+    if (!normalized) return '';
+    if (segment === 'local') return sanitizeEmailLocalPartText(normalized);
+    if (segment === 'domain') return sanitizeEmailDomainLabelText(normalized);
+    return sanitizeEmailSuffixText(normalized);
+  }
+
+  function nextEmailSegment(segment) {
+    if (segment === 'local') return 'domain';
+    if (segment === 'domain') return 'suffix';
+    return '';
+  }
+
+  function emailSegmentTranslationKey(segment) {
+    if (segment === 'local') return 'form_email_segment_local';
+    if (segment === 'domain') return 'form_email_segment_domain';
+    return 'form_email_segment_suffix';
+  }
+
+  function translateEmailSegment(segment) {
+    return translate(emailSegmentTranslationKey(segment));
+  }
+
+  function normalizeLongTextSegment(text) {
+    var raw = String(text || '').trim();
+    if (!raw) return '';
+    raw = raw
+      .replace(/\bnew paragraph\b/gi, '\n\n')
+      .replace(/\bnew line\b/gi, '\n')
+      .replace(/\bexclamation mark\b/gi, '!')
+      .replace(/\bexclamation point\b/gi, '!')
+      .replace(/\bquestion mark\b/gi, '?')
+      .replace(/\bsemicolon\b/gi, ';')
+      .replace(/\bcolon\b/gi, ':')
+      .replace(/\bcomma\b/gi, ',')
+      .replace(/\bfull stop\b/gi, '.')
+      .replace(/\bperiod\b/gi, '.')
+      .replace(/\bpoint\b/gi, '.')
+      .replace(/\bdot\b/gi, '.');
+    raw = raw
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .replace(/([,.;:!?])([^\s\n])/g, '$1 $2')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/ ?\n ?/g, '\n')
+      .trim();
+    return raw;
+  }
+
+  function composeLongTextValue(previousValue, segmentText) {
+    var previous = String(previousValue || '');
+    var segment = String(segmentText || '').trim();
+    if (!segment) return previous;
+    if (!previous) return segment;
+    if (segment.charAt(0) === '\n') return previous.replace(/[ \t]+$/g, '') + segment;
+    if (/\n$/.test(previous)) return previous + segment;
+    return previous.replace(/[ \t]+$/g, '') + ' ' + segment;
+  }
+
+  function getFormFieldCurrentState(field) {
+    if (!field) return null;
+    if (field.kind === 'checkbox') {
+      var checkbox = field.elements && field.elements[0];
+      return { checked: !!(checkbox && checkbox.checked) };
+    }
+    if (field.kind === 'radio') {
+      var selected = (field.options || []).find(function (option) { return option.element && option.element.checked; });
+      return { value: selected ? String(selected.value || '') : '' };
+    }
+    if (field.kind === 'select') {
+      var selectEl = field.elements && field.elements[0];
+      return { value: selectEl && selectEl.value != null ? String(selectEl.value) : '' };
+    }
+    var textEl = field.elements && field.elements[0];
+    return { value: textEl && textEl.value != null ? String(textEl.value) : '' };
+  }
+
+  function restoreFormFieldState(field, state) {
+    if (!field) return false;
+    var snapshot = state || {};
+    if (field.kind === 'checkbox') {
+      var checkbox = field.elements && field.elements[0];
+      if (!checkbox) return false;
+      checkbox.checked = !!snapshot.checked;
+      try { checkbox.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { }
+      try { checkbox.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err2) { }
+      return true;
+    }
+    if (field.kind === 'radio') {
+      var desiredValue = String(snapshot.value || '');
+      (field.options || []).forEach(function (option) {
+        if (!option || !option.element) return;
+        option.element.checked = desiredValue ? String(option.value || '') === desiredValue : false;
+      });
+      var checkedOption = (field.options || []).find(function (option) { return option && option.element && option.element.checked; });
+      var radioEl = checkedOption && checkedOption.element;
+      if (radioEl) {
+        try { radioEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err3) { }
+        try { radioEl.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err4) { }
+      }
+      return true;
+    }
+    if (field.kind === 'select') {
+      var selectEl = field.elements && field.elements[0];
+      if (!selectEl) return false;
+      selectEl.value = String(snapshot.value || '');
+      try { selectEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err5) { }
+      try { selectEl.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err6) { }
+      return true;
+    }
+    var textEl = field.elements && field.elements[0];
+    if (!textEl) return false;
+    return applyTextValueToElement(textEl, String(snapshot.value || ''));
+  }
+
+  function resolveFormFieldIndex(session, label, supportedKinds) {
+    if (!session || !Array.isArray(session.fields) || !session.fields.length) return -1;
+    var normalizedQuery = normalizeMatchText(label);
+    if (!normalizedQuery) return -1;
+    var queryTokens = normalizedQuery.split(' ').filter(Boolean);
+    var ranked = session.fields.map(function (field, index) {
+      if (Array.isArray(supportedKinds) && supportedKinds.length && supportedKinds.indexOf(field.kind) < 0) return null;
+      var best = 0;
+      fieldAliases(field).forEach(function (alias) {
+        if (!alias) return;
+        if (alias === normalizedQuery) best = Math.max(best, 1000);
+        else if (alias.indexOf(normalizedQuery) === 0) best = Math.max(best, 860);
+        else if (alias.indexOf(normalizedQuery) >= 0) best = Math.max(best, 720);
+        if (queryTokens.length) {
+          var aliasTokens = alias.split(' ').filter(Boolean);
+          var matchedTokens = countMatchingTokens(queryTokens, aliasTokens);
+          if (matchedTokens === queryTokens.length) best = Math.max(best, 620 + matchedTokens);
+          else if (matchedTokens >= Math.max(1, Math.ceil(queryTokens.length * 0.6))) best = Math.max(best, 420 + matchedTokens);
+        }
+      });
+      return best > 0 ? { index: index, score: best } : null;
+    }).filter(Boolean).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    });
+    return ranked.length ? ranked[0].index : -1;
+  }
+
+  function moveToResolvedFormField(session, label, supportedKinds) {
+    if (!session) return null;
+    var targetIndex = resolveFormFieldIndex(session, label, supportedKinds);
+    if (targetIndex < 0) return null;
+    session.currentIndex = targetIndex;
+    focusCurrentFormField(session);
+    return currentFormField(session);
+  }
+
+  function isSensitiveFormField(field) {
+    if (!field || !Array.isArray(field.elements) || !field.elements.length) return false;
+    return field.elements.some(function (el) { return isSensitiveInput(el); });
+  }
+
+  function formFieldValueText(field) {
+    if (!field) return translate('form_value_empty');
+    if (field.kind === 'checkbox') {
+      var checkbox = field.elements && field.elements[0];
+      return translate(checkbox && checkbox.checked ? 'form_value_checked' : 'form_value_unchecked');
+    }
+    if (field.kind === 'radio') {
+      var selected = (field.options || []).find(function (option) { return option.element && option.element.checked; });
+      return selected ? (selected.label || selected.value) : translate('form_value_not_selected');
+    }
+    if (field.kind === 'select') {
+      var selectEl = field.elements && field.elements[0];
+      if (!selectEl || !selectEl.options) return translate('form_value_not_selected');
+      var selectedOption = selectEl.options[selectEl.selectedIndex];
+      var label = selectedOption ? String(selectedOption.textContent || selectedOption.label || selectedOption.value || '').replace(/\s+/g, ' ').trim() : '';
+      return label || translate('form_value_not_selected');
+    }
+    var el = field.elements && field.elements[0];
+    var value = el && el.value != null ? String(el.value).trim() : '';
+    return value || translate('form_value_empty');
+  }
+
+  function buildFormReviewMessage(session) {
+    if (!session || !Array.isArray(session.fields) || !session.fields.length) return translate('form_mode_empty');
+    var parts = [translate('form_review_intro')];
+    session.fields.forEach(function (field) {
+      if (!field) return;
+      if (isSensitiveFormField(field)) {
+        parts.push(translate('form_review_item_sensitive', { label: field.label || translate('target_input') }));
+      } else {
+        parts.push(translate('form_review_item', {
+          label: field.label || translate('target_input'),
+          value: formFieldValueText(field)
+        }));
+      }
+    });
+    parts.push(translate('form_review_prompt'));
+    return parts.join(' ').trim();
+  }
+
+  function reviewActiveForm() {
+    var session = getCurrentFormSession();
+    if (!session) {
+      speak(translate('form_mode_not_active'));
+      return false;
+    }
+    if (getPendingFormConfirmation(session)) {
+      promptPendingFormConfirmation(session);
+      return false;
+    }
+    speak(buildFormReviewMessage(session));
+    return true;
+  }
+
+  function isFormContextCommand(cmd) {
+    if (!cmd) return false;
+    return (
+      cmd.type === 'form_mode' ||
+      cmd.type === 'form_move' ||
+      cmd.type === 'form_current' ||
+      cmd.type === 'form_fill' ||
+      cmd.type === 'form_select' ||
+      cmd.type === 'form_check' ||
+      cmd.type === 'form_submit' ||
+      cmd.type === 'form_review' ||
+      cmd.type === 'help' ||
+      cmd.type === 'repeat' ||
+      cmd.type === 'stop'
+    );
+  }
+
+  function formFieldKindLabel(field) {
+    if (!field) return translate('target_input');
+    if (field.kind === 'select') return translate('form_field_type_select');
+    if (field.kind === 'checkbox') return translate('form_field_type_checkbox');
+    if (field.kind === 'radio') return translate('form_field_type_radio');
+    return translate('form_field_type_text');
+  }
+
+  function formFieldActionHint(field) {
+    if (!field) return '';
+    if (isLongTextFormField(field)) return translate('form_field_hint_longtext');
+    if (isEmailLikeFormField(field)) return translate('form_field_hint_email');
+    if (field.kind === 'select' || field.kind === 'radio') return translate('form_field_hint_select');
+    if (field.kind === 'checkbox') return translate('form_field_hint_checkbox');
+    return translate('form_field_hint_text');
+  }
+
+  function describeFormField(session, field) {
+    if (!session || !field) return translate('form_mode_empty');
+    var count = session.fields.length;
+    var index = Math.max(0, Math.min(count - 1, Number(session.currentIndex || 0))) + 1;
+    var message = translate('form_field_intro', {
+      index: index,
+      count: count,
+      label: field.label || translate('target_input'),
+      status: field.required ? translate('form_field_status_required') : translate('form_field_status_optional'),
+      kind: formFieldKindLabel(field)
+    });
+    if ((field.kind === 'select' || field.kind === 'radio') && Array.isArray(field.options) && field.options.length) {
+      var optionLabels = field.options.slice(0, 6).map(function (option) { return option.label; }).join(', ');
+      message += ' ' + translate('form_field_options', { options: optionLabels });
+    }
+    var hint = formFieldActionHint(field);
+    if (hint) message += ' ' + hint;
+    if (index === count) message += ' ' + translate('form_field_submit_hint');
+    return message.trim();
+  }
+
+  function isAffirmativeFormResponse(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /^(yes|yeah|yep|correct|right|that s right|thats right|confirm|confirmed|ok|okay|keep it|looks good|good|oui|نعم|ايوه|أيوه|ايوا|صح|تمام)$/.test(normalized);
+  }
+
+  function isNegativeFormResponse(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /^(no|nope|nah|wrong|incorrect|change|change it|edit|not right|that s wrong|thats wrong|try again|redo|non|لا|غلط|مو صح)$/.test(normalized);
+  }
+
+  function parseSpelledFieldValue(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return '';
+    normalized = normalized
+      .replace(/\bat sign\b/g, ' at ')
+      .replace(/\bfull stop\b/g, ' dot ')
+      .replace(/\bperiod\b/g, ' dot ')
+      .replace(/\bpoint\b/g, ' dot ')
+      .replace(/^(please\s+)?(?:spell|letters?|letter by letter|spell it|say)\s+/, '')
+      .trim();
+    if (!normalized) return '';
+    var tokens = normalized.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return '';
+    if (tokens.length === 1) return tokens[0];
+    var parts = [];
+    for (var i = 0; i < tokens.length; i += 1) {
+      var token = tokens[i];
+      if (Object.prototype.hasOwnProperty.call(SPELLED_VALUE_TOKEN_MAP, token)) {
+        parts.push(SPELLED_VALUE_TOKEN_MAP[token]);
+        continue;
+      }
+      if (/^[a-z0-9]$/i.test(token) || /^[\u0600-\u06FF]$/.test(token)) {
+        parts.push(token);
+        continue;
+      }
+      if (/^[a-z0-9]+$/i.test(token)) {
+        parts.push(token);
+        continue;
+      }
+      return normalized;
+    }
+    return parts.join('');
+  }
+
+  function setPendingFormConfirmation(session, field, details) {
+    if (!session || !field) return null;
+    var options = details || {};
+    var fieldIndex = typeof options.fieldIndex === 'number'
+      ? options.fieldIndex
+      : Math.max(0, Math.min(session.fields.length - 1, Number(session.currentIndex || 0)));
+    session.pendingConfirmation = {
+      fieldIndex: fieldIndex,
+      fieldKind: field.kind || 'text',
+      label: field.label || translate('target_input'),
+      mode: options.mode || 'confirm',
+      correctionCount: Math.max(0, Number(options.correctionCount || 0)),
+      sensitive: !!options.sensitive,
+      speechValue: String(options.speechValue || '').trim(),
+      checked: options.checked === true ? true : (options.checked === false ? false : null),
+      previousState: options.previousState || null,
+      fullValue: typeof options.fullValue === 'string' ? options.fullValue : '',
+      segmentText: String(options.segmentText || '').trim(),
+      longText: !!options.longText,
+      emailSegment: String(options.emailSegment || '').trim(),
+      emailParts: cloneEmailParts(options.emailParts || null)
+    };
+    return session.pendingConfirmation;
+  }
+
+  function restorePendingFormConfirmationState(session) {
+    var pending = getPendingFormConfirmation(session);
+    var field = currentPendingFormField(session);
+    if (!pending || !field || !pending.previousState) return false;
+    return restoreFormFieldState(field, pending.previousState);
+  }
+
+  function buildPendingFormConfirmationMessage(session) {
+    var pending = getPendingFormConfirmation(session);
+    var field = currentPendingFormField(session);
+    if (!pending || !field) return translate('form_mode_not_active');
+    var label = pending.label || field.label || translate('target_input');
+    if (pending.emailSegment) {
+      if (pending.mode === 'await_spelling') {
+        return translate('form_email_spelling_segment', {
+          label: label,
+          segment: translateEmailSegment(pending.emailSegment)
+        });
+      }
+      if (pending.mode === 'await_email_segment') {
+        return translate('form_email_prompt_segment', {
+          label: label,
+          segment: translateEmailSegment(pending.emailSegment)
+        });
+      }
+      return translate('form_email_confirmation_segment', {
+        label: label,
+        segment: translateEmailSegment(pending.emailSegment),
+        value: trimAssistantMemoryText(pending.speechValue || '', 80)
+      });
+    }
+    if (pending.mode === 'await_spelling') {
+      return translate('form_confirmation_spelling', { label: label });
+    }
+    if (pending.mode === 'await_retry') {
+      if (field.kind === 'checkbox') return translate('form_confirmation_retry_checkbox', { label: label });
+      if (field.kind === 'select' || field.kind === 'radio') return translate('form_confirmation_retry_option', { label: label });
+      return translate('form_confirmation_retry_text', { label: label });
+    }
+    if (field.kind === 'checkbox') {
+      return translate(pending.checked ? 'form_confirmation_checked' : 'form_confirmation_unchecked', { label: label });
+    }
+    if (field.kind === 'select' || field.kind === 'radio') {
+      return translate('form_confirmation_choice', {
+        label: label,
+        value: trimAssistantMemoryText(pending.speechValue || '', 80)
+      });
+    }
+    if (pending.sensitive) {
+      return translate('form_confirmation_sensitive', { label: label });
+    }
+    return translate('form_confirmation_value', {
+      label: label,
+      value: trimAssistantMemoryText(pending.speechValue || '', 80)
+    });
+  }
+
+  function promptPendingFormConfirmation(session) {
+    if (!session) return false;
+    speak(buildPendingFormConfirmationMessage(session));
+    return true;
+  }
+
+  function shouldForceSpelling(field, correctionCount, pending) {
+    if (!(field && field.kind === 'text' && !isLongTextFormField(field))) return false;
+    var limit = pending && pending.emailSegment ? EMAIL_SEGMENT_MAX_CORRECTIONS : FORM_CONFIRMATION_MAX_CORRECTIONS;
+    return Number(correctionCount || 0) >= limit;
+  }
+
+  function requestPendingFormCorrection(session) {
+    var pending = getPendingFormConfirmation(session);
+    var field = currentPendingFormField(session);
+    if (!pending || !field) return false;
+    restorePendingFormConfirmationState(session);
+    pending.correctionCount = Math.max(0, Number(pending.correctionCount || 0)) + 1;
+    pending.mode = shouldForceSpelling(field, pending.correctionCount, pending)
+      ? 'await_spelling'
+      : (pending.emailSegment ? 'await_email_segment' : 'await_retry');
+    promptPendingFormConfirmation(session);
+    return true;
+  }
+
+  function setPendingEmailSegment(session, field, segment, segmentValue, details) {
+    if (!session || !field || !segment) return false;
+    var options = details || {};
+    clearPendingFormConfirmation(session);
+    setPendingFormConfirmation(session, field, {
+      fieldIndex: Number(options.fieldIndex != null ? options.fieldIndex : session.currentIndex || 0),
+      mode: options.mode || 'confirm',
+      correctionCount: Math.max(0, Number(options.correctionCount || 0)),
+      previousState: options.previousState || null,
+      speechValue: String(segmentValue || '').trim(),
+      emailSegment: segment,
+      emailParts: options.emailParts || null
+    });
+    focusCurrentFormField(session);
+    promptPendingFormConfirmation(session);
+    return true;
+  }
+
+  function applyEmailSegmentValue(session, field, segment, rawSegmentValue, details) {
+    if (!session || !field || !segment) return false;
+    var emailParts = cloneEmailParts(details && details.emailParts || null);
+    var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
+    if (!normalizedSegment) {
+      speak(translate('form_fill_missing_value'));
+      return false;
+    }
+    emailParts[segment] = normalizedSegment;
+    var previousState = details && details.previousState ? details.previousState : getFormFieldCurrentState(field);
+    var nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
+    var el = field.elements && field.elements[0];
+    if (!el || !applyTextValueToElement(el, nextValue)) {
+      speak(translate('not_found_generic', { target: translate('target_input') }));
+      return false;
+    }
+    return setPendingEmailSegment(session, field, segment, normalizedSegment, {
+      fieldIndex: Number(details && details.fieldIndex != null ? details.fieldIndex : session.currentIndex || 0),
+      correctionCount: Math.max(0, Number(details && details.correctionCount || 0)),
+      previousState: previousState,
+      emailParts: emailParts
+    });
+  }
+
+  function promptForNextEmailSegment(session, field, segment, emailParts) {
+    if (!session || !field || !segment) return false;
+    return setPendingEmailSegment(session, field, segment, '', {
+      fieldIndex: Number(session.currentIndex || 0),
+      mode: 'await_email_segment',
+      correctionCount: 0,
+      previousState: getFormFieldCurrentState(field),
+      emailParts: emailParts
+    });
+  }
+
+  function startEmailFieldEntry(session, field, rawValue, opts) {
+    var emailParts = cloneEmailParts(parseEmailParts(rawValue));
+    if (!emailParts.local) emailParts.local = extractEmailSegmentValue(rawValue, 'local');
+    if (!emailParts.local) {
+      speak(translate('form_fill_missing_value'));
+      return false;
+    }
+    return applyEmailSegmentValue(session, field, 'local', emailParts.local, {
+      fieldIndex: Number(session.currentIndex || 0),
+      correctionCount: Math.max(0, Number(opts && opts.correctionCount || 0)),
+      previousState: getFormFieldCurrentState(field),
+      emailParts: emailParts
+    });
+  }
+
+  function confirmPendingEmailSegment(session, pending, field) {
+    var previousIndex = Math.max(0, Math.min(session.fields.length - 1, Number(pending.fieldIndex || session.currentIndex || 0)));
+    var currentSegment = String(pending.emailSegment || '');
+    var emailParts = cloneEmailParts(pending.emailParts);
+    var nextSegment = nextEmailSegment(currentSegment);
+    session.currentIndex = previousIndex;
+    clearPendingFormConfirmation(session);
+    if (nextSegment) {
+      var savedSegment = translate('form_email_segment_saved', {
+        label: field.label || translate('target_input'),
+        segment: translateEmailSegment(currentSegment)
+      });
+      if (emailParts[nextSegment]) {
+        speak(savedSegment);
+        return applyEmailSegmentValue(session, field, nextSegment, emailParts[nextSegment], {
+          fieldIndex: previousIndex,
+          correctionCount: 0,
+          previousState: getFormFieldCurrentState(field),
+          emailParts: emailParts
+        });
+      }
+      speak(savedSegment);
+      return promptForNextEmailSegment(session, field, nextSegment, emailParts);
+    }
+    maybeAdvanceFormField(session);
+    focusCurrentFormField(session);
+    var confirmed = translate('form_confirmation_saved', { label: field.label || translate('target_input') });
+    if (session.currentIndex !== previousIndex) {
+      speak((confirmed + ' ' + describeFormField(session, currentFormField(session))).trim());
+      return true;
+    }
+    speak((confirmed + ' ' + translate('form_confirmation_last_field')).trim());
+    return true;
+  }
+
+  function confirmPendingFormEntry(session) {
+    var pending = getPendingFormConfirmation(session);
+    var field = currentPendingFormField(session);
+    if (!pending || !field) return false;
+    if (pending.emailSegment) {
+      return confirmPendingEmailSegment(session, pending, field);
+    }
+    if (pending.longText) {
+      if (Array.isArray(field.history)) {
+        field.history.push({
+          previousState: pending.previousState || null,
+          value: String(pending.fullValue || ''),
+          segmentText: String(pending.segmentText || pending.speechValue || '')
+        });
+      }
+      clearPendingFormConfirmation(session);
+      focusCurrentFormField(session);
+      speak(translate('form_longtext_chunk_saved', { label: field.label || translate('target_input') }) + ' ' + translate('form_longtext_ready', { label: field.label || translate('target_input') }));
+      return true;
+    }
+    var previousIndex = Math.max(0, Math.min(session.fields.length - 1, Number(pending.fieldIndex || session.currentIndex || 0)));
+    session.currentIndex = previousIndex;
+    clearPendingFormConfirmation(session);
+    maybeAdvanceFormField(session);
+    focusCurrentFormField(session);
+    var confirmed = translate('form_confirmation_saved', { label: field.label || translate('target_input') });
+    if (session.currentIndex !== previousIndex) {
+      speak((confirmed + ' ' + describeFormField(session, currentFormField(session))).trim());
+      return true;
+    }
+    speak((confirmed + ' ' + translate('form_confirmation_last_field')).trim());
+    return true;
+  }
+
+  function isLongTextReviewCommandText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /^(review field|review text|read back|read it back|read the field|what have you written|what did you write|review description|read description)$/.test(normalized);
+  }
+
+  function isLongTextUndoCommandText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /^(undo|undo last|undo last chunk|undo last sentence|remove last|delete last|remove that|undo that)$/.test(normalized);
+  }
+
+  function readLongTextFieldValue(session) {
+    var field = currentFormField(session);
+    if (!field || !isLongTextFormField(field)) return false;
+    var state = getFormFieldCurrentState(field);
+    var value = String(state && state.value ? state.value : '').trim();
+    if (!value) {
+      speak(translate('form_longtext_empty', { label: field.label || translate('target_input') }));
+      return true;
+    }
+    speak(translate('form_longtext_review', {
+      label: field.label || translate('target_input'),
+      value: trimAssistantMemoryText(value, 500)
+    }));
+    return true;
+  }
+
+  function undoLastLongTextChunk(session) {
+    var field = currentFormField(session);
+    if (!field || !isLongTextFormField(field)) return false;
+    if (!Array.isArray(field.history) || !field.history.length) {
+      speak(translate('form_longtext_nothing_to_undo', { label: field.label || translate('target_input') }));
+      return true;
+    }
+    var last = field.history.pop();
+    restoreFormFieldState(field, last && last.previousState ? last.previousState : { value: '' });
+    focusCurrentFormField(session);
+    speak(translate('form_longtext_undo', { label: field.label || translate('target_input') }) + ' ' + translate('form_longtext_ready', { label: field.label || translate('target_input') }));
+    return true;
+  }
+
+  function focusCurrentFormField(session) {
+    var field = currentFormField(session);
+    if (!field || typeof field.focusElement !== 'function') return false;
+    try {
+      return field.focusElement() !== false;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function startFormMode() {
+    return !!ensureFormSession({ announce: true, speakFailure: true });
+  }
+
+  function stopFormMode() {
+    if (!getCurrentFormSession()) {
+      speak(translate('form_mode_not_active'));
+      return false;
+    }
+    clearFormSession();
+    speak(translate('form_mode_stopped'));
+    return true;
+  }
+
+  function moveFormField(direction) {
+    var session = getCurrentFormSession();
+    if (!session) {
+      speak(translate('form_mode_not_active'));
+      return false;
+    }
+    if (getPendingFormConfirmation(session)) {
+      promptPendingFormConfirmation(session);
+      return false;
+    }
+    var nextIndex = Number(session.currentIndex || 0) + (direction === 'prev' ? -1 : 1);
+    nextIndex = Math.max(0, Math.min(session.fields.length - 1, nextIndex));
+    session.currentIndex = nextIndex;
+    focusCurrentFormField(session);
+    speak(describeFormField(session, currentFormField(session)));
+    return true;
+  }
+
+  function readCurrentFormField() {
+    var session = getCurrentFormSession();
+    if (!session) {
+      speak(translate('form_mode_not_active'));
+      return false;
+    }
+    if (getPendingFormConfirmation(session)) {
+      promptPendingFormConfirmation(session);
+      return false;
+    }
+    focusCurrentFormField(session);
+    speak(describeFormField(session, currentFormField(session)));
+    return true;
+  }
+
+  function applyTextValueToElement(el, value) {
+    if (!el) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    var isInput = tag === 'input' || tag === 'textarea';
+    var isSelect = tag === 'select';
+    var isContentEditable = !!el.isContentEditable;
+    if (!isInput && !isSelect && !isContentEditable) return false;
+    if (isInput || isSelect) el.value = value;
+    else el.textContent = value;
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { }
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err2) { }
+    return true;
+  }
+
+  function maybeAdvanceFormField(session) {
+    if (!session) return;
+    if (session.currentIndex < session.fields.length - 1) session.currentIndex += 1;
+  }
+
+  function applyCurrentFormValue(value, fieldLabel, opts) {
+    opts = opts || {};
+    var session = ensureFormSession({ announce: false, speakFailure: true });
+    if (!session) {
+      return false;
+    }
+    if (fieldLabel && !moveToResolvedFormField(session, fieldLabel, ['text'])) {
+      speak(translate('not_found_generic', { target: translate('target_input') }));
+      return false;
+    }
+    var field = currentFormField(session);
+    if (!field) {
+      speak(translate('form_mode_empty'));
+      return false;
+    }
+    var rawValue = String(value || '').trim();
+    if (!rawValue) {
+      speak(translate('form_fill_missing_value'));
+      return false;
+    }
+    if (field.kind !== 'text') {
+      if (field.kind === 'select' || field.kind === 'radio') {
+        return selectCurrentFormOption(rawValue, fieldLabel || '', opts);
+      }
+      speak(translate('form_fill_missing_value'));
+      return false;
+    }
+    var previousState = getFormFieldCurrentState(field);
+    var normalizedValue = rawValue;
+    var longTextField = isLongTextFormField(field);
+    if (isEmailLikeFormField(field)) {
+      return startEmailFieldEntry(session, field, normalizedValue, opts);
+    } else if (longTextField) normalizedValue = normalizeLongTextSegment(normalizedValue);
+    if (!normalizedValue) {
+      speak(translate('form_fill_missing_value'));
+      return false;
+    }
+    var nextValue = longTextField
+      ? composeLongTextValue(previousState && previousState.value ? previousState.value : '', normalizedValue)
+      : normalizedValue;
+    var el = field.elements && field.elements[0];
+    if (!el || !applyTextValueToElement(el, nextValue)) {
+      speak(translate('not_found_generic', { target: translate('target_input') }));
+      return false;
+    }
+    clearPendingFormConfirmation(session);
+    setPendingFormConfirmation(session, field, {
+      fieldIndex: Number(session.currentIndex || 0),
+      correctionCount: Math.max(0, Number(opts.correctionCount || 0)),
+      sensitive: isSensitiveFormField(field),
+      speechValue: trimAssistantMemoryText(longTextField ? normalizedValue : nextValue, 140),
+      previousState: previousState,
+      fullValue: longTextField ? nextValue : '',
+      segmentText: longTextField ? normalizedValue : '',
+      longText: longTextField
+    });
+    focusCurrentFormField(session);
+    promptPendingFormConfirmation(session);
+    return true;
+  }
+
+  function findBestFieldOption(field, value) {
+    if (!field || !Array.isArray(field.options)) return null;
+    var normalizedQuery = normalizeMatchText(value);
+    if (!normalizedQuery) return null;
+    var queryTokens = normalizedQuery.split(' ').filter(Boolean);
+    var ranked = field.options.map(function (option, index) {
+      var normalizedLabel = normalizeMatchText(option.label || option.value || '');
+      var aliases = [normalizedLabel, normalizeMatchText(option.value || '')].filter(Boolean);
+      var best = 0;
+      aliases.forEach(function (alias) {
+        if (!alias) return;
+        if (alias === normalizedQuery) best = Math.max(best, 1000);
+        else if (alias.indexOf(normalizedQuery) === 0) best = Math.max(best, 860);
+        else if (alias.indexOf(normalizedQuery) >= 0) best = Math.max(best, 720);
+        if (queryTokens.length) {
+          var aliasTokens = alias.split(' ').filter(Boolean);
+          var matchedTokens = countMatchingTokens(queryTokens, aliasTokens);
+          if (matchedTokens === queryTokens.length) best = Math.max(best, 620 + matchedTokens);
+        }
+      });
+      return { option: option, index: index, score: best };
+    }).filter(function (entry) { return entry.score > 0; }).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    });
+    return ranked.length ? ranked[0].option : null;
+  }
+
+  function selectCurrentFormOption(value, fieldLabel, opts) {
+    opts = opts || {};
+    var session = ensureFormSession({ announce: false, speakFailure: true });
+    if (!session) {
+      return false;
+    }
+    if (fieldLabel && !moveToResolvedFormField(session, fieldLabel, ['select', 'radio'])) {
+      speak(translate('not_found_generic', { target: translate('target_input') }));
+      return false;
+    }
+    var field = currentFormField(session);
+    if (!field) return false;
+    var normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+      speak(translate('form_select_missing_value'));
+      return false;
+    }
+    var previousState = getFormFieldCurrentState(field);
+    var option = findBestFieldOption(field, normalizedValue);
+    if (!option) {
+      speak(translate('form_option_not_found', { label: field.label || translate('target_input') }));
+      return false;
+    }
+    if (field.kind === 'select') {
+      var selectEl = field.elements && field.elements[0];
+      if (!selectEl) return false;
+      selectEl.value = option.value;
+      try { selectEl.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { }
+      try { selectEl.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err2) { }
+    } else if (field.kind === 'radio') {
+      try { option.element.focus(); } catch (_err3) { }
+      option.element.click();
+    } else {
+      return false;
+    }
+    clearPendingFormConfirmation(session);
+    setPendingFormConfirmation(session, field, {
+      fieldIndex: Number(session.currentIndex || 0),
+      correctionCount: Math.max(0, Number(opts.correctionCount || 0)),
+      speechValue: option.label || option.value,
+      previousState: previousState
+    });
+    focusCurrentFormField(session);
+    promptPendingFormConfirmation(session);
+    return true;
+  }
+
+  function setCurrentCheckboxState(checked, fieldLabel, opts) {
+    opts = opts || {};
+    var session = ensureFormSession({ announce: false, speakFailure: true });
+    if (!session) {
+      return false;
+    }
+    if (fieldLabel && !moveToResolvedFormField(session, fieldLabel, ['checkbox'])) {
+      speak(translate('form_checkbox_not_supported'));
+      return false;
+    }
+    var field = currentFormField(session);
+    if (!field || field.kind !== 'checkbox') {
+      speak(translate('form_checkbox_not_supported'));
+      return false;
+    }
+    var previousState = getFormFieldCurrentState(field);
+    var checkbox = field.elements && field.elements[0];
+    if (!checkbox) return false;
+    if (!!checkbox.checked !== !!checked) checkbox.click();
+    clearPendingFormConfirmation(session);
+    setPendingFormConfirmation(session, field, {
+      fieldIndex: Number(session.currentIndex || 0),
+      correctionCount: Math.max(0, Number(opts.correctionCount || 0)),
+      checked: !!checked,
+      previousState: previousState
+    });
+    focusCurrentFormField(session);
+    promptPendingFormConfirmation(session);
+    return true;
+  }
+
+  function findSubmitControlInSession(session) {
+    if (!session || !session.container) return null;
+    var container = session.container;
+    var selectors = 'button,input[type="submit"],input[type="button"],[role="button"],summary,[onclick],[tabindex]:not([tabindex="-1"])';
+    var candidates = [];
+    try {
+      candidates = Array.prototype.slice.call(container.querySelectorAll(selectors));
+    } catch (_err) {
+      candidates = [];
+    }
+    var submitWords = ['submit', 'continue', 'sign in', 'log in', 'login', 'send', 'save', 'finish', 'done'];
+    var ranked = candidates.map(function (el, index) {
+      if (!el || isHidden(el) || isNavableUiElement(el)) return null;
+      var label = textOf(el) || String((el.getAttribute && el.getAttribute('value')) || '').trim();
+      var normalized = normalizeMatchText(label);
+      if (!normalized) return null;
+      var score = 0;
+      if ((el.tagName || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
+      submitWords.forEach(function (word) {
+        var normalizedWord = normalizeMatchText(word);
+        if (normalized === normalizedWord) score += 60;
+        else if (normalized.indexOf(normalizedWord) >= 0) score += 30;
+      });
+      return score > 0 ? { element: el, score: score, index: index } : null;
+    }).filter(Boolean).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    });
+    return ranked.length ? ranked[0].element : null;
+  }
+
+  function submitActiveForm() {
+    var session = ensureFormSession({ announce: false, speakFailure: true });
+    if (!session) {
+      return false;
+    }
+    if (getPendingFormConfirmation(session)) {
+      promptPendingFormConfirmation(session);
+      return false;
+    }
+    var currentField = currentFormField(session);
+    var formEl = currentField && currentField.elements && currentField.elements[0] && currentField.elements[0].form;
+    if (formEl && typeof formEl.requestSubmit === 'function') {
+      formEl.requestSubmit();
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
+    }
+    var submitControl = findSubmitControlInSession(session);
+    if (!submitControl) {
+      speak(translate('form_submit_missing'));
+      return false;
+    }
+    try { submitControl.focus(); } catch (_err2) { }
+    submitControl.click();
+    clearFormSession();
+    speak(translate('form_submit_done'));
+    return true;
+  }
+
+  function tryHandleActiveFormUtterance(text) {
+    var session = getCurrentFormSession();
+    if (!session) return false;
+    var raw = String(text || '').trim();
+    if (!raw) return false;
+    var normalized = normalizeMatchText(raw);
+    if (!normalized) return false;
+    var pending = getPendingFormConfirmation(session);
+    var field = pending ? currentPendingFormField(session) : currentFormField(session);
+    if (!field) return false;
+
+    if (!pending && isLongTextFormField(field)) {
+      if (isLongTextReviewCommandText(raw)) return readLongTextFieldValue(session);
+      if (isLongTextUndoCommandText(raw)) return undoLastLongTextChunk(session);
+    }
+
+    if (/^(what|who|when|where|why|how|tell me|could you|can you|would you|is there|are there)\b/i.test(raw) || /\?$/.test(raw)) {
+      return false;
+    }
+
+    if (pending) {
+      var correctionCount = Math.max(0, Number(pending.correctionCount || 0));
+      if (pending.mode === 'confirm') {
+        if (isAffirmativeFormResponse(raw)) {
+          return confirmPendingFormEntry(session);
+        }
+        if (isNegativeFormResponse(raw)) {
+          return requestPendingFormCorrection(session);
+        }
+        speak((translate('form_confirmation_wait', {
+          label: pending.label || field.label || translate('target_input')
+        }) + ' ' + buildPendingFormConfirmationMessage(session)).trim());
+        return true;
+      } else if (pending.mode === 'await_retry') {
+        if (field.kind === 'checkbox') {
+          if (/^(yes|yeah|yep|check|tick|enable|agree|accept|true|oui|نعم|ايوه|أيوه|ايوا|صح|تمام)$/i.test(normalized)) {
+            return setCurrentCheckboxState(true, pending.label || field.label || '', { correctionCount: correctionCount });
+          }
+          if (/^(no|nope|nah|uncheck|untick|disable|skip|false|non|لا|غلط|مو صح)$/i.test(normalized)) {
+            return setCurrentCheckboxState(false, pending.label || field.label || '', { correctionCount: correctionCount });
+          }
+          promptPendingFormConfirmation(session);
+          return true;
+        }
+        if (isAffirmativeFormResponse(raw) || isNegativeFormResponse(raw)) {
+          promptPendingFormConfirmation(session);
+          return true;
+        }
+      } else if (pending.mode === 'await_spelling') {
+        correctionCount = Math.max(correctionCount, pending.emailSegment ? EMAIL_SEGMENT_MAX_CORRECTIONS : FORM_CONFIRMATION_MAX_CORRECTIONS);
+      }
+
+      if (pending.emailSegment && (pending.mode === 'await_email_segment' || pending.mode === 'await_spelling')) {
+        if (isAffirmativeFormResponse(raw) || isNegativeFormResponse(raw)) {
+          promptPendingFormConfirmation(session);
+          return true;
+        }
+        return applyEmailSegmentValue(session, field, pending.emailSegment, pending.mode === 'await_spelling' ? (parseSpelledFieldValue(raw) || raw) : raw, {
+          fieldIndex: Number(pending.fieldIndex != null ? pending.fieldIndex : session.currentIndex || 0),
+          correctionCount: correctionCount,
+          previousState: getFormFieldCurrentState(field),
+          emailParts: pending.emailParts
+        });
+      }
+
+      if (field.kind === 'text') {
+        var replacementValue = pending.mode === 'await_spelling'
+          ? (parseSpelledFieldValue(raw) || raw)
+          : raw;
+        return applyCurrentFormValue(replacementValue, pending.label || field.label || '', { correctionCount: correctionCount });
+      }
+      if (field.kind === 'select' || field.kind === 'radio') {
+        return selectCurrentFormOption(raw, pending.label || field.label || '', { correctionCount: correctionCount });
+      }
+      if (field.kind === 'checkbox') {
+        if (/^(yes|yeah|yep|check|tick|enable|agree|accept|true|oui|نعم|ايوه|أيوه|ايوا|صح|تمام)$/i.test(normalized)) {
+          return setCurrentCheckboxState(true, pending.label || field.label || '', { correctionCount: correctionCount });
+        }
+        if (/^(no|nope|nah|uncheck|untick|disable|skip|false|non|لا|غلط|مو صح)$/i.test(normalized)) {
+          return setCurrentCheckboxState(false, pending.label || field.label || '', { correctionCount: correctionCount });
+        }
+        promptPendingFormConfirmation(session);
+        return true;
+      }
+      return false;
+    }
+
+    if (field.kind === 'text') {
+      return applyCurrentFormValue(raw);
+    }
+    if (field.kind === 'select' || field.kind === 'radio') {
+      return selectCurrentFormOption(raw);
+    }
+    if (field.kind === 'checkbox') {
+      if (/^(yes|yeah|yep|check|tick|enable|agree|accept|true)$/i.test(normalized)) {
+        return setCurrentCheckboxState(true);
+      }
+      if (/^(no|nope|uncheck|untick|disable|skip|false)$/i.test(normalized)) {
+        return setCurrentCheckboxState(false);
+      }
+    }
+    return false;
   }
 
   async function runToolStep(step) {
@@ -1130,7 +2902,7 @@
         return focusElementForNavigation(el);
       });
       if (!focused.ok || !focused.element) {
-        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, focused.resolution, step.label) };
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, focused.resolution, step.label, step) };
       }
       return { ok: true, message: 'Focused element' };
     }
@@ -1141,14 +2913,14 @@
         return true;
       });
       if (!clicked.ok || !clicked.element) {
-        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, clicked.resolution, step.label) };
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target, clicked.resolution, step.label, step) };
       }
       return { ok: true, message: 'Clicked element' };
     }
     if (action === 'fill_text') {
       var fillResolution = await resolveElementReferenceWithRetry(step.targetType || step.target || 'input', step.label, step.n, step);
       if (!fillResolution.ok || !fillResolution.element) {
-        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label) };
+        return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label, step) };
       }
       var elin = fillResolution.element;
       var isInput = elin.tagName === 'INPUT' || elin.tagName === 'TEXTAREA';
@@ -1635,12 +3407,17 @@
   }
 
   function isSummaryCommandText(text) {
-    var t = String(text || '').toLowerCase();
+    var raw = normalizeCurrentContextIntentText(text);
+    var t = String(raw || '').toLowerCase();
+    var normalized = normalizeMatchText(raw);
     if (!t) return false;
     return (
       t.includes('summarize') ||
       t.includes('summary') ||
       t.includes('describe this page') ||
+      /\b(?:describe|summarize|explain)\s+(?:this|the|current)?\s*(?:page|screen|site|website|app)\b/.test(normalized) ||
+      /\b(?:tell me about|show me)\s+(?:this|the|current)?\s*(?:page|screen|site|website|app)\b/.test(normalized) ||
+      /\b(?:what s|whats|what is)\s+(?:on|in)\s+(?:this|the|current)?\s*(?:page|screen|site|website|app)\b/.test(normalized) ||
       t.includes('what is this page') ||
       t.includes("what's on this page") ||
       t.includes('what is on this page') ||
@@ -1658,15 +3435,7 @@
   }
 
   function isCurrentPageReferenceText(text) {
-    var t = String(text || '').trim().toLowerCase();
-    if (!t) return false;
-    return (
-      /\b(?:this|current)\s+(?:page|screen|site)\b/.test(t) ||
-      /\b(?:on|in)\s+(?:this|the current)\s+(?:page|screen|site)\b/.test(t) ||
-      /\b(?:sur|dans)\s+(?:cette|la)\s+(?:page|ecran|écran|site)\b/.test(t) ||
-      /(?:في|على|ب)\s+(?:هاي|هذه|هاد|هذي)\s+(?:الصفحة|الشاشة|الموقع)/.test(t) ||
-      /(?:الصفحة|الشاشة|الموقع)\s+(?:الحالية|هاي|هذه)/.test(t)
-    );
+    return hasCurrentPageReferenceText(text);
   }
 
   function isPageQuestionRequestText(text) {
@@ -1680,12 +3449,15 @@
   }
 
   function isPageAssistantQuestionText(text) {
-    var t = String(text || '').trim().toLowerCase();
+    var raw = normalizeCurrentContextIntentText(text);
+    var t = String(raw || '').trim().toLowerCase();
+    var normalized = normalizeMatchText(raw);
     if (!t) return false;
     if (isSummaryCommandText(t)) return true;
     if (isPageQuestionRequestText(t)) return true;
     return (
-      /\b(where am i|help me here|help on this page|help on this site|what can i do here|what can i do on this page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
+      /\b(where am i|help me here|help on this page|help on the page|help on this site|help on the site|what can i do here|what can i do on this page|what can i do on the page|what can i do on this site|what is important here|what's important here|what is important on this page|what's important on this page|tell me about this page|tell me about the page|tell me about the current page|guide me here|what am i looking at|what is on this screen|what's on this screen|what is here|what's here)\b/.test(t) ||
+      /\b(?:help|guide)\s+me\s+(?:on|through)\s+(?:this|the|current)\s+(?:page|screen|site)\b/.test(normalized) ||
       /\b(o[uù] suis[- ]?je|aide[- ]?moi ici|que puis[- ]je faire ici|que puis[- ]je faire sur cette page|qu[' ]?est[- ]ce qui est important ici|qu[' ]?est[- ]ce qui est important sur cette page|parle[- ]?moi de cette page|guide[- ]?moi ici|qu[' ]?y a[- ]t[- ]il ici)\b/.test(t) ||
       /(أين أنا|اين انا|ساعدني هنا|ساعدني هون|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو المهم هون|ايش المهم هون|شو المهم هنا|ايش المهم هنا|احكيلي عن (?:هاي|هذه) الصفحة|احكيلي عن ه(?:اي|ذا) الموقع|دلني هون|دلني هنا|وجهني هون|وجهني هنا|شو في هون|ايش في هون|شو الموجود هون|ايش الموجود هون)/.test(t)
     );
@@ -1702,6 +3474,8 @@
   }
 
   var localAssistantSession = null;
+  var pendingDisambiguation = null;
+  var PENDING_DISAMBIGUATION_TTL_MS = 30000;
 
   function trimAssistantMemoryText(text, maxLen) {
     var raw = String(text || '').replace(/\s+/g, ' ').trim();
@@ -1761,6 +3535,110 @@
     };
   }
 
+  function clearPendingDisambiguation() {
+    pendingDisambiguation = null;
+  }
+
+  function getPendingDisambiguation() {
+    if (!pendingDisambiguation) return null;
+    if (Date.now() - Number(pendingDisambiguation.createdAt || 0) > PENDING_DISAMBIGUATION_TTL_MS) {
+      pendingDisambiguation = null;
+      return null;
+    }
+    return pendingDisambiguation;
+  }
+
+  function isOrdinalFollowUpText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /^(?:option\s+)?(?:\d+|first|1st|one|second|2nd|two|third|3rd|three|fourth|4th|four|fifth|5th|five|last)(?:\s+one)?$/.test(normalized);
+  }
+
+  function scorePendingOptionSelection(option, query, queryTokens) {
+    if (!option) return 0;
+    var aliases = Array.isArray(option.aliases) ? option.aliases : [];
+    var best = 0;
+    for (var i = 0; i < aliases.length; i++) {
+      var alias = normalizeMatchText(aliases[i]);
+      if (!alias) continue;
+      if (alias === query) best = Math.max(best, 1000);
+      else if (alias.indexOf(query) === 0) best = Math.max(best, 860);
+      else if (alias.indexOf(query) >= 0) best = Math.max(best, 720);
+      if (queryTokens.length) {
+        var aliasTokens = alias.split(' ').filter(Boolean);
+        var matchedTokens = countMatchingTokens(queryTokens, aliasTokens);
+        if (matchedTokens === queryTokens.length) best = Math.max(best, 620 + matchedTokens);
+        else if (matchedTokens >= Math.max(1, Math.ceil(queryTokens.length * 0.6))) best = Math.max(best, 420 + matchedTokens);
+      }
+    }
+    return best;
+  }
+
+  function resolvePendingDisambiguationChoice(text, pending) {
+    if (!pending || !Array.isArray(pending.options) || !pending.options.length) return null;
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return null;
+
+    var numericChoice = isOrdinalFollowUpText(normalized) ? extractNumber(normalized) : null;
+    if (numericChoice != null) {
+      var numericIndex = numericChoice === -1 ? pending.options.length : numericChoice;
+      if (numericIndex >= 1 && numericIndex <= pending.options.length) {
+        return { matched: true, option: pending.options[numericIndex - 1] };
+      }
+      return { matched: false, ambiguous: false };
+    }
+
+    var queryTokens = normalized.split(' ').filter(Boolean);
+    var ranked = pending.options.map(function (option) {
+      return { option: option, score: scorePendingOptionSelection(option, normalized, queryTokens) };
+    }).filter(function (entry) {
+      return entry.score > 0;
+    }).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(a.option.index || 0) - Number(b.option.index || 0);
+    });
+
+    if (!ranked.length) return null;
+    if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
+      return { matched: false, ambiguous: true };
+    }
+    return { matched: true, option: ranked[0].option };
+  }
+
+  function buildCommandFromPendingOption(pending, option) {
+    if (!pending || !pending.command || !pending.command.type || !option) return null;
+    var nextCommand = Object.assign({}, pending.command);
+    nextCommand.label = pending.label || nextCommand.label || '';
+    nextCommand.n = option.index != null ? Number(option.index) : nextCommand.n;
+    return nextCommand;
+  }
+
+  async function tryPendingDisambiguationFollowUp(text) {
+    var pending = getPendingDisambiguation();
+    if (!pending) return false;
+    var selection = resolvePendingDisambiguationChoice(text, pending);
+    if (!selection) return false;
+    if (!selection.matched) {
+      if (selection.ambiguous || isOrdinalFollowUpText(text)) {
+        speak(pending.message || translate('ambiguous_target', {
+          count: pending.options.length,
+          target: targetPlural(pending.targetType || 'element'),
+          value: pending.label || ''
+        }));
+        return true;
+      }
+      return false;
+    }
+    var nextCommand = buildCommandFromPendingOption(pending, selection.option);
+    if (!nextCommand) {
+      speak(pending.message || translate('unknown_command'));
+      return true;
+    }
+    clearPendingDisambiguation();
+    await execCommand(nextCommand);
+    return true;
+  }
+
   function rememberLocalAssistantTurn(info) {
     var existing = localAssistantSession || {};
     var purpose = info && info.purpose ? String(info.purpose) : (existing.lastPurpose || '');
@@ -1810,9 +3688,71 @@
     return next;
   }
 
+  function parseListTarget(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t) return '';
+    if (!/^(list|show|read out|read|what are|what's|whats|which)\b/.test(t)) return '';
+    if (/\b(headings?|titles?)\b/.test(t)) return 'heading';
+    if (/\b(buttons?|actions?|controls?)\b/.test(t)) return 'button';
+    if (/\b(inputs?|fields?|forms?)\b/.test(t)) return 'input';
+    if (/\b(links?|urls?)\b/.test(t)) return 'link';
+    return '';
+  }
+
+  function isFormModeStartText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    if (/^(?:form mode|filling mode|fill mode|start form|start form mode|begin form|begin form mode|open form|open form mode)$/.test(normalized)) {
+      return true;
+    }
+    if (/^(?:fill(?: out)?|guide me(?: through)?|help me fill(?: out)?|walk me through|walk through|go through|go over|take me through|help me with|let s fill(?: out)?|let s go through|let s walk through)\s+(?:this|the|current)?\s*form$/.test(normalized)) {
+      return true;
+    }
+    return /\bform\b/.test(normalized) && /\b(help|guide|walk|go|through|fill|start|begin|open|mode|complete)\b/.test(normalized);
+  }
+
+  function parseFormCommand(text) {
+    var raw = normalizeCurrentContextIntentText(text);
+    var t = String(raw || '').trim().toLowerCase();
+    if (!t) return null;
+    var formModeActive = !!getCurrentFormSession();
+    if (isFormModeStartText(raw)) {
+      return { type: 'form_mode', action: 'start' };
+    }
+    if (/^(exit|leave|stop|cancel|close) form( mode)?$/.test(t)) {
+      return { type: 'form_mode', action: 'stop' };
+    }
+    if (/^(next field|next input|next form field|next question)$/.test(t) || (formModeActive && /^(next|continue|skip)$/.test(t))) return { type: 'form_move', dir: 'next' };
+    if (/^(previous field|prev field|previous input|prev input|back field)$/.test(t) || (formModeActive && /^(previous|prev|back|go back)$/.test(t))) return { type: 'form_move', dir: 'prev' };
+    if (/^(current field|repeat field|what field am i on|where am i in this form|read current field|where am i)$/.test(t)) return { type: 'form_current' };
+
+    var fillNamedMatch = raw.match(/^(?:fill|type|enter|set)\s+(.+?)\s+(?:with|to)\s+(.+)$/i);
+    if (fillNamedMatch) return { type: 'form_fill', fieldLabel: String(fillNamedMatch[1] || '').trim(), value: String(fillNamedMatch[2] || '').trim() };
+    var fillIntoMatch = raw.match(/^(?:type|enter)\s+(.+?)\s+(?:in|into)\s+(.+)$/i);
+    if (fillIntoMatch) return { type: 'form_fill', fieldLabel: String(fillIntoMatch[2] || '').trim(), value: String(fillIntoMatch[1] || '').trim() };
+    var fillMatch = raw.match(/^(fill|type|enter)\s+(.+)$/i);
+    if (fillMatch) return { type: 'form_fill', value: String(fillMatch[2] || '').trim() };
+
+    var selectLabeledMatch = raw.match(/^(?:select|choose|pick)\s+(.+?)\s+(?:for|in|from)\s+(.+)$/i);
+    if (selectLabeledMatch) return { type: 'form_select', value: String(selectLabeledMatch[1] || '').trim(), fieldLabel: String(selectLabeledMatch[2] || '').trim() };
+    var selectMatch = raw.match(/^(select|choose|pick)\s+(.+)$/i);
+    if (selectMatch) return { type: 'form_select', value: String(selectMatch[2] || '').trim() };
+
+    var checkNamedMatch = raw.match(/^(check|tick|enable)\s+(.+)$/i);
+    if (checkNamedMatch) return { type: 'form_check', checked: true, fieldLabel: String(checkNamedMatch[2] || '').trim() };
+    var uncheckNamedMatch = raw.match(/^(uncheck|untick|disable)\s+(.+)$/i);
+    if (uncheckNamedMatch) return { type: 'form_check', checked: false, fieldLabel: String(uncheckNamedMatch[2] || '').trim() };
+    if (/^(check|tick|enable)$/.test(t)) return { type: 'form_check', checked: true };
+    if (/^(uncheck|untick|disable)$/.test(t)) return { type: 'form_check', checked: false };
+
+    if (/^(review( form)?|finish( form)?|done with form|what did you fill|what did you enter|review what you filled)$/.test(t) || (formModeActive && /^(review|finish|done)$/.test(t))) return { type: 'form_review' };
+    if (/^(submit( form)?|send( form)?)$/.test(t) || (formModeActive && /^(submit|send)$/.test(t))) return { type: 'form_submit' };
+    return null;
+  }
+
   function parseCommand(text) {
-    var original = String(text || '');
-    var t = normalizeCommandTextForIntent(original.trim().toLowerCase());
+    var original = normalizeCurrentContextIntentText(text);
+    var t = normalizeCommandTextForIntent(String(original || '').trim().toLowerCase());
     if (!t) return null;
     var num = extractNumber(t);
     var label;
@@ -1831,6 +3771,9 @@
       return { type: 'summarize', command: original || 'Summarize this page' };
     }
 
+    var formCmd = parseFormCommand(original);
+    if (formCmd) return formCmd;
+
     var searchQuery = extractSearchSiteQuery(t);
     if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
 
@@ -1842,6 +3785,8 @@
     if (matchesAnyPattern(t, [/(scroll )?up/, /scroll up/, /\bmonte\b/, /plus haut/, /اطلع|طلع|اصعد|مرر.*(للأعلى|للاعلى|لفوق)|لفوق|فوق شوي|كم[ّ]?ل لفوق/])) return { type: 'scroll', dir: 'up' };
     if (matchesAnyPattern(t, [/\btop\b/, /scroll (to )?top/, /en haut/, /أعلى الصفحة|اعلى الصفحة|لفوق للاخر|اطلع فوق/])) return { type: 'scroll', dir: 'top' };
     if (matchesAnyPattern(t, [/\bbottom\b/, /scroll (to )?bottom/, /en bas/, /أسفل الصفحة|اسفل الصفحة|لتحت للاخر|انزل تحت/])) return { type: 'scroll', dir: 'bottom' };
+    var listTarget = parseListTarget(t);
+    if (listTarget) return { type: 'list', target: listTarget };
     if (matchesAnyPattern(t, [/read (the )?title/, /read title/, /lis le titre/, /quel est le titre/, /اقر[أا] العنوان|ما عنوان الصفحة|شو عنوان الصفحة|ايش عنوان الصفحة/])) return { type: 'read', what: 'title' };
     if (matchesAnyPattern(t, [/^read (the )?selection/, /^read selected/, /lis la s[ée]lection/, /اقر[أا] التحديد/])) return { type: 'read', what: 'selection' };
     if (matchesAnyPattern(t, [/^read (the )?(focus|focused|this)$/, /sur quoi suis[- ]je/, /ما العنصر المحدد|على ماذا انا|على ماذا أنا|شو العنصر الحالي|ايش العنصر الحالي|وين انا واقف|على شو انا/])) return { type: 'read', what: 'focused' };
@@ -1955,7 +3900,7 @@
     var idx = (n === -1) ? (items.length - 1) : (Math.max(1, n || 1) - 1);
     var chosen = items[idx];
     if (!chosen) return null;
-    return document.querySelector('[data-navable-id="' + chosen.id + '"]');
+    return getIndexedElement(chosen);
   }
 
   function extractLabel(t, target) {
@@ -2034,21 +3979,260 @@
     return 'elements';
   }
 
-  function resolutionFailureMessage(type, resolution, label) {
+  function getFrameContextLabelForElement(el) {
+    try {
+      var win = el && el.ownerDocument && el.ownerDocument.defaultView;
+      if (!win || !win.frameElement) return '';
+      var frame = win.frameElement;
+      return textOf(frame) || String((frame.getAttribute && (frame.getAttribute('title') || frame.getAttribute('name') || frame.getAttribute('aria-label'))) || '').trim();
+    } catch (_err) {
+      return '';
+    }
+  }
+
+  function cleanDisambiguationText(text, blocked) {
+    var raw = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    var normalized = normalizeMatchText(raw);
+    if (!normalized) return '';
+    var blockedValues = Array.isArray(blocked) ? blocked : [];
+    if (blockedValues.indexOf(normalized) >= 0) return '';
+    if (/^(button|link|heading|input|submit button|unlabeled button|unlabeled link)$/i.test(raw)) return '';
+    if (normalized.length < 2) return '';
+    return trimAssistantMemoryText(raw, 80);
+  }
+
+  function summarizeContextNodeText(el, blocked) {
+    if (!el || isHidden(el) || isNavableUiElement(el)) return '';
+    var highlighted = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6,legend,[role="heading"],strong,b,[aria-label]');
+    var text = highlighted ? textOf(highlighted) : '';
+    if (!text) text = textOf(el);
+    if (!text) text = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    return cleanDisambiguationText(text, blocked);
+  }
+
+  function collectCandidateContextPhrases(item, allMatches) {
+    var element = getIndexedElement(item);
+    if (!element) return [];
+    var blocked = [];
+    var matches = Array.isArray(allMatches) ? allMatches : [];
+    matches.forEach(function (match) {
+      var normalizedLabel = normalizeMatchText(match && match.label ? match.label : '');
+      if (normalizedLabel && blocked.indexOf(normalizedLabel) < 0) blocked.push(normalizedLabel);
+    });
+    var results = [];
+
+    function pushText(value) {
+      var cleaned = cleanDisambiguationText(value, blocked);
+      if (!cleaned) return;
+      if (results.indexOf(cleaned) >= 0) return;
+      results.push(cleaned);
+    }
+
+    var describedBy = String((element.getAttribute && element.getAttribute('aria-describedby')) || '').trim();
+    if (describedBy) {
+      describedBy.split(/\s+/).forEach(function (id) {
+        var node = findElementByIdScoped(element, id);
+        if (node) pushText(textOf(node) || node.textContent || '');
+      });
+    }
+
+    var current = element;
+    for (var depth = 0; depth < 4 && current; depth++) {
+      var container = current.parentElement;
+      if (!container) {
+        var rootNode = getRootNodeForElement(current);
+        container = rootNode && rootNode.host ? rootNode.host : null;
+      }
+      if (!container) break;
+      if (container !== element) {
+        pushText(summarizeContextNodeText(container, blocked));
+        pushText(container.getAttribute && (container.getAttribute('aria-label') || container.getAttribute('title')));
+      }
+      if (depth === 0 && container.children && container.children.length) {
+        Array.prototype.slice.call(container.children).forEach(function (child) {
+          if (!child || child === current) return;
+          if (child.contains && child.contains(current)) return;
+          if (current.contains && current.contains(child)) return;
+          pushText(summarizeContextNodeText(child, blocked));
+        });
+      }
+      current = container;
+    }
+
+    pushText(getFrameContextLabelForElement(element));
+    return results;
+  }
+
+  function buildDisambiguationOptions(matches, label) {
+    var rawOptions = (Array.isArray(matches) ? matches : []).map(function (item) {
+      var contexts = collectCandidateContextPhrases(item, matches);
+      var aliases = [];
+      function pushAlias(value) {
+        var normalized = normalizeMatchText(value);
+        if (!normalized) return;
+        if (aliases.indexOf(normalized) >= 0) return;
+        aliases.push(normalized);
+      }
+      contexts.forEach(pushAlias);
+      if (Array.isArray(item.aliases)) item.aliases.forEach(pushAlias);
+      pushAlias(item.label);
+      return {
+        id: item.id,
+        item: item,
+        contexts: contexts,
+        aliases: aliases,
+        summary: ''
+      };
+    });
+
+    rawOptions.forEach(function (option) {
+      var summary = '';
+      for (var i = 0; i < option.contexts.length; i++) {
+        var candidate = option.contexts[i];
+        var normalizedCandidate = normalizeMatchText(candidate);
+        var isUnique = rawOptions.every(function (other) {
+          return other === option || other.contexts.every(function (ctx) {
+            return normalizeMatchText(ctx) !== normalizedCandidate;
+          });
+        });
+        if (isUnique) {
+          summary = candidate;
+          break;
+        }
+      }
+      if (!summary && option.contexts.length) summary = option.contexts[0];
+      if (!summary) {
+        var fallbackLabel = String(option.item && option.item.label ? option.item.label : '').trim();
+        var normalizedFallback = normalizeMatchText(fallbackLabel);
+        var normalizedBase = normalizeMatchText(label || '');
+        summary = fallbackLabel && normalizedFallback !== normalizedBase ? fallbackLabel : localizeTarget(option.item && option.item.type ? option.item.type : 'element');
+      }
+      option.summary = trimAssistantMemoryText(summary, 90);
+    });
+
+    return rawOptions;
+  }
+
+  function buildAmbiguousResolution(type, resolution, label, cmd) {
+    var matches = resolution && Array.isArray(resolution.matches) ? resolution.matches : [];
+    if (!matches.length) {
+      return {
+        message: translate('ambiguous_target', {
+          count: resolution && resolution.count ? resolution.count : 0,
+          target: targetPlural(type || 'element'),
+          value: String(label || '').trim()
+        }),
+        pending: null
+      };
+    }
+    var options = buildDisambiguationOptions(matches, label);
+    var intro = translate('ambiguous_target_intro', {
+      count: options.length,
+      target: targetPlural(type || 'element'),
+      value: String(label || '').trim()
+    });
+    var optionMessages = options.map(function (option, index) {
+      return translate('ambiguity_option', {
+        index: index + 1,
+        value: option.summary || localizeTarget(option.item && option.item.type ? option.item.type : 'element')
+      });
+    });
+    var followUp = translate('ambiguity_follow_up');
+    return {
+      message: [intro].concat(optionMessages).concat([followUp]).join(' ').trim(),
+      pending: {
+        createdAt: Date.now(),
+        command: Object.assign({}, cmd || {}),
+        targetType: type || 'element',
+        label: String(label || '').trim(),
+        options: options.map(function (option, index) {
+          return {
+            id: option.id,
+            index: index + 1,
+            summary: option.summary,
+            aliases: option.aliases,
+            type: option.item && option.item.type ? option.item.type : '',
+            label: option.item && option.item.label ? option.item.label : ''
+          };
+        }),
+        message: [intro].concat(optionMessages).concat([followUp]).join(' ').trim()
+      }
+    };
+  }
+
+  function resolutionFailureMessage(type, resolution, label, cmd) {
     if (!resolution || resolution.reason === 'not_found') {
       if (type === 'heading') return translate('not_found_heading');
       if (type === 'link') return translate('not_found_link');
       if (type === 'button') return translate('not_found_button');
+      if (type === 'element') return translate('not_found_actionable');
       return translate('not_found_generic', { target: localizeTarget(type || 'element') });
     }
     if (resolution.reason === 'ambiguous') {
-      return translate('ambiguous_target', {
-        count: resolution.count || 0,
-        target: targetPlural(type || 'element'),
-        value: String(label || '').trim()
-      });
+      var ambiguous = buildAmbiguousResolution(type, resolution, label, cmd);
+      pendingDisambiguation = ambiguous.pending;
+      return ambiguous.message;
     }
     return translate('not_found_generic', { target: localizeTarget(type || 'element') });
+  }
+
+  function findFallbackActionableCandidate(startEl) {
+    var current = startEl;
+    for (var depth = 0; depth < 5 && current; depth++) {
+      if (!isHidden(current) && !isNavableUiElement(current)) {
+        var type = getType(current);
+        if (type !== 'other') return { element: current, type: type };
+        if (hasInteractiveStateAttributes(current) || isImplicitPointerActionable(current, textOf(current))) {
+          return { element: current, type: 'button' };
+        }
+      }
+      current = getParentElementOrHost(current);
+    }
+    return null;
+  }
+
+  function findFallbackActionableItems(type, label, preferredTypes) {
+    var normalizedQuery = normalizeMatchText(label);
+    if (!normalizedQuery) return [];
+    var queryTokens = normalizedQuery.split(' ').filter(Boolean);
+    var allowCrossType = !type || type === 'auto';
+    var items = [];
+    var seen = new Set();
+
+    collectSearchRoots(document).forEach(function (root) {
+      forEachDescendantElement(root, function (el) {
+        if (!el || el.nodeType !== 1) return;
+        if (isHidden(el) || isNavableUiElement(el)) return;
+        var rawLabel = textOf(el);
+        if (!rawLabel) return;
+        var tempItem = buildIndexedItemForElement(el, rawLabel, getType(el) || 'other');
+        if (!tempItem) {
+          tempItem = {
+            label: rawLabel,
+            type: 'button',
+            aliases: collectAliasesForElement(el, rawLabel),
+            inputType: '',
+            name: '',
+            placeholder: '',
+            href: ''
+          };
+        }
+        if (!scoreItemMatch(tempItem, normalizedQuery, queryTokens, preferredTypes)) return;
+        var candidate = findFallbackActionableCandidate(el);
+        if (!candidate || !candidate.element) return;
+        if (!allowCrossType && candidate.type !== type) return;
+        if (allowCrossType && Array.isArray(preferredTypes) && preferredTypes.length && preferredTypes.indexOf(candidate.type) < 0) return;
+        if (seen.has(candidate.element)) return;
+        seen.add(candidate.element);
+        var item = buildIndexedItemForElement(candidate.element, textOf(candidate.element) || rawLabel, candidate.type);
+        if (!item) return;
+        if (!scoreItemMatch(item, normalizedQuery, queryTokens, preferredTypes)) return;
+        items.push(item);
+      });
+    });
+
+    return items;
   }
 
   function resolveElementReference(type, label, n, opts) {
@@ -2072,7 +4256,7 @@
       return {
         ok: true,
         item: chosen,
-        element: document.querySelector('[data-navable-id="' + chosen.id + '"]')
+        element: getIndexedElement(chosen)
       };
     }
 
@@ -2091,7 +4275,22 @@
       return a.index - b.index;
     });
 
-    if (!ranked.length) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+    if (!ranked.length) {
+      var fallbackItems = findFallbackActionableItems(type, label, preferredTypes);
+      if (!fallbackItems.length) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+      ranked = fallbackItems.map(function (item, indexInType) {
+        return { item: item, index: indexInType, score: scoreItemMatch(item, normalizedQuery, queryTokens, preferredTypes) };
+      }).filter(function (entry) {
+        return entry.score > 0;
+      }).sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        var aTypeRank = preferredTypes.indexOf(a.item.type);
+        var bTypeRank = preferredTypes.indexOf(b.item.type);
+        if (aTypeRank !== bTypeRank) return aTypeRank - bTypeRank;
+        return a.index - b.index;
+      });
+      if (!ranked.length) return { ok: false, reason: 'not_found', count: 0, matches: [] };
+    }
 
     var bestScore = ranked[0].score;
     var topMatches = ranked.filter(function (entry) { return entry.score === bestScore; });
@@ -2109,7 +4308,7 @@
       return {
         ok: true,
         item: exactChoice.item,
-        element: document.querySelector('[data-navable-id="' + exactChoice.item.id + '"]')
+        element: getIndexedElement(exactChoice.item)
       };
     }
 
@@ -2125,7 +4324,7 @@
     return {
       ok: true,
       item: topMatches[0].item,
-      element: document.querySelector('[data-navable-id="' + topMatches[0].item.id + '"]')
+      element: getIndexedElement(topMatches[0].item)
     };
   }
 
@@ -2190,6 +4389,12 @@
     return fallbackType || 'element';
   }
 
+  function failureTargetTypeForCommand(cmd, fallbackType) {
+    if (cmd && cmd.target && cmd.target !== 'auto') return cmd.target;
+    if (cmd && (cmd.type === 'activate' || cmd.type === 'open')) return 'element';
+    return fallbackType || 'element';
+  }
+
   async function resolveCommandElement(cmd, fallbackType, actionKind) {
     var targetType = cmd && cmd.target ? cmd.target : fallbackType;
     var preferredTypes =
@@ -2210,7 +4415,7 @@
     var currentIdx = lastIndexByType[type];
     if (typeof currentIdx !== 'number') {
       // try activeElement
-      var ae = document.activeElement;
+      var ae = getDeepActiveElement(document);
       if (ae && ae.dataset && ae.dataset.navableId) {
         var id = ae.dataset.navableId;
         currentIdx = items.findIndex(function (it) { return it.id === id; });
@@ -2221,7 +4426,7 @@
     var nextIdx = (currentIdx + delta + items.length) % items.length;
     lastIndexByType[type] = nextIdx;
     var chosen = items[nextIdx];
-    return document.querySelector('[data-navable-id="' + chosen.id + '"]');
+    return getIndexedElement(chosen);
   }
 
   async function execCommand(cmd) {
@@ -2258,6 +4463,53 @@
       console.log('[Navable] Action: scroll', cmd.dir);
       return;
     }
+    if (cmd.type === 'list') {
+      var listStructure = buildPageStructure();
+      speak(listTargetText(cmd.target || 'link', listStructure));
+      console.log('[Navable] Action: list', cmd.target);
+      return;
+    }
+    if (cmd.type === 'form_mode') {
+      if (cmd.action === 'stop') stopFormMode();
+      else startFormMode();
+      console.log('[Navable] Action: form mode', cmd.action || 'start');
+      return;
+    }
+    if (cmd.type === 'form_move') {
+      moveFormField(cmd.dir === 'prev' ? 'prev' : 'next');
+      console.log('[Navable] Action: form move', cmd.dir);
+      return;
+    }
+    if (cmd.type === 'form_current') {
+      readCurrentFormField();
+      console.log('[Navable] Action: form current');
+      return;
+    }
+    if (cmd.type === 'form_fill') {
+      applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
+      console.log('[Navable] Action: form fill');
+      return;
+    }
+    if (cmd.type === 'form_select') {
+      selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
+      console.log('[Navable] Action: form select');
+      return;
+    }
+    if (cmd.type === 'form_check') {
+      setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
+      console.log('[Navable] Action: form checkbox', !!cmd.checked);
+      return;
+    }
+    if (cmd.type === 'form_review') {
+      reviewActiveForm();
+      console.log('[Navable] Action: form review');
+      return;
+    }
+    if (cmd.type === 'form_submit') {
+      submitActiveForm();
+      console.log('[Navable] Action: form submit');
+      return;
+    }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
@@ -2273,7 +4525,7 @@
       return;
     }
     if (cmd.type === 'read' && cmd.what === 'focused') {
-      var fe = document.activeElement;
+      var fe = getDeepActiveElement(document);
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
@@ -2286,7 +4538,7 @@
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var headingResolution = await resolveCommandElement(cmd, 'heading', 'read');
-      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label)); return; }
+      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label, cmd)); return; }
       var elhL = headingResolution.element;
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
       speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
@@ -2309,7 +4561,7 @@
         el.click();
         return true;
       });
-      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label)); return; }
+      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd)); return; }
       var ellL = openResult.element;
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
       speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
@@ -2325,7 +4577,7 @@
         return true;
       });
       if (!autoOpenResult.ok || !autoOpenResult.element) {
-        speak(resolutionFailureMessage(commandTargetType(cmd, 'link'), autoOpenResult.resolution, cmd.label));
+        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd));
         return;
       }
       var autoOpen = autoOpenResult.element;
@@ -2351,7 +4603,7 @@
         if (!el.isConnected) return false;
         return focusElementForNavigation(el);
       });
-      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label)); return; }
+      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd)); return; }
       var elbL = focusButtonResult.element;
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
       speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
@@ -2366,7 +4618,7 @@
         return focusElementForNavigation(el);
       });
       var focusType = commandTargetType(cmd, 'input');
-      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(focusType, focusResolution.resolution, cmd.label)); return; }
+      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd)); return; }
       var focusElement = focusResolution.element;
       var focusLabel = focusElement.dataset.navableLabel || focusElement.innerText || focusElement.textContent || '';
       speak(translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }));
@@ -2383,7 +4635,7 @@
       return;
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
-      var aef = document.activeElement;
+      var aef = getDeepActiveElement(document);
       if (!aef) { speak(translate('no_focused_element')); return; }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
@@ -2401,7 +4653,7 @@
         el.click();
         return true;
       });
-      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label)); return; }
+      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd)); return; }
       var ab = activateResult.element;
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
       speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
@@ -2418,7 +4670,7 @@
         return true;
       });
       if (!autoActivateResolution.ok || !autoActivateResolution.element) {
-        speak(resolutionFailureMessage(commandTargetType(cmd, 'button'), autoActivateResolution.resolution, cmd.label));
+        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd));
         return;
       }
       var autoActivate = autoActivateResolution.element;
@@ -2463,7 +4715,7 @@
   }
 
   async function runSummaryRequest(commandText, pageStructure) {
-    var cmdText = (commandText && String(commandText).trim()) || 'Summarize this page';
+    var cmdText = normalizeCurrentContextIntentText((commandText && String(commandText).trim()) || 'Summarize this page');
     announce(translate('summarizing_wait'), {
       mode: 'assertive',
       lang: outputLocale(currentOutputLanguage())
@@ -2525,7 +4777,7 @@
   }
 
   async function assistantRequest(questionText, pageStructure, turnContext) {
-    var q = String(questionText || '').trim();
+    var q = normalizeCurrentContextIntentText(questionText).trim();
     if (!q) return false;
     var context = turnContext || {};
     var sessionContext = buildLocalAssistantSessionContext();
@@ -2659,14 +4911,46 @@
       var languageReady = ensureOutputLanguageReady();
       var cmd = parseCommand(text);
       var pageStructure = buildPageContextSnapshot();
+      var formSession = getCurrentFormSession();
+      if (formSession) {
+        var pendingFormConfirmation = getPendingFormConfirmation(formSession);
+        if (
+          pendingFormConfirmation &&
+          cmd &&
+          (cmd.type === 'form_fill' || cmd.type === 'form_select' || cmd.type === 'form_check')
+        ) {
+          cmd.correctionCount = pendingFormConfirmation.mode === 'confirm'
+            ? Math.max(0, Number(pendingFormConfirmation.correctionCount || 0)) + 1
+            : Math.max(0, Number(pendingFormConfirmation.correctionCount || 0));
+        }
+        if (cmd && cmd.type === 'summarize') {
+          await languageReady;
+          if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
+          else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
+          return true;
+        }
+        if (cmd && isFormContextCommand(cmd)) {
+          clearPendingDisambiguation();
+          await execCommand(cmd);
+          return true;
+        }
+        if (await tryHandleActiveFormUtterance(text)) return true;
+        await languageReady;
+        if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
+        else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
+        return true;
+      }
       if (cmd && cmd.type === 'summarize') {
+        clearPendingDisambiguation();
         await runSummaryRequest(cmd.command, pageStructure);
         return true;
       }
       if (cmd) {
+        clearPendingDisambiguation();
         await execCommand(cmd);
         return true;
       }
+      if (await tryPendingDisambiguationFollowUp(text)) return true;
       if (await tryIntentFallback(text, pageStructure)) return true;
       if (await assistantRequest(text, pageStructure, {
         detectedLanguage: detectedLanguage || '',
