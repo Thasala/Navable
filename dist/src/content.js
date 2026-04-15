@@ -2016,6 +2016,25 @@
     return field.elements.some(function (el) { return isSensitiveInput(el); });
   }
 
+  function speakableSensitiveValueText(value) {
+    var raw = String(value || '');
+    if (!raw) return translate('form_value_empty');
+    var tokens = [];
+    for (var i = 0; i < raw.length; i += 1) {
+      var ch = raw.charAt(i);
+      if (ch === ' ') {
+        tokens.push(translate('form_spoken_space'));
+        continue;
+      }
+      if (/[A-Z]/.test(ch)) {
+        tokens.push(translate('form_spoken_capital', { value: ch.toLowerCase() }));
+        continue;
+      }
+      tokens.push(ch);
+    }
+    return tokens.join(', ');
+  }
+
   function formFieldValueText(field) {
     if (!field) return translate('form_value_empty');
     if (field.kind === 'checkbox') {
@@ -2044,7 +2063,10 @@
     session.fields.forEach(function (field) {
       if (!field) return;
       if (isSensitiveFormField(field)) {
-        parts.push(translate('form_review_item_sensitive', { label: field.label || translate('target_input') }));
+        parts.push(translate('form_review_item_sensitive_value', {
+          label: field.label || translate('target_input'),
+          value: speakableSensitiveValueText(formFieldValueText(field))
+        }));
       } else {
         parts.push(translate('form_review_item', {
           label: field.label || translate('target_input'),
@@ -2245,7 +2267,10 @@
       });
     }
     if (pending.sensitive) {
-      return translate('form_confirmation_sensitive', { label: label });
+      return translate('form_confirmation_sensitive', {
+        label: label,
+        value: speakableSensitiveValueText(pending.speechValue || '')
+      });
     }
     return translate('form_confirmation_value', {
       label: label,
@@ -2579,11 +2604,15 @@
       return false;
     }
     clearPendingFormConfirmation(session);
+    var confirmationSpeechValue = longTextField ? normalizedValue : nextValue;
+    if (!isSensitiveFormField(field)) {
+      confirmationSpeechValue = trimAssistantMemoryText(confirmationSpeechValue, 140);
+    }
     setPendingFormConfirmation(session, field, {
       fieldIndex: Number(session.currentIndex || 0),
       correctionCount: Math.max(0, Number(opts.correctionCount || 0)),
       sensitive: isSensitiveFormField(field),
-      speechValue: trimAssistantMemoryText(longTextField ? normalizedValue : nextValue, 140),
+      speechValue: confirmationSpeechValue,
       previousState: previousState,
       fullValue: longTextField ? nextValue : '',
       segmentText: longTextField ? normalizedValue : '',

@@ -376,7 +376,8 @@ test('typed form mode can guide fill, select, check, and submit a form', async (
   const fillPassword = await typed('fill supersecret');
   expect(fillPassword).toMatchObject({ ok: true });
   expect(await page.$eval('#password', (el) => (el as HTMLInputElement).value)).toBe('supersecret');
-  expect(String((fillPassword as any).speech || '')).toContain('For privacy');
+  expect(String((fillPassword as any).speech || '')).toContain('Password');
+  expect(String((fillPassword as any).speech || '')).toContain('s, u, p');
 
   const confirmPassword = await typed('yes');
   expect(confirmPassword).toMatchObject({ ok: true });
@@ -540,6 +541,7 @@ test('typed form mode supports named field fill and labeled option commands', as
   const fillPassword = await typed('fill password with supersecret');
   expect(fillPassword).toMatchObject({ ok: true });
   expect(await page.$eval('#password', (el) => (el as HTMLInputElement).value)).toBe('supersecret');
+  expect(String((fillPassword as any).speech || '')).toContain('s, u, p');
   expect(String((fillPassword as any).speech || '')).toContain('Say yes to keep it');
   await typed('yes');
 
@@ -1016,7 +1018,7 @@ test('typed form mode reviews entered values before submit', async ({ page }) =>
   expect(review).toMatchObject({ ok: true });
   expect(String((review as any).speech || '')).toContain('Form review');
   expect(String((review as any).speech || '')).toContain('First name: Hasim');
-  expect(String((review as any).speech || '')).toContain('Password: filled');
+  expect(String((review as any).speech || '')).toContain('Password: s, u, p');
   expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(false);
 
   const submit = await typed('submit');
