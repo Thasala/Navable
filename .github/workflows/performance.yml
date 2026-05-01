@@ -22,7 +22,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: Latency smoke test (/api/summarize)
+      - name: Latency smoke test (/api/assistant)
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -53,8 +53,8 @@ jobs:
             exit 1
           }
 
-          url="http://localhost:3000/api/summarize"
-          payload='{"command":"summarize","pageStructure":{"title":"Navable perf check","counts":{"headings":1,"links":1,"buttons":0},"headings":[{"label":"Example heading"}],"links":[{"label":"Example link"}],"buttons":[],"excerpt":"Short excerpt for performance smoke test."}}'
+          url="http://localhost:3000/api/assistant"
+          payload='{"input":"summarize this page","pageStructure":{"title":"Navable perf check","counts":{"headings":1,"links":1,"buttons":0},"headings":[{"label":"Example heading"}],"links":[{"label":"Example link"}],"buttons":[],"excerpt":"Short excerpt for performance smoke test."}}'
 
           warmup=1
           requests=5

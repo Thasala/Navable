@@ -1,28 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Navable">
-  <defs>
-    <linearGradient id="navableGradient" x1="14" y1="16" x2="52" y2="52" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7c3aed" />
-      <stop offset="1" stop-color="#06b6d4" />
-    </linearGradient>
-  </defs>
-
-  <circle cx="32" cy="32" r="26" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2" />
-  <path
-    d="M22 44V20L42 44V20"
-    fill="none"
-    stroke="url(#navableGradient)"
-    stroke-width="6"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M42 44L49 42L47 49"
-    fill="none"
-    stroke="url(#navableGradient)"
-    stroke-width="6"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <circle cx="32" cy="32" r="3.2" fill="url(#navableGradient)" />
+  <rect x="6" y="6" width="52" height="52" rx="18" fill="#fbf5ec" />
+  <rect x="6.5" y="6.5" width="51" height="51" rx="17.5" fill="none" stroke="#d7cab5" stroke-opacity="0.88" />
+  <circle cx="45.5" cy="18.5" r="10.5" fill="#e3ece5" />
+  <path d="M18 46V18h6l14 18V18h8V46h-6L26 28v18Z" fill="#1178a0" />
+  <circle cx="31.5" cy="32.5" r="2.9" fill="#ffbf47" />
+  <circle cx="45" cy="21" r="3.4" fill="#ff7a59" />
 </svg>
-

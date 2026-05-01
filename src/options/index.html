@@ -8,116 +8,205 @@
     <link rel="stylesheet" href="options.css" />
   </head>
   <body class="nv-ui nv-options">
-    <main class="nv-container">
+    <main class="nv-container nv-options-layout">
       <section class="nv-card nv-options-hero" aria-label="Navable options">
-        <div class="nv-card-inner">
-          <div class="nv-options-top">
+        <div class="nv-card-inner nv-options-hero-inner">
+          <div class="nv-options-hero-top">
             <div class="nv-options-brand">
               <img
                 class="nv-options-logo"
                 src="../../assets/navable-logo.svg"
-                width="40"
-                height="40"
+                width="52"
+                height="52"
                 alt=""
                 aria-hidden="true"
               />
-              <div>
-                <h1 class="nv-options-title">Navable settings</h1>
-                <p class="nv-options-subtitle">
-                  Tune voice language, continuous listening, and AI summarization—without changing any of Navable’s core behavior.
+              <div class="nv-options-copy">
+                <p class="nv-eyebrow">Workspace Controls</p>
+                <h1 class="nv-display nv-options-title">Tune the voice workflow without making the product feel heavier.</h1>
+                <p class="nv-body nv-options-subtitle">
+                  Keep Navable smooth by deciding how Arabic and English are handled, when listening starts, and how much AI help is available.
                 </p>
               </div>
             </div>
-            <div class="nv-options-actions">
+
+            <div class="nv-options-hero-side">
+              <div class="nv-surface nv-options-save-card">
+                <p class="nv-section-kicker">Status</p>
+                <p id="saveStatus" class="nv-options-save-status" aria-live="polite">Changes save automatically.</p>
+              </div>
               <a class="nv-btn nv-btn--ghost" href="../newtab/newtab.html" target="_blank" rel="noreferrer">Open new tab</a>
             </div>
+          </div>
+
+          <div class="nv-options-pillrow" aria-label="Highlights">
+            <span class="nv-pill">Arabic + English voice</span>
+            <span class="nv-pill">Auto or locked language</span>
+            <span class="nv-pill">Privacy-aware summaries</span>
           </div>
         </div>
       </section>
 
-      <div class="nv-options-cards" aria-label="Settings">
-        <section class="nv-card nv-options-card" aria-label="Voice settings">
+      <div class="nv-options-grid" aria-label="Settings">
+        <section class="nv-card nv-options-card nv-options-card--wide" aria-label="Voice settings">
           <div class="nv-card-inner">
-            <h2>Voice settings</h2>
-            <div class="nv-form-grid">
-              <div class="nv-field">
-                <label class="nv-label" for="language">Language</label>
-                <select id="language" class="nv-select">
-                  <option value="en-US">English (United States)</option>
-                  <option value="en-GB">English (United Kingdom)</option>
-                  <option value="ar-JO">Arabic (Jordan)</option>
-                </select>
+            <div class="nv-options-card-head">
+              <div>
+                <p class="nv-section-kicker">Voice</p>
+                <h2 class="nv-section-heading">Conversation behavior</h2>
               </div>
-              <label class="nv-inline" for="continuous">
-                <input type="checkbox" id="continuous" />
-                <span>Continuous listening (auto-start on pages)</span>
+              <span class="nv-badge">Default path</span>
+            </div>
+
+            <div class="nv-options-stack">
+              <div class="nv-setting-row">
+                <div class="nv-setting-copy">
+                  <h3>Reply audio</h3>
+                  <p>Choose whether Navable replies use the screen reader path or Chrome TTS. This only affects Navable output.</p>
+                </div>
+                <div class="nv-setting-control">
+                  <label class="nv-label" for="outputMode">Output mode</label>
+                  <select id="outputMode" class="nv-select">
+                    <option value="screen_reader">Screen reader</option>
+                    <option value="chrome_tts">Chrome TTS</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="nv-setting-row">
+                <div class="nv-setting-copy">
+                  <h3>Conversation language</h3>
+                  <p>Auto follows the user’s Arabic or English speech. Lock the mode when you want one consistent reply voice.</p>
+                </div>
+                <div class="nv-setting-control">
+                  <label class="nv-label" for="languageMode">Language mode</label>
+                  <select id="languageMode" class="nv-select">
+                    <option value="auto">Auto detect Arabic or English</option>
+                    <option value="en">Always English</option>
+                    <option value="ar">Always Arabic</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="nv-setting-row nv-setting-row--toggle" for="continuous">
+                <div class="nv-setting-copy">
+                  <h3>Continuous listening</h3>
+                  <p>Start listening when a supported page opens so repeat flows and demos feel immediate instead of click-heavy.</p>
+                </div>
+                <span class="nv-toggle-control">
+                  <input type="checkbox" id="continuous" />
+                  <span>Enabled</span>
+                </span>
               </label>
             </div>
-            <p>Navable uses the browser’s built-in Web Speech API. Continuous listening may not be available on all sites.</p>
           </div>
         </section>
 
-        <section class="nv-card nv-options-card" aria-label="AI settings">
+        <section class="nv-card nv-options-card nv-options-card--side" aria-label="Keyboard shortcuts">
           <div class="nv-card-inner">
-            <h2>AI / OpenAI</h2>
-            <div class="nv-form-grid">
-              <label class="nv-inline" for="aiEnabled">
-                <input type="checkbox" id="aiEnabled" />
-                <span>Enable AI summarization</span>
-              </label>
-
-              <div class="nv-field">
-                <label class="nv-label" for="aiMode">AI mode</label>
-                <select id="aiMode" class="nv-select">
-                  <option value="off">Off</option>
-                  <option value="summary">Summarize only</option>
-                  <option value="summary_plan">Summarize + plan execution</option>
-                </select>
+            <div class="nv-options-card-head">
+              <div>
+                <p class="nv-section-kicker">Shortcuts</p>
+                <h2 class="nv-section-heading">Keyboard fallback</h2>
               </div>
-
-              <label class="nv-inline" for="noFormFields">
-                <input type="checkbox" id="noFormFields" checked disabled />
-                <span>Do not send form fields (always on)</span>
-              </label>
-
-              <label class="nv-inline" for="noSensitiveSites">
-                <input type="checkbox" id="noSensitiveSites" />
-                <span>Do not summarize on sensitive sites</span>
-              </label>
             </div>
-            <p>AI is only called when you explicitly run a “Summarize” command from the popup.</p>
-          </div>
-        </section>
 
-        <section class="nv-card nv-options-card" aria-label="Keyboard shortcuts">
-          <div class="nv-card-inner">
-            <h2>Keyboard shortcuts</h2>
-            <p>These are configured in Chrome’s Extensions shortcuts page:</p>
-            <ul class="nv-shortcuts">
+            <p class="nv-section-text">Use shortcuts when you want a repeatable path for demos or when voice is not the fastest route.</p>
+
+            <ul class="nv-options-list">
               <li><span class="nv-kbd">Scroll down</span> / <span class="nv-kbd">Scroll up</span></li>
               <li><span class="nv-kbd">Next heading</span> / <span class="nv-kbd">Previous heading</span></li>
               <li><span class="nv-kbd">Toggle mic</span></li>
             </ul>
-            <div class="nv-options-actions">
-              <button id="openShortcuts" class="nv-btn" type="button">Open Chrome keyboard shortcuts</button>
-            </div>
-            <p>Chrome → Extensions → Keyboard shortcuts.</p>
+
+            <button id="openShortcuts" class="nv-btn" type="button">Open Chrome keyboard shortcuts</button>
           </div>
         </section>
 
-        <section class="nv-card nv-options-card" aria-label="Privacy">
+        <section class="nv-card nv-options-card nv-options-card--wide" aria-label="AI settings">
           <div class="nv-card-inner">
-            <h2>Privacy</h2>
-            <p>
-              Navable collects a structured snapshot of the current page (titles, headings, links, buttons, and non-sensitive form field
-              labels). It <strong>does not</strong> collect passwords, credit card fields, or raw audio. When AI summarization is enabled,
-              this snapshot may be sent to your configured backend for summarization, and only when you ask Navable to summarize the page.
+            <div class="nv-options-card-head">
+              <div>
+                <p class="nv-section-kicker">AI</p>
+                <h2 class="nv-section-heading">Summaries and answer mode</h2>
+              </div>
+              <span class="nv-badge">On demand</span>
+            </div>
+
+            <div class="nv-options-stack">
+              <label class="nv-setting-row nv-setting-row--toggle" for="aiEnabled">
+                <div class="nv-setting-copy">
+                  <h3>AI features</h3>
+                  <p>Enable summarization and answer flows when you want more guidance than basic navigation commands.</p>
+                </div>
+                <span class="nv-toggle-control">
+                  <input type="checkbox" id="aiEnabled" />
+                  <span>Enabled</span>
+                </span>
+              </label>
+
+              <div class="nv-setting-row">
+                <div class="nv-setting-copy">
+                  <h3>AI mode</h3>
+                  <p>Choose whether AI only summarizes or can also prepare action plans from what it sees on the page.</p>
+                </div>
+                <div class="nv-setting-control">
+                  <label class="nv-label" for="aiMode">AI mode</label>
+                  <select id="aiMode" class="nv-select">
+                    <option value="off">Off</option>
+                    <option value="summary">Summarize only</option>
+                    <option value="summary_plan">Summarize + plan execution</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="nv-setting-row nv-setting-row--toggle" for="noSensitiveSites">
+                <div class="nv-setting-copy">
+                  <h3>Sensitive sites guardrail</h3>
+                  <p>Block summaries on pages where extra caution matters, even when AI support is turned on.</p>
+                </div>
+                <span class="nv-toggle-control">
+                  <input type="checkbox" id="noSensitiveSites" />
+                  <span>Enabled</span>
+                </span>
+              </label>
+
+              <label class="nv-setting-row nv-setting-row--toggle nv-setting-row--disabled" for="noFormFields">
+                <div class="nv-setting-copy">
+                  <h3>Form field protection</h3>
+                  <p>Form contents stay excluded from summaries by design and cannot be disabled from this screen.</p>
+                </div>
+                <span class="nv-toggle-control">
+                  <input type="checkbox" id="noFormFields" checked disabled />
+                  <span>Always on</span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="nv-card nv-options-card nv-options-card--side" aria-label="Privacy">
+          <div class="nv-card-inner">
+            <div class="nv-options-card-head">
+              <div>
+                <p class="nv-section-kicker">Privacy</p>
+                <h2 class="nv-section-heading">What Navable uses</h2>
+              </div>
+            </div>
+
+            <p class="nv-section-text">
+              Navable works from structured page content such as titles, headings, links, buttons, and safe field labels. Passwords and credit card
+              fields are not collected.
             </p>
+
+            <ul class="nv-options-list">
+              <li>Short microphone clips may be sent to the backend for transcription when voice is active.</li>
+              <li>Page snapshots are only sent for summarization when AI features are enabled.</li>
+              <li>Language mode affects replies and recognition behavior, not what page data is collected.</li>
+            </ul>
           </div>
         </section>
       </div>
-
-      <p id="saveStatus" aria-live="polite"></p>
     </main>
 
     <script src="options.js"></script>

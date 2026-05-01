@@ -8,138 +8,201 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body class="nv-ui nv-popup">
-    <div class="nv-card nv-popup-shell">
-      <div class="nv-popup-inner">
+    <main class="nv-card nv-popup-panel">
+      <div class="nv-card-inner nv-popup-inner">
         <header class="nv-popup-header">
           <div class="nv-popup-brand">
             <img
               class="nv-popup-logo"
               src="../../assets/navable-logo.svg"
-              width="30"
-              height="30"
+              width="38"
+              height="38"
               alt=""
               aria-hidden="true"
             />
             <div>
-              <h1 class="nv-title">Navable</h1>
-              <p class="nv-subtitle">Voice navigation + quick actions</p>
+              <p class="nv-eyebrow">Voice Navigation</p>
+              <h1 class="nv-popup-wordmark">Navable</h1>
             </div>
           </div>
-          <div class="nv-popup-actions">
-            <a class="nv-btn nv-btn--ghost nv-popup-link" href="../options/index.html" target="_blank" rel="noreferrer">
-              Options
-            </a>
+
+          <div class="nv-popup-header-actions">
+            <span class="nv-badge">Live tools</span>
+            <a class="nv-btn nv-btn--ghost nv-popup-link" href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
           </div>
         </header>
 
-        <section class="nv-section" aria-label="Voice">
-          <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn">Checking voice support…</button>
-          <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
-        </section>
-
-        <section class="nv-section" aria-label="Quick actions">
-          <div class="nv-label-row">
-            <div class="nv-label">Quick actions</div>
-            <div class="nv-badge" aria-hidden="true">Demo-ready</div>
+        <section class="nv-popup-topbar" aria-label="Voice and feedback">
+          <div class="nv-popup-voice">
+            <div>
+              <p class="nv-section-kicker">Voice</p>
+              <h2 class="nv-section-heading">Start listening</h2>
+            </div>
+            <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn">Checking voice support…</button>
+            <div id="micStatus" class="nv-status-copy mic-status" role="status" aria-live="polite">Not listening.</div>
           </div>
-          <div class="nv-actions-grid">
-            <button id="btnSummarize" class="nv-btn nv-action">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M7 6h10M7 10h10M7 14h6M6 20h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H8L6 6v12a2 2 0 0 0 2 2Z"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span>Summarize</span>
-            </button>
-            <button id="btnListHeadings" class="nv-btn nv-action">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M6 7h12M6 12h8M6 17h10"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                />
-                <path
-                  d="M4.5 7h.01M4.5 12h.01M4.5 17h.01"
-                  stroke="currentColor"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                />
-              </svg>
-              <span>Headings</span>
-            </button>
-            <button id="btnListLinks" class="nv-btn nv-action">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M10 13a5 5 0 0 1 0-7l.7-.7a5 5 0 0 1 7 7l-.7.7"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path
-                  d="M14 11a5 5 0 0 1 0 7l-.7.7a5 5 0 0 1-7-7l.7-.7"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span>Links</span>
-            </button>
-            <button id="btnReadFocused" class="nv-btn nv-action">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 5c4.6 0 8.6 2.8 10 7-1.4 4.2-5.4 7-10 7S3.4 16.2 2 12c1.4-4.2 5.4-7 10-7Z"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path
-                  d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span>Focused</span>
-            </button>
-          </div>
-        </section>
 
-        <section class="nv-section" aria-label="Last action">
-          <div class="nv-label">Last action</div>
-          <div class="nv-status-card">
-            <div id="status" class="status ok" role="status" aria-live="polite"></div>
+          <div class="nv-popup-status-card">
+            <div class="nv-popup-status-head">
+              <p class="nv-section-kicker">Latest feedback</p>
+              <div id="status" class="status ok" role="status" aria-live="polite"></div>
+            </div>
             <div id="description" class="hint" role="status" aria-live="polite"></div>
           </div>
         </section>
 
-        <section class="nv-section" aria-label="Help">
-          <button id="btnHelp" class="nv-btn">Help / Commands</button>
-          <div id="helpPanel" class="help-box" aria-hidden="true">
-            <strong>Examples:</strong>
-            <ul>
-              <li>“Scroll down”, “Scroll up”</li>
-              <li>“Next heading”, “Previous heading”</li>
-              <li>“Click login”, “Open first link”</li>
-              <li>“Open facebook”, “Open example dot com”</li>
-              <li>“Read title”, “Read selection”</li>
-              <li>“Summarize this page”</li>
-            </ul>
-            <p>Keyboard shortcuts: configure in Chrome → Extensions → Keyboard shortcuts.</p>
+        <section class="nv-popup-actions" aria-label="Quick actions">
+          <div class="nv-popup-section-head">
+            <div>
+              <p class="nv-section-kicker">Quick actions</p>
+              <h2 class="nv-section-heading">Useful tools</h2>
+            </div>
+            <button id="btnHelp" class="nv-btn nv-btn--ghost" type="button">Show examples</button>
           </div>
+
+          <div class="nv-popup-actions-grid">
+            <button id="btnSummarize" class="nv-btn nv-popup-action">
+              <span class="nv-popup-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M7 6h10M7 10h10M7 14h6M6 20h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H8L6 6v12a2 2 0 0 0 2 2Z"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="nv-popup-action-copy">
+                <strong>Summarize</strong>
+                <small>Get the page shape at a glance</small>
+              </span>
+            </button>
+
+            <button id="btnListHeadings" class="nv-btn nv-popup-action">
+              <span class="nv-popup-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M6 7h12M6 12h8M6 17h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                  <path d="M4.5 7h.01M4.5 12h.01M4.5 17h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+                </svg>
+              </span>
+              <span class="nv-popup-action-copy">
+                <strong>Headings</strong>
+                <small>Scan the current structure</small>
+              </span>
+            </button>
+
+            <button id="btnListLinks" class="nv-btn nv-popup-action">
+              <span class="nv-popup-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M10 13a5 5 0 0 1 0-7l.7-.7a5 5 0 0 1 7 7l-.7.7"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M14 11a5 5 0 0 1 0 7l-.7.7a5 5 0 0 1-7-7l.7-.7"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="nv-popup-action-copy">
+                <strong>Links</strong>
+                <small>List what you can open next</small>
+              </span>
+            </button>
+
+            <button id="btnReadFocused" class="nv-btn nv-popup-action">
+              <span class="nv-popup-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M12 5c4.6 0 8.6 2.8 10 7-1.4 4.2-5.4 7-10 7S3.4 16.2 2 12c1.4-4.2 5.4-7 10-7Z"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span class="nv-popup-action-copy">
+                <strong>Focused</strong>
+                <small>Read the current target back</small>
+              </span>
+            </button>
+          </div>
+
+          <div id="helpPanel" class="help-box" aria-hidden="true">
+            <div class="nv-popup-help-group">
+              <h3>Move around</h3>
+              <ul>
+                <li>“Scroll down”</li>
+                <li>“Next heading”</li>
+                <li>“Read title”</li>
+              </ul>
+            </div>
+            <div class="nv-popup-help-group">
+              <h3>Take action</h3>
+              <ul>
+                <li>“Click login”</li>
+                <li>“Open first link”</li>
+                <li>“Read focused”</li>
+              </ul>
+            </div>
+            <div class="nv-popup-help-group">
+              <h3>Ask freely</h3>
+              <ul>
+                <li>“Summarize this page”</li>
+                <li>“Open example dot com”</li>
+                <li>“What is photosynthesis?”</li>
+              </ul>
+            </div>
+          </div>
+
+          <form id="typedCommandForm" class="nv-popup-typed" aria-label="Typed test command">
+            <div class="nv-popup-section-head">
+              <div>
+                <p class="nv-section-kicker">Typed testing</p>
+                <h2 class="nv-section-heading">Send a command without voice</h2>
+              </div>
+              <button id="btnTypedSend" class="nv-btn nv-btn--primary" type="submit">Run typed</button>
+            </div>
+            <label class="nv-sr-only" for="typedCommandInput">Type a command, question, or page request</label>
+            <textarea
+              id="typedCommandInput"
+              class="nv-input nv-popup-typed-input"
+              rows="3"
+              spellcheck="false"
+              placeholder="Type a command, page question, or context request for testing"
+            ></textarea>
+            <p id="typedCommandHint" class="nv-popup-help-note nv-popup-typed-note">
+              Uses the same parser and assistant path as voice. Press Ctrl+Enter or Cmd+Enter to send.
+            </p>
+          </form>
         </section>
 
-        <div class="nv-footer-tip">Tip: Use voice, quick actions, or keyboard shortcuts for your demo.</div>
+        <section class="nv-popup-help-strip" aria-label="Help">
+          <div class="nv-popup-help-row">
+            <div>
+              <p class="nv-section-kicker">Keyboard</p>
+              <h2 class="nv-section-heading">Chrome shortcuts</h2>
+            </div>
+            <p class="nv-popup-help-note">Keyboard shortcuts are configured in Chrome → Extensions → Keyboard shortcuts.</p>
+          </div>
+        </section>
       </div>
-    </div>
+    </main>
 
     <script src="popup.js"></script>
   </body>
