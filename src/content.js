@@ -328,12 +328,18 @@
       if (msg && msg.type === 'navable:announce') {
         if (msg.lang) outputLanguage = normalizeOutputLanguage(msg.lang);
         ensureOutputLanguageReady(outputLanguage).finally(function () {
-          announce(msg.text || translate('generic_announcement'), {
+          var announcedText = msg.text || translate('generic_announcement');
+          rememberCommandFeedback({
+            status: msg.status || 'success',
+            message: announcedText,
+            details: msg.details || null
+          });
+          announce(announcedText, {
             mode: msg.mode || 'polite',
             priority: !!msg.priority,
             lang: msg.lang || outputLocale(currentOutputLanguage())
           });
-          sendResponse && sendResponse({ ok: true });
+          sendResponse && sendResponse({ ok: true, feedback: getLatestCommandFeedback() });
         });
         return true;
       }
@@ -347,8 +353,13 @@
         return true;
       }
       if (msg && msg.type === 'navable:runTypedCommand') {
-        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (handled) {
-          sendResponse && sendResponse({ ok: !!handled, speech: lastSpoken || '' });
+        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (feedback) {
+          var normalized = feedbackForResponse(feedback, 'success');
+          sendResponse && sendResponse({
+            ok: !!feedback,
+            speech: normalized.message || '',
+            feedback: normalized
+          });
         }).catch(function (err) {
           sendResponse && sendResponse({ ok: false, error: String(err || 'typed command failed') });
         });
@@ -613,7 +624,8 @@
       if (t) return t;
     }
     // inputs: associated <label>
-    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+    var elementTag = String((el && el.tagName) || '').toUpperCase();
+    if (elementTag === 'INPUT' || elementTag === 'SELECT' || elementTag === 'TEXTAREA') {
       // by for=
       var id = el.id && el.id.trim();
       if (id) {
@@ -623,7 +635,7 @@
       // wrapped label
       var p = el.parentElement;
       while (p && p !== el.ownerDocument.body) {
-        if (p.tagName === 'LABEL' && p.textContent) return p.textContent.trim();
+        if (String((p && p.tagName) || '').toUpperCase() === 'LABEL' && p.textContent) return p.textContent.trim();
         p = p.parentElement;
       }
       // placeholder or value/title
@@ -652,7 +664,7 @@
       if (t) return t;
     }
     // button-like input values
-    if (el.tagName === 'INPUT') {
+    if (elementTag === 'INPUT') {
       var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'button' || inputType === 'submit' || inputType === 'reset') {
         var buttonValue = el.getAttribute('value');
@@ -669,7 +681,7 @@
       t = humanizeIdentifier(elementId);
       if (t) return t;
     }
-    if (el.tagName === 'A' && el.getAttribute) {
+    if (elementTag === 'A' && el.getAttribute) {
       t = humanizeUrlFragment(el.getAttribute('href') || '');
       if (t) return t;
     }
@@ -734,7 +746,7 @@
       return 'unlabeled button';
     }
     if (type === 'input') {
-      var inputType = String((el.getAttribute && el.getAttribute('type')) || (el.tagName || '')).toLowerCase();
+      var inputType = String((el.getAttribute && el.getAttribute('type')) || ((el && el.tagName) || '')).toLowerCase();
       if (inputType) return humanizeIdentifier(inputType) || 'input';
       return 'input';
     }
@@ -1060,7 +1072,7 @@
 
   function isSemanticallyDiscoverableActionable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'button' || tag === 'summary') return true;
     if (tag === 'label' && el.getAttribute && el.getAttribute('for')) {
@@ -1077,7 +1089,7 @@
 
   function isNativelyFocusable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     if (/^(input|select|textarea|button|summary)$/.test(tag)) return true;
     if (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) return true;
     return getTabIndexValue(el) != null;
@@ -1106,7 +1118,7 @@
   }
 
   function getType(el) {
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'a' || role === 'link') return 'link';
     if (/^h[1-6]$/.test(tag)) return 'heading';
@@ -1208,7 +1220,7 @@
     if (!el.dataset.navableId) el.dataset.navableId = nextId();
     el.dataset.navableLabel = label;
     el.dataset.navableType = type;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var item = {
       id: el.dataset.navableId,
       label: label,
@@ -1242,7 +1254,7 @@
     pushAlias(el.getAttribute('value'));
     pushAlias(humanizeIdentifier(el.getAttribute('name')));
     pushAlias(humanizeIdentifier(el.id || ''));
-    if ((el.tagName || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
+    if (((el && el.tagName) || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
     return aliases;
   }
 
@@ -1327,7 +1339,7 @@
         if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
         seen.add(el);
         var role = el.getAttribute && el.getAttribute('role');
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var label = textOf(el);
         if (!label) {
           var h = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6');
@@ -1360,7 +1372,7 @@
         if (parts.length >= 24) break;
         var el = nodes[i];
         if (isHidden(el) || isNavableUiElement(el)) continue;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         if (tag === 'label') {
           var control = null;
           var forId = el.getAttribute && el.getAttribute('for');
@@ -1429,7 +1441,7 @@
             return;
           }
           if (sensitiveInput) sensitiveInputCount += 1;
-          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
+          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (((el && el.tagName) || '')).toLowerCase();
           entry.name = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('name')) || '');
           entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
           entry.placeholder = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('placeholder')) || '');
@@ -1570,7 +1582,7 @@
         if (!el || seen.has(el)) return;
         seen.add(el);
         if (isHidden(el) || isNavableUiElement(el)) return;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
         if (tag === 'input' && /^(hidden|button|submit|reset|image|file)$/.test(inputType)) return;
         controls.push(el);
@@ -1893,7 +1905,7 @@
 
   function buildFormFieldDescriptor(el) {
     if (!el) return null;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var inputType = String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase();
     if (inputType === 'radio') return null;
     if (inputType === 'checkbox') {
@@ -1943,7 +1955,7 @@
     var container = group.container;
     if (container && (container.tagName || '').toLowerCase() === 'form') score += 12;
     group.controls.forEach(function (control) {
-      var tag = (control.tagName || '').toLowerCase();
+      var tag = ((control && control.tagName) || '').toLowerCase();
       var inputType = String((control.getAttribute && control.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'password') score += 40;
       if (inputType === 'email') score += 24;
@@ -2001,7 +2013,7 @@
         if (seenRadioGroups.has(radioKey)) return;
         seenRadioGroups.add(radioKey);
         var radios = group.controls.filter(function (candidate) {
-          return candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
+          return candidate && candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
             String(candidate.name || candidate.getAttribute('name') || '') === String(control.name || control.getAttribute('name') || '');
         });
         if (!radios.length) radios = [control];
@@ -2108,7 +2120,7 @@
     if (!field || field.kind !== 'text') return false;
     var element = field.elements && field.elements[0];
     if (!element) return false;
-    var tag = String(element.tagName || '').toLowerCase();
+    var tag = String((element && element.tagName) || '').toLowerCase();
     if (tag === 'textarea' || !!element.isContentEditable) return true;
     var rows = Number((element.getAttribute && element.getAttribute('rows')) || 0);
     if (rows >= 3) return true;
@@ -2904,7 +2916,7 @@
 
   function applyTextValueToElement(el, value) {
     if (!el) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var isInput = tag === 'input' || tag === 'textarea';
     var isSelect = tag === 'select';
     var isContentEditable = !!el.isContentEditable;
@@ -3109,7 +3121,7 @@
       var normalized = normalizeMatchText(label);
       if (!normalized) return null;
       var score = 0;
-      if ((el.tagName || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
+      if (((el && el.tagName) || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
       submitWords.forEach(function (word) {
         var normalizedWord = normalizeMatchText(word);
         if (normalized === normalizedWord) score += 60;
@@ -3315,7 +3327,7 @@
         return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label, step) };
       }
       var elin = fillResolution.element;
-      var isInput = elin.tagName === 'INPUT' || elin.tagName === 'TEXTAREA';
+      var isInput = String((elin && elin.tagName) || '').toUpperCase() === 'INPUT' || String((elin && elin.tagName) || '').toUpperCase() === 'TEXTAREA';
       var isContentEditable = elin.isContentEditable;
       if (!isInput && !isContentEditable) return { ok: false, message: 'Target not fillable' };
       if (isSensitiveInput(elin)) return { ok: false, message: 'Refused to fill sensitive field' };
@@ -3390,6 +3402,7 @@
   var manualListening = null; // null = follow autostart; true = force on; false = force off
   var settingsLoaded = false;
   var lastSpoken = '';
+  var lastCommandFeedback = null;
   var lastUnknownCmdAt = 0;
   var lastMicBusyAt = 0;
   var recogLang = 'en-US';
@@ -3407,6 +3420,109 @@
   var ttsPlaybackInFlight = false;
   var ttsPlaybackToken = 0;
   var ttsPlaybackResumeTimer = null;
+
+  function normalizeFeedbackStatus(status) {
+    var raw = String(status || '').trim().toLowerCase();
+    if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+      return raw;
+    }
+    return 'success';
+  }
+
+  function cloneFeedbackDetails(details) {
+    if (!details || typeof details !== 'object') return null;
+    if (Array.isArray(details)) return details.slice();
+    return Object.keys(details).reduce(function (acc, key) {
+      var value = details[key];
+      acc[key] = Array.isArray(value) ? value.slice() : value;
+      return acc;
+    }, {});
+  }
+
+  function createCommandFeedback(status, message, details) {
+    return {
+      status: normalizeFeedbackStatus(status),
+      message: String(message || '').trim(),
+      details: cloneFeedbackDetails(details)
+    };
+  }
+
+  function rememberCommandFeedback(feedback) {
+    var normalized = createCommandFeedback(
+      feedback && feedback.status,
+      feedback && feedback.message,
+      feedback && feedback.details
+    );
+    if (!normalized.message && lastCommandFeedback && lastCommandFeedback.message) {
+      normalized.message = lastCommandFeedback.message;
+      if (!normalized.details && lastCommandFeedback.details) normalized.details = cloneFeedbackDetails(lastCommandFeedback.details);
+    }
+    lastCommandFeedback = normalized;
+    if (normalized.message) lastSpoken = normalized.message;
+    return normalized;
+  }
+
+  function getLatestCommandFeedback() {
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return createCommandFeedback(lastCommandFeedback.status, lastCommandFeedback.message, lastCommandFeedback.details);
+    }
+    if (lastSpoken) return createCommandFeedback('success', lastSpoken);
+    return createCommandFeedback('success', '');
+  }
+
+  function feedbackForResponse(feedback, fallbackStatus, fallbackMessage, details) {
+    if (feedback && typeof feedback === 'object' && typeof feedback.status === 'string') {
+      return rememberCommandFeedback(feedback);
+    }
+    if (feedback && typeof feedback === 'object' && feedback.feedback && typeof feedback.feedback.status === 'string') {
+      return rememberCommandFeedback(feedback.feedback);
+    }
+    var message = String(fallbackMessage || '').trim();
+    if (message) {
+      return rememberCommandFeedback({
+        status: fallbackStatus || 'success',
+        message: message,
+        details: details || null
+      });
+    }
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return getLatestCommandFeedback();
+    }
+    return rememberCommandFeedback({
+      status: fallbackStatus || 'success',
+      message: lastSpoken || '',
+      details: details || null
+    });
+  }
+
+  function speakFeedback(feedback, opts) {
+    var normalized = feedbackForResponse(feedback, 'success');
+    if (normalized.message) speak(normalized.message, opts || {});
+    return normalized;
+  }
+
+  function resolutionFeedbackStatus(resolution) {
+    return resolution && resolution.reason === 'ambiguous' ? 'clarification_needed' : 'failure';
+  }
+
+  function buildResolutionFeedbackDetails(type, resolution, label) {
+    var pending = getPendingDisambiguation();
+    return {
+      targetType: type || 'element',
+      reason: resolution && resolution.reason ? resolution.reason : 'not_found',
+      label: String(label || '').trim(),
+      options: pending && Array.isArray(pending.options)
+        ? pending.options.map(function (option) {
+          return {
+            index: option.index,
+            summary: option.summary || '',
+            label: option.label || '',
+            type: option.type || ''
+          };
+        })
+        : []
+    };
+  }
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -4045,28 +4161,47 @@
 
   async function tryPendingDisambiguationFollowUp(text) {
     var pending = getPendingDisambiguation();
-    if (!pending) return false;
+    if (!pending) return null;
     var selection = resolvePendingDisambiguationChoice(text, pending);
-    if (!selection) return false;
+    if (!selection) return null;
     if (!selection.matched) {
       if (selection.ambiguous || isOrdinalFollowUpText(text)) {
-        speak(pending.message || translate('ambiguous_target', {
-          count: pending.options.length,
-          target: targetPlural(pending.targetType || 'element'),
-          value: pending.label || ''
-        }));
-        return true;
+        return speakFeedback({
+          status: 'clarification_needed',
+          message: pending.message || translate('ambiguous_target', {
+            count: pending.options.length,
+            target: targetPlural(pending.targetType || 'element'),
+            value: pending.label || ''
+          }),
+          details: {
+            targetType: pending.targetType || 'element',
+            label: pending.label || '',
+            options: Array.isArray(pending.options) ? pending.options.map(function (option) {
+              return {
+                index: option.index,
+                summary: option.summary || '',
+                label: option.label || '',
+                type: option.type || ''
+              };
+            }) : []
+          }
+        });
       }
-      return false;
+      return null;
     }
     var nextCommand = buildCommandFromPendingOption(pending, selection.option);
     if (!nextCommand) {
-      speak(pending.message || translate('unknown_command'));
-      return true;
+      return speakFeedback({
+        status: 'failure',
+        message: pending.message || translate('unknown_command'),
+        details: {
+          targetType: pending.targetType || 'element',
+          label: pending.label || ''
+        }
+      });
     }
     clearPendingDisambiguation();
-    await execCommand(nextCommand);
-    return true;
+    return execCommand(nextCommand);
   }
 
   function rememberLocalAssistantTurn(info) {
@@ -4838,6 +4973,16 @@
 
   var lastIndexByType = {};
 
+  function currentSpeechFeedback(status, details, fallbackMessage) {
+    return feedbackForResponse(null, status, fallbackMessage || lastSpoken || '', details || null);
+  }
+
+  function currentFormFeedback(ok, details) {
+    var session = getCurrentFormSession();
+    var pending = session ? getPendingFormConfirmation(session) : null;
+    return currentSpeechFeedback(pending ? 'clarification_needed' : (ok ? 'success' : 'failure'), details);
+  }
+
   function moveBy(type, dir) {
     rescan();
     var items = index.items.filter(function (it) { return it.type === type; });
@@ -4862,126 +5007,180 @@
   async function execCommand(cmd) {
     if (!cmd) {
       var now = Date.now();
-      if (now - lastUnknownCmdAt < 5000) return;
+      if (now - lastUnknownCmdAt < 5000) return currentSpeechFeedback('failure', { command: 'unknown' });
       lastUnknownCmdAt = now;
+      rememberCommandFeedback({
+        status: 'failure',
+        message: translate('unknown_command'),
+        details: { command: 'unknown' }
+      });
       speakTransient(translate('unknown_command'), 3200);
-      return;
+      return currentSpeechFeedback('failure', { command: 'unknown' });
     }
-    if (cmd.type === 'help') { speakHelp(); return; }
+    if (cmd.type === 'help') {
+      return speakFeedback({
+        status: 'success',
+        message: translate('help_examples'),
+        details: { command: 'help' }
+      });
+    }
     if (cmd.type === 'open_site') {
-      await openSiteRequest(cmd.query, cmd.newTab !== false);
-      return;
+      return openSiteRequest(cmd.query, cmd.newTab !== false);
     }
     if (cmd.type === 'scroll') {
       var amount = Math.floor(window.innerHeight * 0.8);
       if (cmd.dir === 'down') {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: 'down' } });
       } else if (cmd.dir === 'up') {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak(translate('scrolled_up'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_up'), details: { command: 'scroll', direction: 'up' } });
       } else if (cmd.dir === 'top') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak(translate('scrolled_top'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_top'), details: { command: 'scroll', direction: 'top' } });
       } else if (cmd.dir === 'bottom') {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak(translate('scrolled_bottom'));
-      } else {
-        window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_bottom'), details: { command: 'scroll', direction: 'bottom' } });
       }
-      console.log('[Navable] Action: scroll', cmd.dir);
-      return;
+      window.scrollBy({ top: amount, behavior: 'smooth' });
+      return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: cmd.dir || 'down' } });
     }
     if (cmd.type === 'list') {
       var listStructure = buildPageStructure();
-      speak(listTargetText(cmd.target || 'link', listStructure));
-      console.log('[Navable] Action: list', cmd.target);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: listTargetText(cmd.target || 'link', listStructure),
+        details: { command: 'list', target: cmd.target || 'link' }
+      });
     }
     if (cmd.type === 'form_mode') {
-      if (cmd.action === 'stop') stopFormMode();
-      else startFormMode();
-      console.log('[Navable] Action: form mode', cmd.action || 'start');
-      return;
+      var formModeOk = cmd.action === 'stop' ? stopFormMode() : startFormMode();
+      return currentFormFeedback(formModeOk, {
+        command: 'form_mode',
+        action: cmd.action || 'start'
+      });
     }
     if (cmd.type === 'form_move') {
-      moveFormField(cmd.dir === 'prev' ? 'prev' : 'next');
-      console.log('[Navable] Action: form move', cmd.dir);
-      return;
+      return currentFormFeedback(moveFormField(cmd.dir === 'prev' ? 'prev' : 'next'), {
+        command: 'form_move',
+        direction: cmd.dir === 'prev' ? 'prev' : 'next'
+      });
     }
     if (cmd.type === 'form_current') {
-      readCurrentFormField();
-      console.log('[Navable] Action: form current');
-      return;
+      return currentFormFeedback(readCurrentFormField(), {
+        command: 'form_current'
+      });
     }
     if (cmd.type === 'form_fill') {
-      applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form fill');
-      return;
+      return currentFormFeedback(
+        applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_fill',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_select') {
-      selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form select');
-      return;
+      return currentFormFeedback(
+        selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_select',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_check') {
-      setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form checkbox', !!cmd.checked);
-      return;
+      return currentFormFeedback(
+        setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_check',
+          fieldLabel: cmd.fieldLabel || '',
+          checked: !!cmd.checked
+        }
+      );
     }
     if (cmd.type === 'form_review') {
       reviewActiveForm();
-      console.log('[Navable] Action: form review');
-      return;
+      return currentFormFeedback(true, { command: 'form_review' });
     }
     if (cmd.type === 'form_submit') {
-      submitActiveForm();
-      console.log('[Navable] Action: form submit');
-      return;
+      return currentFormFeedback(submitActiveForm(), { command: 'form_submit' });
     }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
-      speak(translate('title_value', { value: title || translate('value_not_found') }));
-      console.log('[Navable] Action: read title');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('title_value', { value: title || translate('value_not_found') }),
+        details: { command: 'read', what: 'title' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'selection') {
       var sel = '';
       try { sel = String(window.getSelection && window.getSelection().toString() || '').trim(); } catch (_err) { /* selection failed */ }
-      if (sel) { speak(translate('selection_value', { value: sel })); } else { speak(translate('no_selection')); }
-      console.log('[Navable] Action: read selection');
-      return;
+      if (sel) {
+        return speakFeedback({
+          status: 'success',
+          message: translate('selection_value', { value: sel }),
+          details: { command: 'read', what: 'selection' }
+        });
+      }
+      return speakFeedback({
+        status: 'failure',
+        message: translate('no_selection'),
+        details: { command: 'read', what: 'selection' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'focused') {
       var fe = getDeepActiveElement(document);
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
-        speak(fl || translate('no_focused_text'));
+        return speakFeedback({
+          status: fl ? 'success' : 'failure',
+          message: fl || translate('no_focused_text'),
+          details: { command: 'read', what: 'focused' }
+        });
       } else {
-        speak(translate('no_focused_element'));
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'read', what: 'focused' }
+        });
       }
-      console.log('[Navable] Action: read focused');
-      return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var headingResolution = await resolveCommandElement(cmd, 'heading', 'read');
-      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label, cmd)); return; }
+      if (!headingResolution.ok || !headingResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(headingResolution),
+          message: resolutionFailureMessage('heading', headingResolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('heading', headingResolution, cmd.label)
+        });
+      }
       var elhL = headingResolution.element;
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
-      speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblhL.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && !cmd.label) {
       var elh = pickNth('heading', cmd.n || 1);
-      if (!elh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+        });
+      }
       var lblh = elh.dataset.navableLabel || elh.innerText || elh.textContent || '';
-      speak(translate('heading_value', { value: lblh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblh.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
       var openResult = await performElementActionWithRetry('link', cmd.label, cmd.n, {
@@ -4991,12 +5190,20 @@
         el.click();
         return true;
       });
-      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd)); return; }
+      if (!openResult.ok || !openResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(openResult.resolution),
+          message: resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('link', openResult.resolution, cmd.label)
+        });
+      }
       var ellL = openResult.element;
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
-      speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open link by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbllL.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'auto' && cmd.label) {
       var autoOpenResult = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5007,24 +5214,37 @@
         return true;
       });
       if (!autoOpenResult.ok || !autoOpenResult.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoOpenResult.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label)
+        });
       }
       var autoOpen = autoOpenResult.element;
       var autoOpenLabel = autoOpen.dataset.navableLabel || autoOpen.innerText || autoOpen.textContent || '';
-      speak(translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
       var ell = pickNth('link', cmd.n || 1);
-      if (!ell) { speak(translate('not_found_generic', { target: localizeTarget('link') })); return; }
+      if (!ell) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('link') }),
+          details: { command: 'open', target: 'link', index: cmd.n || 1 }
+        });
+      }
       var lbll = ell.dataset.navableLabel || ell.innerText || ell.textContent || '';
-      speak(translate('opening_value', { value: lbll.trim() || translate('target_link') }));
       // Prefer click to follow anchors and SPA handlers
       ell.click();
-      console.log('[Navable] Action: open link', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbll.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
       var focusButtonResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5033,12 +5253,20 @@
         if (!el.isConnected) return false;
         return focusElementForNavigation(el);
       });
-      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd)); return; }
+      if (!focusButtonResult.ok || !focusButtonResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusButtonResult.resolution),
+          message: resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', focusButtonResult.resolution, cmd.label)
+        });
+      }
       var elbL = focusButtonResult.element;
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
-      speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblbL.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.label && (cmd.target === 'input' || cmd.target === 'auto')) {
       var focusResolution = await performElementActionWithRetry(cmd.target === 'input' ? 'input' : 'auto', cmd.label, cmd.n, {
@@ -5048,31 +5276,55 @@
         return focusElementForNavigation(el);
       });
       var focusType = commandTargetType(cmd, 'input');
-      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd)); return; }
+      if (!focusResolution.ok || !focusResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label)
+        });
+      }
       var focusElement = focusResolution.element;
       var focusLabel = focusElement.dataset.navableLabel || focusElement.innerText || focusElement.textContent || '';
-      speak(translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }));
-      console.log('[Navable] Action: focus target by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }),
+        details: { command: 'focus', target: focusType, label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
-      if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!elb) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+        });
+      }
       try { focusElementForNavigation(elb); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
-      speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblb.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
       var aef = getDeepActiveElement(document);
-      if (!aef) { speak(translate('no_focused_element')); return; }
+      if (!aef) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'activate', target: 'focused' }
+        });
+      }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
       try { aef.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: labf || translate('target_element') }));
-      console.log('[Navable] Action: activate focused');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: labf || translate('target_element') }),
+        details: { command: 'activate', target: 'focused' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
       var activateResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5083,12 +5335,20 @@
         el.click();
         return true;
       });
-      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd)); return; }
+      if (!activateResult.ok || !activateResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(activateResult.resolution),
+          message: resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', activateResult.resolution, cmd.label)
+        });
+      }
       var ab = activateResult.element;
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
-      speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labb || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'auto' && cmd.label) {
       var autoActivateResolution = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5100,66 +5360,123 @@
         return true;
       });
       if (!autoActivateResolution.ok || !autoActivateResolution.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoActivateResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label)
+        });
       }
       var autoActivate = autoActivateResolution.element;
       var autoActivateLabel = autoActivate.dataset.navableLabel || autoActivate.innerText || autoActivate.textContent || '';
-      speak(translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }));
-      console.log('[Navable] Action: activate auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }),
+        details: { command: 'activate', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
       var abin = pickNth('button', cmd.n);
-      if (!abin) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!abin) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'activate', target: 'button', index: cmd.n }
+        });
+      }
       var labbn = abin.dataset.navableLabel || abin.innerText || abin.textContent || '';
       try { abin.focus(); } catch (_err) { /* focus failed */ }
       try { abin.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: String(labbn || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labbn || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', index: cmd.n }
+      });
     }
     if (cmd.type === 'move' && (cmd.target === 'link' || cmd.target === 'button')) {
       var elmv = moveBy(cmd.target, cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmv) { speak(translate('not_found_generic', { target: localizeTarget(cmd.target) })); return; }
+      if (!elmv) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget(cmd.target) }),
+          details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       try { elmv.focus(); } catch (_err) { /* focus failed */ }
       var lblmv = elmv.dataset.navableLabel || elmv.innerText || elmv.textContent || '';
-      speak(translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }));
-      console.log('[Navable] Action: move ' + cmd.target, cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }),
+        details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
     if (cmd.type === 'move' && cmd.target === 'heading') {
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elmh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
       if (!elmh.hasAttribute('tabindex')) {
         try { elmh.setAttribute('tabindex', '-1'); } catch (_err) { /* ignore */ }
       }
       try { elmh.focus(); } catch (_err) { /* focus failed */ }
-      speak(translate('heading_value', { value: lblmh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: move heading', cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblmh.trim() || translate('unnamed') }),
+        details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
-    if (cmd.type === 'repeat') { if (lastSpoken) speak(lastSpoken); return; }
+    if (cmd.type === 'repeat') {
+      if (lastSpoken) {
+        return speakFeedback({
+          status: 'success',
+          message: lastSpoken,
+          details: { command: 'repeat' }
+        });
+      }
+      return currentSpeechFeedback('failure', { command: 'repeat' }, translate('unknown_command'));
+    }
     if (cmd.type === 'stop') {
       requestChromeTtsStop();
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ }
-      return;
+      return rememberCommandFeedback({
+        status: 'success',
+        message: '',
+        details: { command: 'stop' }
+      });
     }
+    return currentSpeechFeedback('failure', { command: cmd.type || 'unknown' }, translate('unknown_command'));
   }
 
   async function runSummaryRequest(commandText, pageStructure) {
     var cmdText = normalizeCurrentContextIntentText((commandText && String(commandText).trim()) || 'Summarize this page');
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('summarizing_wait'),
+      details: {
+        command: 'summarize',
+        input: cmdText
+      }
+    });
     announce(translate('summarizing_wait'), {
       mode: 'assertive',
       lang: outputLocale(currentOutputLanguage())
     });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      announce(translate('summarize_unavailable_page'), {
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('summarize_unavailable_page'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
-      return;
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5169,15 +5486,32 @@
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
       if (!res || res.ok !== true) {
-        announce((res && res.error) ? String(res.error) : translate('summarize_failed'), {
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('summarize_failed'),
+          details: {
+            command: 'summarize',
+            input: cmdText
+          }
+        }, {
           mode: 'assertive',
           lang: outputLocale(currentOutputLanguage())
         });
       }
-      // On success, the background will announce the summary via the live region.
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'summarize',
+        input: cmdText
+      });
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      announce(translate('summarize_request_failed'), {
+      return speakFeedback({
+        status: 'failure',
+        message: translate('summarize_request_failed'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
@@ -5187,12 +5521,25 @@
   async function openSiteRequest(query, newTab) {
     var q = String(query || '').trim();
     if (!q) {
-      speak(translate('tell_website_to_open'));
-      return;
+      return speakFeedback({
+        status: 'clarification_needed',
+        message: translate('tell_website_to_open'),
+        details: {
+          command: 'open_site',
+          newTab: newTab !== false
+        }
+      });
     }
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak(translate('open_site_unavailable'));
-      return;
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('open_site_unavailable'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5202,17 +5549,39 @@
         outputLanguage: currentOutputLanguage()
       });
       if (!res || res.ok !== true) {
-        speak((res && res.error) ? String(res.error) : translate('open_site_failed'));
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('open_site_failed'),
+          details: {
+            command: 'open_site',
+            query: q,
+            newTab: newTab !== false
+          }
+        });
       }
+      return feedbackForResponse(res && res.feedback, 'loading', res && res.speech ? String(res.speech) : '', {
+        command: 'open_site',
+        query: q,
+        newTab: newTab !== false,
+        url: res && res.url ? res.url : ''
+      });
     } catch (err) {
       console.warn('[Navable] open site via background failed', err);
-      speak(translate('open_site_failed'));
+      return speakFeedback({
+        status: 'failure',
+        message: translate('open_site_failed'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
   }
 
   async function assistantRequest(questionText, pageStructure, turnContext) {
     var q = normalizeCurrentContextIntentText(questionText).trim();
-    if (!q) return false;
+    if (!q) return null;
     var context = turnContext || {};
     var sessionContext = buildLocalAssistantSessionContext();
     var purpose = assistantPurposeForText(q, sessionContext);
@@ -5223,6 +5592,14 @@
     var directRequestFailure = null;
 
     await ensureOutputLanguageReady();
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('answering_question'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    });
     speakTransient(translate('answering_question'), 2500);
 
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
@@ -5252,8 +5629,16 @@
             detectedLanguage: context.detectedLanguage || '',
             recognitionProvider: context.recognitionProvider || ''
           });
-          speak(String(res.speech), { mode: 'assertive' });
-          return true;
+          return speakFeedback({
+            status: 'success',
+            message: String(res.speech),
+            details: {
+              command: 'assistant',
+              purpose: rememberedPurpose,
+              mode: res.mode || '',
+              source: 'background'
+            }
+          }, { mode: 'assertive' });
         }
         if (res && res.error) {
           backgroundRequestError = String(res.error || '').trim();
@@ -5283,8 +5668,7 @@
         directData.action.type === 'open_site' &&
         directData.action.query
       ) {
-        await openSiteRequest(directData.action.query, directData.action.newTab !== false);
-        return true;
+        return openSiteRequest(directData.action.query, directData.action.newTab !== false);
       }
       if (directResponse.ok && directData && directData.speech) {
         if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
@@ -5302,12 +5686,27 @@
           detectedLanguage: context.detectedLanguage || '',
           recognitionProvider: context.recognitionProvider || ''
         });
-        speak(String(directData.speech), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'success',
+          message: String(directData.speech),
+          details: {
+            command: 'assistant',
+            purpose: directRememberedPurpose,
+            mode: directData.mode || '',
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
       if (directData && directData.error) {
-        speak(String(directData.error), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'failure',
+          message: String(directData.error),
+          details: {
+            command: 'assistant',
+            purpose: purpose,
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
     } catch (err2) {
       directRequestFailure = err2;
@@ -5321,12 +5720,18 @@
     if (directRequestFailure) {
       console.warn('[Navable] assistant direct request failed', directRequestFailure);
     }
-    speak(translate('answer_failed'), { mode: 'assertive' });
-    return true;
+    return speakFeedback({
+      status: 'failure',
+      message: translate('answer_failed'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    }, { mode: 'assertive' });
   }
 
   async function tryIntentFallback(commandText, pageStructure) {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return null;
     try {
       var res = await chrome.runtime.sendMessage({
         type: 'planner:run',
@@ -5335,21 +5740,26 @@
         preferIntentFallback: true,
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
-      return !!(res && res.ok === true && (
+      if (!(res && res.ok === true && (
         (res.plan && res.plan.steps && res.plan.steps.length) ||
         res.description ||
         res.summary
-      ));
+      ))) return null;
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'intent_fallback',
+        input: commandText
+      });
     } catch (err) {
       console.warn('[Navable] intent fallback failed', err);
-      return false;
+      return null;
     }
   }
 
   async function handleTranscript(text, detectedLanguage, provider) {
-    if (!beginVoiceTurn()) return false;
+    if (!beginVoiceTurn()) return null;
     console.log('[Navable] Recognized:', text);
     try {
+      lastCommandFeedback = null;
       lastRecognitionResultAt = Date.now();
       maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
       setOutputLanguageFromTranscript(text, detectedLanguage);
@@ -5372,38 +5782,47 @@
           await languageReady;
           if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
           else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-          return true;
+          return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+            command: 'summarize',
+            formMode: true
+          });
         }
         if (cmd && isFormContextCommand(cmd)) {
           clearPendingDisambiguation();
-          await execCommand(cmd);
-          return true;
+          return execCommand(cmd);
         }
-        if (await tryHandleActiveFormUtterance(text)) return true;
+        if (await tryHandleActiveFormUtterance(text)) {
+          var activePending = getPendingFormConfirmation(formSession);
+          return feedbackForResponse(null, activePending ? 'clarification_needed' : 'success', lastSpoken, {
+            command: 'form_utterance'
+          });
+        }
         await languageReady;
         if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
         else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-        return true;
+        return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+          command: 'form_utterance'
+        });
       }
       if (cmd && cmd.type === 'summarize') {
         clearPendingDisambiguation();
-        await runSummaryRequest(cmd.command, pageStructure);
-        return true;
+        return runSummaryRequest(cmd.command, pageStructure);
       }
       if (cmd) {
         clearPendingDisambiguation();
-        await execCommand(cmd);
-        return true;
+        return execCommand(cmd);
       }
-      if (await tryPendingDisambiguationFollowUp(text)) return true;
-      if (await tryIntentFallback(text, pageStructure)) return true;
-      if (await assistantRequest(text, pageStructure, {
+      var disambiguationFeedback = await tryPendingDisambiguationFollowUp(text);
+      if (disambiguationFeedback) return disambiguationFeedback;
+      var intentFeedback = await tryIntentFallback(text, pageStructure);
+      if (intentFeedback) return intentFeedback;
+      var assistantFeedback = await assistantRequest(text, pageStructure, {
         detectedLanguage: detectedLanguage || '',
         recognitionProvider: provider || ''
-      })) return true;
+      });
+      if (assistantFeedback) return assistantFeedback;
       await languageReady;
-      await execCommand(null);
-      return true;
+      return execCommand(null);
     } finally {
       finishVoiceTurn({ delayMs: 900 });
     }
