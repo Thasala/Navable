@@ -5218,6 +5218,9 @@
     var purpose = assistantPurposeForText(q, sessionContext);
     var wantsPageContext = purpose === 'summary' || purpose === 'page';
     var structure = wantsPageContext ? (pageStructure || buildPageContextSnapshot()) : null;
+    var backgroundRequestError = '';
+    var backgroundRequestFailure = null;
+    var directRequestFailure = null;
 
     await ensureOutputLanguageReady();
     speakTransient(translate('answering_question'), 2500);
@@ -5253,10 +5256,10 @@
           return true;
         }
         if (res && res.error) {
-          console.warn('[Navable] assistant background request returned error', res.error);
+          backgroundRequestError = String(res.error || '').trim();
         }
       } catch (err) {
-        console.warn('[Navable] assistant message request failed', err);
+        backgroundRequestFailure = err;
       }
     }
 
@@ -5307,9 +5310,17 @@
         return true;
       }
     } catch (err2) {
-      console.warn('[Navable] assistant direct request failed', err2);
+      directRequestFailure = err2;
     }
 
+    if (backgroundRequestError) {
+      console.warn('[Navable] assistant background request returned error', backgroundRequestError);
+    } else if (backgroundRequestFailure) {
+      console.warn('[Navable] assistant message request failed', backgroundRequestFailure);
+    }
+    if (directRequestFailure) {
+      console.warn('[Navable] assistant direct request failed', directRequestFailure);
+    }
     speak(translate('answer_failed'), { mode: 'assertive' });
     return true;
   }
