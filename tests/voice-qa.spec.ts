@@ -362,6 +362,14 @@ test('spoken question retries assistant directly when background returns a gener
   `);
 
   await page.evaluate(() => {
+    // @ts-ignore
+    (window as any).__navableWarns = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (...args) => {
+      // @ts-ignore
+      (window as any).__navableWarns.push(args.map((arg) => String(arg)).join(' '));
+      return originalWarn(...args);
+    };
     window.fetch = async (url, init) => {
       if (!String(url).includes('/api/assistant')) {
         throw new Error(`Unexpected fetch: ${String(url)}`);
@@ -423,6 +431,8 @@ test('spoken question retries assistant directly when background returns a gener
 
   await expect(page.locator('#navable-live-region-assertive')).toContainText("Earth's natural satellite");
   await expect(page.locator('#navable-output-text')).toHaveValue(/Earth's natural satellite/);
+  const warns = await page.evaluate(() => (window as any).__navableWarns || []);
+  expect(warns.some((msg: string) => msg.includes('[Navable] assistant background request returned error'))).toBe(false);
 });
 
 test('direct assistant fallback keeps session memory for follow-up questions', async ({ page }) => {
@@ -688,7 +698,7 @@ test('summary plan keeps the summary output visible while follow-up steps run', 
   await expect(page.locator('#navable-output-text')).toHaveValue(/documentation/);
 });
 
-test('new tab spoken question stays on the existing live output path', async ({ page }) => {
+test('new tab spoken question retries directly without logging a background warning', async ({ page }) => {
   await page.setContent(`
     <main>
       <button id="btnMicToggle" type="button">Start listening</button>
@@ -698,7 +708,38 @@ test('new tab spoken question stays on the existing live output path', async ({ 
 
   await page.evaluate(() => {
     // @ts-ignore
-    (window as any).chrome = {};
+    (window as any).__navableWarns = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (...args) => {
+      // @ts-ignore
+      (window as any).__navableWarns.push(args.map((arg) => String(arg)).join(' '));
+      return originalWarn(...args);
+    };
+    // @ts-ignore
+    (window as any).chrome = {
+      runtime: {
+        sendMessage: async () => ({
+          ok: false,
+          error: 'I could not answer that right now.'
+        })
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({
+              navable_settings: {
+                language: 'en-US',
+                languageMode: 'auto',
+                outputMode: 'screen_reader'
+              }
+            });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
     window.fetch = async (url, init) => {
       if (!String(url).includes('/api/assistant')) {
         throw new Error(`Unexpected fetch: ${String(url)}`);
@@ -739,4 +780,6 @@ test('new tab spoken question stays on the existing live output path', async ({ 
   await expect(page.locator('#micStatus')).toContainText("Earth's natural satellite");
   await expect(page.locator('#navable-live-region-assertive')).toContainText("Earth's natural satellite");
   await expect(page.locator('#navable-output-text')).toHaveValue(/Earth's natural satellite/);
+  const warns = await page.evaluate(() => (window as any).__navableWarns || []);
+  expect(warns.some((msg: string) => msg.includes('[Navable] newtab assistant background request returned error'))).toBe(false);
 });

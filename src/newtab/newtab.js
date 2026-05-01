@@ -919,6 +919,9 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   if (!q) return false;
   const sessionContext = buildNewtabAssistantSessionContext();
   const purpose = assistantQuestionPurposeForText(q, sessionContext);
+  let backgroundRequestError = '';
+  let backgroundRequestFailure = null;
+  let directRequestFailure = null;
 
   await ensureOutputLanguageReady();
   setNewtabMicMessage(translate('answering_question'), 'polite');
@@ -950,10 +953,10 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
         return true;
       }
       if (res?.error) {
-        console.warn('[Navable] newtab assistant background request returned error', res.error);
+        backgroundRequestError = String(res.error || '').trim();
       }
     } catch (err) {
-      console.warn('[Navable] newtab answer failed', err);
+      backgroundRequestFailure = err;
     }
   }
 
@@ -992,9 +995,17 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
       return true;
     }
   } catch (err) {
-    console.warn('[Navable] newtab direct assistant request failed', err);
+    directRequestFailure = err;
   }
 
+  if (backgroundRequestError) {
+    console.warn('[Navable] newtab assistant background request returned error', backgroundRequestError);
+  } else if (backgroundRequestFailure) {
+    console.warn('[Navable] newtab answer failed', backgroundRequestFailure);
+  }
+  if (directRequestFailure) {
+    console.warn('[Navable] newtab direct assistant request failed', directRequestFailure);
+  }
   setNewtabMicMessage(translate('answer_failed'), 'assertive');
   return true;
 }

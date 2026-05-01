@@ -1160,6 +1160,7 @@ test('typed form mode blocks moving on until confirmation and asks for spelling 
 
   const initialFill = await typed('fill Hasem');
   expect(initialFill).toMatchObject({ ok: true });
+  expect((initialFill as any).feedback).toMatchObject({ status: 'clarification_needed' });
   expect(String((initialFill as any).speech || '')).toContain('Say yes to keep it');
   expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.id || '')).toBe('first-name');
 
@@ -1864,6 +1865,7 @@ test('typed ambiguity responses include semantic context and accept ordinal foll
   });
 
   expect(firstResponse).toMatchObject({ ok: true });
+  expect((firstResponse as any).feedback).toMatchObject({ status: 'clarification_needed' });
   expect(String((firstResponse as any).speech || '')).toContain('Hazem Salameh');
   expect(String((firstResponse as any).speech || '')).toContain('Use another account');
   expect(await page.evaluate(() => (window as any).clicked || '')).toBe('');
@@ -1881,6 +1883,7 @@ test('typed ambiguity responses include semantic context and accept ordinal foll
   });
 
   expect(followUpResponse).toMatchObject({ ok: true });
+  expect((followUpResponse as any).feedback).toMatchObject({ status: 'success' });
   expect(await page.evaluate(() => (window as any).clicked || '')).toBe('saved-profile');
 });
 
@@ -1930,5 +1933,6 @@ test('typed ambiguity follow-up can resolve by semantic context name', async ({ 
   });
 
   expect(followUpResponse).toMatchObject({ ok: true });
+  expect((followUpResponse as any).feedback).toMatchObject({ status: 'success' });
   expect(await page.evaluate(() => (window as any).clicked || '')).toBe('account-chooser');
 });

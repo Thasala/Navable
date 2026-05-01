@@ -191,7 +191,7 @@ async function handleTypedCommandSubmit(event) {
     }
     if (res.ok) {
       setStatus('Typed command sent.');
-      setDescription(res.speech || 'The page handled the typed command.');
+      setDescription((res.feedback && res.feedback.message) || res.speech || 'The page handled the typed command.');
       return;
     }
     setStatus(res.error || 'Could not send typed command.', true);

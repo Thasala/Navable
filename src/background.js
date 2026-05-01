@@ -1295,6 +1295,22 @@ function normalizeAssistantResult(data) {
   };
 }
 
+function normalizeFeedbackStatus(status) {
+  const raw = String(status || '').trim().toLowerCase();
+  if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+    return raw;
+  }
+  return 'success';
+}
+
+function buildFeedback(status, message, details = null) {
+  return {
+    status: normalizeFeedbackStatus(status),
+    message: String(message || '').trim(),
+    details: details && typeof details === 'object' ? { ...details } : null
+  };
+}
+
 async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   const settings = options.settings || await loadSettings();
   const outputLanguage = configuredOutputLanguage(settings, requestedOutputLanguage);
@@ -1468,12 +1484,18 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
     if (!!settings.aiEnabled && aiMode !== 'off') {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
+        const cachedFeedback = buildFeedback('success', cached.description || cached.summary || '', {
+          command: 'summarize',
+          cached: true
+        });
         if (cached.description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: cached.description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: cachedFeedback.status,
+            details: cachedFeedback.details
           });
         }
         if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
@@ -1483,7 +1505,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             silentOutput: true
           });
         }
-        return { ...cached, structure, cached: true, ok: true };
+        return { ...cached, structure, cached: true, ok: true, feedback: cachedFeedback };
       }
 
       const assistantResult = await requestAssistant(command || 'Summarize this page', outputLanguage, {
@@ -1500,13 +1522,19 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             ? ' Suggestions: ' + assistantResult.suggestions.join(' ')
             : '';
         const description = (summaryText + suggestionsText).trim();
+        const feedback = buildFeedback('success', description, {
+          command: 'summarize',
+          cached: false
+        });
 
         if (description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: feedback.status,
+            details: feedback.details
           });
         }
         if (
@@ -1528,7 +1556,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           structure,
           description,
           summary: summaryText,
-          suggestions: assistantResult.suggestions
+          suggestions: assistantResult.suggestions,
+          feedback
         };
         summaryCache.url = structure && structure.url ? structure.url : null;
         summaryCache.outputLanguage = outputLanguage;
@@ -1541,11 +1570,17 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
       await outputMessagesReady;
       const description = `${buildFriendlyOrientation(structure, outputLanguage)} ${outputMessage('ai_summaries_off', outputLanguage)}`;
+      const feedback = buildFeedback('success', description, {
+        command: 'summarize',
+        aiEnabled: false
+      });
       await sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: description,
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       });
       await rememberAssistantTurn(sourceTabId, {
         input: command,
@@ -1562,7 +1597,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
         structure,
         description,
         summary: description,
-        suggestions: []
+        suggestions: [],
+        feedback
       };
     }
   }
@@ -1570,16 +1606,35 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
   const plan = stubPlanner(command, structure, outputLanguage, !!preferIntentFallback);
 
   if (preferIntentFallback && !plan.matched && !plan.description && (!plan.steps || !plan.steps.length)) {
-    return { ok: false, error: 'Intent not understood', unhandled: true, plan: { steps: [] }, structure };
+    const error = 'Intent not understood';
+    return {
+      ok: false,
+      error,
+      unhandled: true,
+      plan: { steps: [] },
+      structure,
+      feedback: buildFeedback('failure', error, {
+        command: 'intent_fallback',
+        input: command
+      })
+    };
   }
 
+  const feedback = plan.description
+    ? buildFeedback('success', plan.description, {
+      command: isSummaryRequest ? 'summarize' : 'intent_fallback',
+      matched: !!plan.matched
+    })
+    : null;
   if (plan.description) {
     await outputMessagesReady;
     await sendToTargetTab(sourceTabId, {
       type: 'navable:announce',
       text: plan.description,
       mode: isSummaryRequest ? 'assertive' : 'polite',
-      lang: outputLocale(outputLanguage)
+      lang: outputLocale(outputLanguage),
+      status: feedback.status,
+      details: feedback.details
     });
   }
   if (plan.steps && plan.steps.length) {
@@ -1605,7 +1660,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
     });
   }
 
-  return { ok: true, plan, structure };
+  return { ok: true, plan, structure, feedback };
 }
 
 function normalizeSpokenUrl(query) {
@@ -1822,16 +1877,35 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const url = resolveOpenQueryToUrl(query);
   const sourceTabId = options.sourceTabId || null;
-  if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
+  if (!url) {
+    const error = outputMessage('missing_url', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('clarification_needed', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        newTab: newTab !== false
+      })
+    };
+  }
 
   const speech = outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) });
+  const feedback = buildFeedback('loading', speech, {
+    command: 'open_site',
+    query: String(query || '').trim(),
+    url,
+    newTab: newTab !== false
+  });
   if (options.announce !== false) {
     outputMessagesReady.then(() => (
       sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) }),
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       })
     )).catch(() => {
       // ignore announce failures (e.g., unsupported active tab)
@@ -1858,10 +1932,19 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
       outputLanguage,
       url
     });
-    return { ok: true, url, speech };
+    return { ok: true, url, speech, feedback };
   } catch (err) {
     console.warn('[Navable] openSite failed', err);
-    return { ok: false, error: outputMessage('open_website_failed', outputLanguage) };
+    const error = outputMessage('open_website_failed', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        url
+      })
+    };
   }
 }
 
