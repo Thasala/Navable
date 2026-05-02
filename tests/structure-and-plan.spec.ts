@@ -392,13 +392,9 @@ test('typed form mode can guide fill, select, check, and submit a form', async (
 
   const confirmEmailLocal = await typed('yes');
   expect(confirmEmailLocal).toMatchObject({ ok: true });
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@example');
-  expect(String((confirmEmailLocal as any).speech || '')).toContain('part after the at sign and before the dot');
-
-  const confirmEmailDomain = await typed('yes');
-  expect(confirmEmailDomain).toMatchObject({ ok: true });
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@example.com');
-  expect(String((confirmEmailDomain as any).speech || '')).toContain('ending after the dot');
+  expect(String((confirmEmailLocal as any).speech || '')).toContain('part after the at sign');
+  expect(String((confirmEmailLocal as any).speech || '')).toContain('example.com');
 
   const confirmEmail = await typed('yes');
   expect(confirmEmail).toMatchObject({ ok: true });
@@ -647,8 +643,6 @@ test('typed form mode supports named field fill and labeled option commands', as
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem');
   expect(String((fillEmail as any).speech || '')).toContain('part before the at sign');
   await typed('yes');
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@example');
-  await typed('yes');
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@example.com');
   await typed('yes');
 
@@ -706,19 +700,65 @@ test('typed form mode normalizes spoken email structure', async ({ page }) => {
 
   const confirmLocal = await typed('yes');
   expect(confirmLocal).toMatchObject({ ok: true });
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazemsalameh@gmail');
-  expect(String((confirmLocal as any).speech || '')).toContain('part after the at sign and before the dot');
-  expect(String((confirmLocal as any).speech || '')).toContain('gmail');
-
-  const confirmDomain = await typed('yes');
-  expect(confirmDomain).toMatchObject({ ok: true });
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazemsalameh@gmail.com');
-  expect(String((confirmDomain as any).speech || '')).toContain('ending after the dot');
-  expect(String((confirmDomain as any).speech || '')).toContain('com');
+  expect(String((confirmLocal as any).speech || '')).toContain('part after the at sign');
+  expect(String((confirmLocal as any).speech || '')).toContain('gmail.com');
 
-  const confirmSuffix = await typed('yes');
-  expect(confirmSuffix).toMatchObject({ ok: true });
-  expect(String((confirmSuffix as any).speech || '')).toContain('Field 2 of 2: Name');
+  const confirmTail = await typed('yes');
+  expect(confirmTail).toMatchObject({ ok: true });
+  expect(String((confirmTail as any).speech || '')).toContain('Field 2 of 2: Name');
+});
+
+test('typed form mode accepts the full email tail after the at sign', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required />
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" required />
+      </form>
+    </main>
+  `);
+  await installTypedCommandHarness(page);
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__contentListeners?.length > 0);
+
+  async function typed(text: string) {
+    return await page.evaluate(async (utterance) => {
+      // @ts-ignore
+      const listener = (window as any).__contentListeners[0];
+      return await new Promise((resolve, reject) => {
+        try {
+          listener({ type: 'navable:runTypedCommand', text: utterance, detectedLanguage: 'en' }, {}, resolve);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }, text);
+  }
+
+  await typed('form mode');
+  await typed('hazem');
+
+  const confirmLocal = await typed('yes');
+  expect(confirmLocal).toMatchObject({ ok: true });
+  expect(String((confirmLocal as any).speech || '')).toContain('what you want after the at sign');
+  expect(String((confirmLocal as any).speech || '')).toContain('gmail dot com');
+
+  const chooseTail = await typed('gmail.com');
+  expect(chooseTail).toMatchObject({ ok: true });
+  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmail.com');
+  expect(String((chooseTail as any).speech || '')).toContain('part after the at sign');
+  expect(String((chooseTail as any).speech || '')).toContain('gmail.com');
+
+  const confirmTail = await typed('yes');
+  expect(confirmTail).toMatchObject({ ok: true });
+  expect(String((confirmTail as any).speech || '')).toContain('Field 2 of 2: Name');
 });
 
 test('typed form mode spells email segments after repeated corrections', async ({ page }) => {
@@ -759,30 +799,30 @@ test('typed form mode spells email segments after repeated corrections', async (
 
   const confirmLocal = await typed('yes');
   expect(confirmLocal).toMatchObject({ ok: true });
-  expect(String((confirmLocal as any).speech || '')).toContain('part after the at sign and before the dot');
+  expect(String((confirmLocal as any).speech || '')).toContain('what you want after the at sign');
 
-  const firstDomain = await typed('gmeal');
-  expect(firstDomain).toMatchObject({ ok: true });
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmeal');
+  const firstTail = await typed('gmeal.com');
+  expect(firstTail).toMatchObject({ ok: true });
+  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmeal.com');
 
   const rejectFirst = await typed('no');
   expect(rejectFirst).toMatchObject({ ok: true });
-  expect(String((rejectFirst as any).speech || '')).toContain('part after the at sign and before the dot');
+  expect(String((rejectFirst as any).speech || '')).toContain('what you want after the at sign');
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem');
 
-  const secondDomain = await typed('gmale');
-  expect(secondDomain).toMatchObject({ ok: true });
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmale');
+  const secondTail = await typed('gmale.com');
+  expect(secondTail).toMatchObject({ ok: true });
+  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmale.com');
 
   const rejectSecond = await typed('no');
   expect(rejectSecond).toMatchObject({ ok: true });
   expect(String((rejectSecond as any).speech || '')).toContain('Please spell it letter by letter');
   expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem');
 
-  const spelledDomain = await typed('g m a i l');
-  expect(spelledDomain).toMatchObject({ ok: true });
-  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmail');
-  expect(String((spelledDomain as any).speech || '')).toContain('gmail');
+  const spelledTail = await typed('g m a i l dot c o m');
+  expect(spelledTail).toMatchObject({ ok: true });
+  expect(await page.$eval('#email', (el) => (el as HTMLInputElement).value)).toBe('hazem@gmail.com');
+  expect(String((spelledTail as any).speech || '')).toContain('gmail.com');
 });
 
 test('typed form mode keeps long-text fields in chunked dictation on the same field', async ({ page }) => {

@@ -2201,12 +2201,39 @@
     return value;
   }
 
+  function buildEmailTailValue(parts) {
+    var emailParts = cloneEmailParts(parts);
+    if (!emailParts.domain) return '';
+    return emailParts.domain + (emailParts.suffix ? '.' + emailParts.suffix : '');
+  }
+
   function buildEmailFieldValueUpToSegment(parts, segment) {
     var emailParts = cloneEmailParts(parts);
     if (!emailParts.local) return '';
     if (segment === 'local') return emailParts.local;
     if (segment === 'domain') return buildEmailFieldValue({ local: emailParts.local, domain: emailParts.domain });
+    if (segment === 'tail') return buildEmailFieldValue(emailParts);
     return buildEmailFieldValue(emailParts);
+  }
+
+  function parseEmailTailParts(text) {
+    var normalized = normalizeEmailSpeechText(text);
+    if (!normalized) return null;
+    var tail = normalized;
+    var atIndex = tail.indexOf('@');
+    if (atIndex >= 0) tail = tail.slice(atIndex + 1);
+    tail = tail.replace(/^@+/g, '').trim();
+    if (!tail) return null;
+    var firstDot = tail.indexOf('.');
+    var domain = firstDot >= 0
+      ? sanitizeEmailDomainLabelText(tail.slice(0, firstDot))
+      : sanitizeEmailDomainLabelText(tail);
+    var suffix = firstDot >= 0 ? sanitizeEmailSuffixText(tail.slice(firstDot + 1)) : '';
+    if (!domain) return null;
+    return {
+      domain: domain,
+      suffix: suffix
+    };
   }
 
   function parseEmailParts(text) {
@@ -2217,15 +2244,11 @@
     var local = sanitizeEmailLocalPartText(normalized.slice(0, atIndex));
     if (!local) return null;
     var afterAt = normalized.slice(atIndex + 1);
-    var lastDot = afterAt.lastIndexOf('.');
-    var domain = lastDot >= 0
-      ? sanitizeEmailDomainLabelText(afterAt.slice(0, lastDot))
-      : sanitizeEmailDomainLabelText(afterAt);
-    var suffix = lastDot >= 0 ? sanitizeEmailSuffixText(afterAt.slice(lastDot + 1)) : '';
+    var tailParts = parseEmailTailParts(afterAt);
     return {
       local: local,
-      domain: domain,
-      suffix: suffix
+      domain: tailParts && tailParts.domain ? tailParts.domain : '',
+      suffix: tailParts && tailParts.suffix ? tailParts.suffix : ''
     };
   }
 
@@ -2242,12 +2265,14 @@
   function nextEmailSegment(segment) {
     if (segment === 'local') return 'domain';
     if (segment === 'domain') return 'suffix';
+    if (segment === 'tail') return '';
     return '';
   }
 
   function emailSegmentTranslationKey(segment) {
     if (segment === 'local') return 'form_email_segment_local';
     if (segment === 'domain') return 'form_email_segment_domain';
+    if (segment === 'tail') return 'form_email_segment_tail';
     return 'form_email_segment_suffix';
   }
 
@@ -2613,6 +2638,9 @@
         });
       }
       if (pending.mode === 'await_email_segment') {
+        if (pending.emailSegment === 'tail') {
+          return translate('form_email_prompt_tail', { label: label });
+        }
         return translate('form_email_prompt_segment', {
           label: label,
           segment: translateEmailSegment(pending.emailSegment)
@@ -2699,20 +2727,58 @@
   function applyEmailSegmentValue(session, field, segment, rawSegmentValue, details) {
     if (!session || !field || !segment) return false;
     var emailParts = cloneEmailParts(details && details.emailParts || null);
-    var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
-    if (!normalizedSegment) {
-      speak(translate('form_fill_missing_value'));
-      return false;
+    var pendingSegment = segment;
+    var speechValue = '';
+    var nextValue = '';
+    if (segment === 'tail') {
+      var tailParts = parseEmailTailParts(rawSegmentValue);
+      if (!tailParts || !tailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = tailParts.domain;
+      emailParts.suffix = tailParts.suffix || '';
+      if (emailParts.suffix) {
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        pendingSegment = 'domain';
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else if (segment === 'domain') {
+      var domainTailParts = parseEmailTailParts(rawSegmentValue);
+      if (!domainTailParts || !domainTailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = domainTailParts.domain;
+      emailParts.suffix = domainTailParts.suffix || '';
+      if (emailParts.suffix) {
+        pendingSegment = 'tail';
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else {
+      var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
+      if (!normalizedSegment) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts[segment] = normalizedSegment;
+      speechValue = normalizedSegment;
+      nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     }
-    emailParts[segment] = normalizedSegment;
     var previousState = details && details.previousState ? details.previousState : getFormFieldCurrentState(field);
-    var nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     var el = field.elements && field.elements[0];
     if (!el || !applyTextValueToElement(el, nextValue)) {
       speak(translate('not_found_generic', { target: translate('target_input') }));
       return false;
     }
-    return setPendingEmailSegment(session, field, segment, normalizedSegment, {
+    return setPendingEmailSegment(session, field, pendingSegment, speechValue, {
       fieldIndex: Number(details && details.fieldIndex != null ? details.fieldIndex : session.currentIndex || 0),
       correctionCount: Math.max(0, Number(details && details.correctionCount || 0)),
       previousState: previousState,
@@ -2758,6 +2824,26 @@
         label: field.label || translate('target_input'),
         segment: translateEmailSegment(currentSegment)
       });
+      if (currentSegment === 'local') {
+        speak(savedSegment);
+        if (emailParts.domain && emailParts.suffix) {
+          return applyEmailSegmentValue(session, field, 'tail', buildEmailTailValue(emailParts), {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        if (emailParts.domain) {
+          return applyEmailSegmentValue(session, field, 'domain', emailParts.domain, {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        return promptForNextEmailSegment(session, field, 'tail', emailParts);
+      }
       if (emailParts[nextSegment]) {
         speak(savedSegment);
         return applyEmailSegmentValue(session, field, nextSegment, emailParts[nextSegment], {
