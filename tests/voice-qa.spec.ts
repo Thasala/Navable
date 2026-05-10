@@ -67,6 +67,75 @@ test('unknown spoken question falls back to a brief AI answer', async ({ page })
   await expect(page.locator('#navable-output-text')).toHaveValue(/Ada Lovelace/);
 });
 
+test('spoken browser back command is handled before assistant fallback', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Home</h1>
+      <p>Welcome.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    window.fetch = async () => {
+      throw new Error('assistant should not be called for browser history');
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('can you please go back to the previous page', 'en');
+  });
+
+  const historyAction = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._lastHistoryAction || null;
+  });
+  expect(historyAction).toEqual({ direction: 'back', tabId: 1 });
+  await expect(page.locator('#navable-live-region-polite')).toContainText('Going back');
+});
+
+test('spoken keyboard shortcut command opens Chrome shortcuts before assistant fallback', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Home</h1>
+      <p>Welcome.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    window.fetch = async () => {
+      throw new Error('assistant should not be called for shortcut navigation');
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).NavableTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('open keyboard shortcuts', 'en');
+  });
+
+  const created = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._created || [];
+  });
+  expect(created).toContain('chrome://extensions/shortcuts');
+});
+
 test('chrome tts mode speaks only Navable output for assistant replies', async ({ page }) => {
   await page.setContent(`
     <main>
@@ -782,4 +851,38 @@ test('new tab spoken question retries directly without logging a background warn
   await expect(page.locator('#navable-output-text')).toHaveValue(/Earth's natural satellite/);
   const warns = await page.evaluate(() => (window as any).__navableWarns || []);
   expect(warns.some((msg: string) => msg.includes('[Navable] newtab assistant background request returned error'))).toBe(false);
+});
+
+test('new tab spoken browser forward command is handled before assistant fallback', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="btnMicToggle" type="button">Start listening</button>
+      <div id="micStatus">Not listening.</div>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    window.fetch = async () => {
+      throw new Error('assistant should not be called for browser history');
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/background.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/newtab/newtab.js' });
+
+  await page.waitForFunction(() => (window as any).NavableNewtabTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableNewtabTools.handleTranscript('can you please go forward to the next page', 'en');
+  });
+
+  const historyAction = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._lastHistoryAction || null;
+  });
+  expect(historyAction).toEqual({ direction: 'forward', tabId: 1 });
+  await expect(page.locator('#micStatus')).toContainText('Going forward');
 });

@@ -84,6 +84,14 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
         const url = props && props.url ? String(props.url) : undefined;
         return Promise.resolve({ id: typeof tabId === 'number' ? tabId : 1, url });
       },
+      goBack(tabId) {
+        chrome.tabs._lastHistoryAction = { direction: 'back', tabId: typeof tabId === 'number' ? tabId : 1 };
+        return Promise.resolve();
+      },
+      goForward(tabId) {
+        chrome.tabs._lastHistoryAction = { direction: 'forward', tabId: typeof tabId === 'number' ? tabId : 1 };
+        return Promise.resolve();
+      },
       sendMessage(_tabId, payload) {
         return new Promise((resolve) => {
           const listeners = (chrome.runtime._listeners || []);
@@ -646,6 +654,22 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(text)
   ) {
     description = orientation;
+    matched = true;
+  } else if (hasIntent(text, [
+    /\bgo back\b/, /^back$/, /^previous$/, /\btake me back\b/, /\bnavigate back\b/, /\bbrowser back\b/, /\bprevious page\b/, /\blast page\b/, /\breturn to previous page\b/,
+    /\b(?:go|take me|return|navigate)\s+(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+page\b/,
+    /\bretour\b/, /\bretour en arriere\b/, /\bpage precedente\b/,
+    /^(?:ارجع|رجوع|الصفحة السابقة|السابق)$/
+  ])) {
+    steps.push({ action: 'browser_history', direction: 'back' });
+    matched = true;
+  } else if (hasIntent(text, [
+    /\bgo forward\b/, /^forward$/, /^next$/, /\btake me forward\b/, /\bnavigate forward\b/, /\bbrowser forward\b/, /\bnext page\b/, /\bgo next\b/, /\bgo next page\b/, /\bgo to next page\b/,
+    /\b(?:go|take me|navigate)\s+(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+page\b/,
+    /\bavance\b/, /\bpage suivante\b/, /\bsuivant\b/,
+    /^(?:تقدم|للأمام|للامام|الصفحة التالية|التالي)$/
+  ])) {
+    steps.push({ action: 'browser_history', direction: 'forward' });
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll up\b/, /\bgo up\b/, /\bmove up\b/, /\bback up\b/, /\bup a bit\b/, /\bhigher\b/,
@@ -1275,6 +1299,76 @@ function extractAssistantOpenSiteQuery(text) {
   return query || null;
 }
 
+function normalizeBrowserHistoryIntentText(text) {
+  let value = String(text || '')
+    .toLowerCase()
+    .replace(/[^\w\u0600-\u06ff\s]+/g, ' ')
+    .replace(/\b(?:please|pls)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!value) return '';
+
+  const prefixes = [
+    /^(?:hey navable|navable)\s+/,
+    /^(?:can you|could you|would you|will you)\s+/,
+    /^(?:i want to|i need to|i would like to|i d like to|let me|please help me)\s+/,
+    /^(?:help me|show me how to)\s+/,
+    /^(?:peux tu|pourrais tu|tu peux|svp|stp|s il te plait)\s+/,
+    /^(?:لو سمحت|من فضلك|رجاء|ممكن|بتقدر|تقدر)\s+/
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of prefixes) {
+      const next = value.replace(pattern, '').trim();
+      if (next !== value) {
+        value = next;
+        changed = true;
+      }
+    }
+  }
+  return value;
+}
+
+function parseAssistantBrowserHistoryCommand(text) {
+  const t = normalizeBrowserHistoryIntentText(text);
+  if (!t || /\b(?:can t|cannot|cant|don t|do not|won t|unable)\b/.test(t)) return null;
+  if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(retour|retour en arriere|page precedente|precedent)$/.test(t)) return 'back';
+  if (/^(avance|page suivante|suivant)$/.test(t)) return 'forward';
+  if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(t)) return 'back';
+  if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(t)) return 'forward';
+  return null;
+}
+
+function parseAssistantShortcutsCommand(text) {
+  const t = normalizeBrowserHistoryIntentText(text);
+  if (!t) return false;
+  return (
+    /^(open|go to|click|configure|change|edit|show)\s+(?:keyboard\s+)?shortcuts?$/.test(t) ||
+    /^(open|go to|show)\s+(?:chrome\s+)?extensions?\s+shortcuts?$/.test(t) ||
+    /^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(t)
+  );
+}
+
 function normalizeAssistantResult(data) {
   const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';
   const answer = data && typeof data.answer === 'string' ? data.answer.trim() : '';
@@ -1292,6 +1386,22 @@ function normalizeAssistantResult(data) {
     suggestions,
     plan,
     action
+  };
+}
+
+function normalizeFeedbackStatus(status) {
+  const raw = String(status || '').trim().toLowerCase();
+  if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+    return raw;
+  }
+  return 'success';
+}
+
+function buildFeedback(status, message, details = null) {
+  return {
+    status: normalizeFeedbackStatus(status),
+    message: String(message || '').trim(),
+    details: details && typeof details === 'object' ? { ...details } : null
   };
 }
 
@@ -1314,6 +1424,65 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   if (!text) {
     await outputMessagesReady;
     return { ok: false, error: outputMessage('answer_unavailable', outputLanguage) };
+  }
+
+  const directHistoryDirection = parseAssistantBrowserHistoryCommand(text);
+  if (directHistoryDirection) {
+    const historyResult = await navigateBrowserHistory(directHistoryDirection, { sourceTabId });
+    if (!historyResult.ok) {
+      return { ok: false, error: historyResult.error || 'Browser history navigation failed.', feedback: historyResult.feedback };
+    }
+
+    await rememberAssistantTurn(sourceTabId, {
+      input: text,
+      purpose: 'answer',
+      outputLanguage,
+      speech: historyResult.speech || '',
+      detectedLanguage: options.detectedLanguage || '',
+      recognitionProvider: options.recognitionProvider || ''
+    });
+
+    return {
+      ok: true,
+      structure: null,
+      mode: 'action',
+      speech: historyResult.speech || '',
+      description: historyResult.speech || '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [{ action: 'browser_history', direction: directHistoryDirection }] },
+      action: { type: 'browser_history', direction: directHistoryDirection },
+      feedback: historyResult.feedback || null
+    };
+  }
+
+  if (parseAssistantShortcutsCommand(text)) {
+    const shortcutsResult = await openChromeShortcutsPage(outputLanguage);
+    if (!shortcutsResult.ok) {
+      return { ok: false, error: shortcutsResult.error || 'Could not open keyboard shortcuts.', feedback: shortcutsResult.feedback };
+    }
+    await rememberAssistantTurn(sourceTabId, {
+      input: text,
+      purpose: 'answer',
+      outputLanguage,
+      speech: shortcutsResult.speech || '',
+      detectedLanguage: options.detectedLanguage || '',
+      recognitionProvider: options.recognitionProvider || ''
+    });
+    return {
+      ok: true,
+      structure: null,
+      mode: 'action',
+      speech: shortcutsResult.speech || '',
+      description: shortcutsResult.speech || '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [{ action: 'open_shortcuts' }] },
+      action: { type: 'open_shortcuts' },
+      feedback: shortcutsResult.feedback || null
+    };
   }
 
   const directOpenQuery = extractAssistantOpenSiteQuery(text);
@@ -1468,12 +1637,18 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
     if (!!settings.aiEnabled && aiMode !== 'off') {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
+        const cachedFeedback = buildFeedback('success', cached.description || cached.summary || '', {
+          command: 'summarize',
+          cached: true
+        });
         if (cached.description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: cached.description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: cachedFeedback.status,
+            details: cachedFeedback.details
           });
         }
         if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
@@ -1483,7 +1658,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             silentOutput: true
           });
         }
-        return { ...cached, structure, cached: true, ok: true };
+        return { ...cached, structure, cached: true, ok: true, feedback: cachedFeedback };
       }
 
       const assistantResult = await requestAssistant(command || 'Summarize this page', outputLanguage, {
@@ -1500,13 +1675,19 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             ? ' Suggestions: ' + assistantResult.suggestions.join(' ')
             : '';
         const description = (summaryText + suggestionsText).trim();
+        const feedback = buildFeedback('success', description, {
+          command: 'summarize',
+          cached: false
+        });
 
         if (description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: feedback.status,
+            details: feedback.details
           });
         }
         if (
@@ -1528,7 +1709,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           structure,
           description,
           summary: summaryText,
-          suggestions: assistantResult.suggestions
+          suggestions: assistantResult.suggestions,
+          feedback
         };
         summaryCache.url = structure && structure.url ? structure.url : null;
         summaryCache.outputLanguage = outputLanguage;
@@ -1541,11 +1723,17 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
       await outputMessagesReady;
       const description = `${buildFriendlyOrientation(structure, outputLanguage)} ${outputMessage('ai_summaries_off', outputLanguage)}`;
+      const feedback = buildFeedback('success', description, {
+        command: 'summarize',
+        aiEnabled: false
+      });
       await sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: description,
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       });
       await rememberAssistantTurn(sourceTabId, {
         input: command,
@@ -1562,7 +1750,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
         structure,
         description,
         summary: description,
-        suggestions: []
+        suggestions: [],
+        feedback
       };
     }
   }
@@ -1570,16 +1759,35 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
   const plan = stubPlanner(command, structure, outputLanguage, !!preferIntentFallback);
 
   if (preferIntentFallback && !plan.matched && !plan.description && (!plan.steps || !plan.steps.length)) {
-    return { ok: false, error: 'Intent not understood', unhandled: true, plan: { steps: [] }, structure };
+    const error = 'Intent not understood';
+    return {
+      ok: false,
+      error,
+      unhandled: true,
+      plan: { steps: [] },
+      structure,
+      feedback: buildFeedback('failure', error, {
+        command: 'intent_fallback',
+        input: command
+      })
+    };
   }
 
+  const feedback = plan.description
+    ? buildFeedback('success', plan.description, {
+      command: isSummaryRequest ? 'summarize' : 'intent_fallback',
+      matched: !!plan.matched
+    })
+    : null;
   if (plan.description) {
     await outputMessagesReady;
     await sendToTargetTab(sourceTabId, {
       type: 'navable:announce',
       text: plan.description,
       mode: isSummaryRequest ? 'assertive' : 'polite',
-      lang: outputLocale(outputLanguage)
+      lang: outputLocale(outputLanguage),
+      status: feedback.status,
+      details: feedback.details
     });
   }
   if (plan.steps && plan.steps.length) {
@@ -1605,7 +1813,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
     });
   }
 
-  return { ok: true, plan, structure };
+  return { ok: true, plan, structure, feedback };
 }
 
 function normalizeSpokenUrl(query) {
@@ -1822,16 +2030,35 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const url = resolveOpenQueryToUrl(query);
   const sourceTabId = options.sourceTabId || null;
-  if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
+  if (!url) {
+    const error = outputMessage('missing_url', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('clarification_needed', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        newTab: newTab !== false
+      })
+    };
+  }
 
   const speech = outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) });
+  const feedback = buildFeedback('loading', speech, {
+    command: 'open_site',
+    query: String(query || '').trim(),
+    url,
+    newTab: newTab !== false
+  });
   if (options.announce !== false) {
     outputMessagesReady.then(() => (
       sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) }),
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       })
     )).catch(() => {
       // ignore announce failures (e.g., unsupported active tab)
@@ -1858,10 +2085,19 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
       outputLanguage,
       url
     });
-    return { ok: true, url, speech };
+    return { ok: true, url, speech, feedback };
   } catch (err) {
     console.warn('[Navable] openSite failed', err);
-    return { ok: false, error: outputMessage('open_website_failed', outputLanguage) };
+    const error = outputMessage('open_website_failed', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        url
+      })
+    };
   }
 }
 
@@ -1873,6 +2109,104 @@ async function resetAssistantSessionForTabNavigation(tabId, url) {
   if (!existing || !existing.host) return;
   if (existing.host !== nextHost) {
     await clearAssistantSession(tabId);
+  }
+}
+
+async function openChromeShortcutsPage(requestedOutputLanguage) {
+  void requestedOutputLanguage;
+  const url = 'chrome://extensions/shortcuts';
+  const speech = 'Opening keyboard shortcuts.';
+  const feedback = buildFeedback('success', speech, {
+    command: 'open_shortcuts',
+    url
+  });
+  try {
+    await chrome.tabs.create({ url });
+    return {
+      ok: true,
+      url,
+      speech,
+      feedback,
+      restricted: true,
+      note: 'Chrome does not allow extensions to inject page tools into chrome://extensions/shortcuts.'
+    };
+  } catch (err) {
+    const error = 'Could not open keyboard shortcuts.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'open_shortcuts',
+        url,
+        error: String(err || '')
+      })
+    };
+  }
+}
+
+async function resolveTargetTabId(sourceTabId) {
+  if (sourceTabId) return sourceTabId;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab && tab.id ? tab.id : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function navigateBrowserHistory(direction, options = {}) {
+  const dir = direction === 'forward' ? 'forward' : 'back';
+  const tabId = await resolveTargetTabId(options.sourceTabId || null);
+  if (!tabId) {
+    const error = 'No active tab available.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir
+      })
+    };
+  }
+
+  const apiName = dir === 'forward' ? 'goForward' : 'goBack';
+  if (!chrome.tabs || typeof chrome.tabs[apiName] !== 'function') {
+    const error = 'Browser history navigation is unavailable.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir,
+        tabId
+      })
+    };
+  }
+
+  try {
+    await chrome.tabs[apiName](tabId);
+    const speech = dir === 'forward' ? 'Going forward.' : 'Going back.';
+    return {
+      ok: true,
+      speech,
+      feedback: buildFeedback('success', speech, {
+        command: 'browser_history',
+        direction: dir,
+        tabId
+      })
+    };
+  } catch (err) {
+    const error = dir === 'forward' ? 'Could not go forward.' : 'Could not go back.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir,
+        tabId,
+        error: String(err || '')
+      })
+    };
   }
 }
 
@@ -1954,6 +2288,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'open site failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:browserHistory') {
+    navigateBrowserHistory(msg.direction || msg.dir || 'back', {
+      sourceTabId
+    }).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'browser history failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:openShortcuts') {
+    openChromeShortcutsPage(msg.outputLanguage).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'open shortcuts failed') });
     });
     return true;
   }

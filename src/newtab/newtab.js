@@ -3,9 +3,11 @@ function pad2(n) {
 }
 
 function formatClock(now) {
-  const h = pad2(now.getHours());
+  const hour = now.getHours();
+  const h = hour % 12 || 12;
   const m = pad2(now.getMinutes());
-  return `${h}:${m}`;
+  const period = hour >= 12 ? 'PM' : 'AM';
+  return `${h}:${m} ${period}`;
 }
 
 function formatDate(now) {
@@ -28,6 +30,154 @@ function updateHeader() {
   const greeting = document.getElementById('greeting');
   if (clock) clock.textContent = formatClock(now);
   if (greeting) greeting.textContent = `${greetingForHour(now.getHours())} • ${formatDate(now)}`;
+}
+
+const NAVABLE_PROFILE_KEY = 'navable_profile';
+const NAVABLE_SESSION_GREETED_KEY = 'navable_session_greeted';
+
+function normalizeProfileName(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+function getStorageArea(areaName) {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage[areaName]) {
+      return chrome.storage[areaName];
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return null;
+}
+
+function storageGet(areaName, defaults) {
+  const area = getStorageArea(areaName);
+  if (!area || typeof area.get !== 'function') {
+    try {
+      const source = areaName === 'session' ? window.sessionStorage : window.localStorage;
+      const result = { ...defaults };
+      Object.keys(defaults || {}).forEach((key) => {
+        const raw = source.getItem(key);
+        if (raw) result[key] = JSON.parse(raw);
+      });
+      return Promise.resolve(result);
+    } catch (_err) {
+      return Promise.resolve({ ...defaults });
+    }
+  }
+
+  return new Promise((resolve) => {
+    try {
+      area.get(defaults, (res) => {
+        resolve(res || { ...defaults });
+      });
+    } catch (_err) {
+      resolve({ ...defaults });
+    }
+  });
+}
+
+function storageSet(areaName, items) {
+  const area = getStorageArea(areaName);
+  if (!area || typeof area.set !== 'function') {
+    try {
+      const target = areaName === 'session' ? window.sessionStorage : window.localStorage;
+      Object.entries(items || {}).forEach(([key, value]) => {
+        target.setItem(key, JSON.stringify(value));
+      });
+    } catch (_err) {
+      // ignore
+    }
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    try {
+      area.set(items, () => resolve());
+    } catch (_err) {
+      resolve();
+    }
+  });
+}
+
+async function getSavedProfile() {
+  const res = await storageGet('sync', { [NAVABLE_PROFILE_KEY]: {} });
+  return (res && res[NAVABLE_PROFILE_KEY]) || {};
+}
+
+async function saveProfileName(name) {
+  const profileName = normalizeProfileName(name);
+  if (!profileName) return false;
+  await storageSet('sync', {
+    [NAVABLE_PROFILE_KEY]: {
+      name: profileName,
+      createdAt: Date.now()
+    }
+  });
+  return true;
+}
+
+async function hasGreetedThisSession() {
+  const res = await storageGet('session', { [NAVABLE_SESSION_GREETED_KEY]: false });
+  return !!(res && res[NAVABLE_SESSION_GREETED_KEY]);
+}
+
+async function markGreetedThisSession() {
+  await storageSet('session', { [NAVABLE_SESSION_GREETED_KEY]: true });
+}
+
+function setGreetingText(text) {
+  const greeting = document.getElementById('greeting');
+  if (greeting) greeting.textContent = text;
+}
+
+async function greetUserOnce(name) {
+  const profileName = normalizeProfileName(name);
+  if (!profileName || await hasGreetedThisSession()) return;
+  await markGreetedThisSession();
+  const message = `Hi ${profileName}`;
+  setGreetingText(message);
+  await ensureOutputLanguageReady();
+  announce(message, 'polite');
+}
+
+function setNameSetupOpen(open) {
+  const panel = document.getElementById('nameSetup');
+  if (!panel) return;
+  panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+  if (open) {
+    setTimeout(() => {
+      const input = document.getElementById('nameSetupInput');
+      if (input && typeof input.focus === 'function') input.focus();
+    }, 0);
+  }
+}
+
+async function initializeNewtabProfile() {
+  const profile = await getSavedProfile();
+  const profileName = normalizeProfileName(profile && profile.name);
+  if (!profileName) {
+    setNameSetupOpen(true);
+    return;
+  }
+  await greetUserOnce(profileName);
+}
+
+function wireNameSetup() {
+  const form = document.getElementById('nameSetupForm');
+  const input = document.getElementById('nameSetupInput');
+  if (!form || !input) return;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const profileName = normalizeProfileName(input.value);
+    if (!profileName) {
+      input.focus();
+      return;
+    }
+    await saveProfileName(profileName);
+    setNameSetupOpen(false);
+    await greetUserOnce(profileName);
+  });
 }
 
 function looksLikeUrl(text) {
@@ -309,6 +459,19 @@ function getVoiceStatusEls() {
   };
 }
 
+function setNewtabButtonLabel(button, label) {
+  if (!button) return;
+  const text = String(label || '');
+  button.setAttribute('aria-label', text);
+  button.setAttribute('title', text);
+  const textTarget = button.querySelector('[data-button-label]');
+  if (textTarget) {
+    textTarget.textContent = text;
+  } else if (!button.querySelector('svg')) {
+    button.textContent = text;
+  }
+}
+
 function stripOpenIntentPrefixes(transcript) {
   let s = String(transcript || '').trim().toLowerCase();
   if (!s) return '';
@@ -392,6 +555,93 @@ function extractSearchQuery(transcript) {
   return null;
 }
 
+function parseBrowserHistoryCommand(transcript) {
+  let s = String(transcript || '').trim().toLowerCase().replace(/[?!.,]+$/g, '');
+  if (!s) return null;
+  s = s
+    .replace(/\b(?:please|pls)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const politePrefixes = [
+    /^(?:hey navable|navable)\s+/,
+    /^(?:can you|could you|would you|will you)\s+/,
+    /^(?:i want to|i need to|i would like to|i'd like to|let me|please help me)\s+/,
+    /^(?:help me|show me how to)\s+/
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of politePrefixes) {
+      const next = s.replace(pattern, '').trim();
+      if (next !== s) {
+        s = next;
+        changed = true;
+      }
+    }
+  }
+  if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(s)) {
+    return { type: 'browser_history', dir: 'back' };
+  }
+  if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(s)) {
+    return { type: 'browser_history', dir: 'back' };
+  }
+  if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(s)) {
+    return { type: 'browser_history', dir: 'back' };
+  }
+  if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(s)) {
+    return { type: 'browser_history', dir: 'forward' };
+  }
+  if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(s)) {
+    return { type: 'browser_history', dir: 'forward' };
+  }
+  if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(s)) {
+    return { type: 'browser_history', dir: 'forward' };
+  }
+  if (/^(retour|retour en arriere|page precedente|précédent|precedent)$/.test(s)) {
+    return { type: 'browser_history', dir: 'back' };
+  }
+  if (/^(avance|page suivante|suivant)$/.test(s)) {
+    return { type: 'browser_history', dir: 'forward' };
+  }
+  if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(s)) {
+    return { type: 'browser_history', dir: 'back' };
+  }
+  if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(s)) {
+    return { type: 'browser_history', dir: 'forward' };
+  }
+  return null;
+}
+
+function parseSettingsCommand(transcript) {
+  const s = String(transcript || '').trim().toLowerCase().replace(/[?!.,]+$/g, '');
+  if (!s) return null;
+  if (/^(settings|options|preferences|open settings|go to settings|click settings|open options|go to options|click options)$/.test(s)) {
+    return { type: 'open_settings' };
+  }
+  if (/^(parametres|paramètres|ouvre les parametres|ouvre les paramètres|va aux parametres|va aux paramètres)$/.test(s)) {
+    return { type: 'open_settings' };
+  }
+  if (/^(الإعدادات|اعدادات|افتح الإعدادات|افتح الاعدادات|روح على الإعدادات|روح على الاعدادات)$/.test(s)) {
+    return { type: 'open_settings' };
+  }
+  return null;
+}
+
+function parseShortcutSettingsCommand(transcript) {
+  const s = String(transcript || '').trim().toLowerCase().replace(/[?!.,]+$/g, '');
+  if (!s) return null;
+  if (/^(open|go to|click|configure|change|edit|show)\s+(keyboard\s+)?shortcuts?$/.test(s)) {
+    return { type: 'open_shortcuts' };
+  }
+  if (/^(open|go to|show)\s+(chrome\s+)?extensions?\s+shortcuts?$/.test(s)) {
+    return { type: 'open_shortcuts' };
+  }
+  if (/^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(s)) {
+    return { type: 'open_shortcuts' };
+  }
+  return null;
+}
+
 function parseVoiceCommand(transcript) {
   const t = String(transcript || '').trim();
   const low = t.toLowerCase();
@@ -407,6 +657,15 @@ function parseVoiceCommand(transcript) {
   if (/^(stop|stop listening|cancel|arr[êe]te|stoppe|توقف|قف|وقف|خلاص|اسكت)$/.test(low)) {
     return { type: 'stop' };
   }
+
+  const historyCommand = parseBrowserHistoryCommand(t);
+  if (historyCommand) return historyCommand;
+
+  const settingsCommand = parseSettingsCommand(t);
+  if (settingsCommand) return settingsCommand;
+
+  const shortcutsCommand = parseShortcutSettingsCommand(t);
+  if (shortcutsCommand) return shortcutsCommand;
 
   const searchQuery = extractSearchQuery(low);
   if (searchQuery) return { type: 'open_site', query: searchQuery };
@@ -626,7 +885,7 @@ function refreshNewtabMicUi() {
 
   if (!newtabVoiceReady) {
     btn.disabled = true;
-    btn.textContent = 'Checking voice support…';
+    setNewtabButtonLabel(btn, 'Checking voice support…');
     status.textContent = 'Loading voice tools…';
     return;
   }
@@ -634,28 +893,28 @@ function refreshNewtabMicUi() {
   const supported = isVoiceSupported();
   if (!supported) {
     btn.disabled = true;
-    btn.textContent = 'Voice not available';
+    setNewtabButtonLabel(btn, 'Voice not available');
     status.textContent = 'Voice input is not available in this browser.';
     return;
   }
 
   btn.disabled = false;
   if (newtabVoiceTurnInFlight) {
-    btn.textContent = 'Working…';
+    setNewtabButtonLabel(btn, 'Working…');
     status.textContent = translate('processing_request');
     return;
   }
   if (newtabTtsPlaybackInFlight) {
-    btn.textContent = 'Speaking…';
+    setNewtabButtonLabel(btn, 'Speaking…');
     status.textContent = 'Playing Navable reply…';
     return;
   }
   if (newtabPausedForVisibility) {
-    btn.textContent = 'Listening paused';
+    setNewtabButtonLabel(btn, 'Listening paused');
     status.textContent = translate('listening_paused_hidden');
     return;
   }
-  btn.textContent = newtabWantsListening ? 'Stop listening' : 'Start listening';
+  setNewtabButtonLabel(btn, newtabWantsListening ? 'Stop listening' : 'Start listening');
   status.textContent = newtabWantsListening ? 'Listening…' : 'Not listening.';
 }
 
@@ -914,6 +1173,71 @@ async function openSiteFromVoice(query) {
   await openUrl(url);
 }
 
+async function navigateBrowserHistoryFromVoice(dir) {
+  const historyDir = dir === 'forward' ? 'forward' : 'back';
+  try {
+    if (chrome?.runtime?.sendMessage) {
+      const res = await chrome.runtime.sendMessage({
+        type: 'navable:browserHistory',
+        direction: historyDir
+      });
+      if (res?.ok) {
+        setNewtabMicMessage((res.feedback && res.feedback.message) || (historyDir === 'forward' ? translate('browser_forward') : translate('browser_back')), 'polite');
+        return;
+      }
+      setNewtabMicMessage(res?.error || translate('unknown_command'), 'assertive');
+      return;
+    }
+  } catch (_err) {
+    // fall through to page-level fallback in non-extension test contexts
+  }
+  try {
+    if (historyDir === 'forward') window.history.forward();
+    else window.history.back();
+  } catch (_err) {
+    // ignore
+  }
+  setNewtabMicMessage(historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'), 'polite');
+}
+
+async function openSettingsFromVoice() {
+  setNewtabMicMessage(translate('opening_settings'), 'polite');
+  const url = (() => {
+    const raw = chrome?.runtime?.getURL ? chrome.runtime.getURL('src/options/index.html') : '../options/index.html';
+    try {
+      const next = new URL(raw, window.location.href);
+      if (newtabWantsListening) next.searchParams.set('navableVoice', '1');
+      return next.toString();
+    } catch (_err) {
+      return raw;
+    }
+  })();
+  await openUrl(url);
+}
+
+async function openShortcutsFromVoice() {
+  setNewtabMicMessage('Opening keyboard shortcuts.', 'polite');
+  try {
+    if (chrome?.runtime?.sendMessage) {
+      const res = await chrome.runtime.sendMessage({ type: 'navable:openShortcuts' });
+      if (res?.ok) return;
+      setNewtabMicMessage(res?.error || 'Could not open keyboard shortcuts.', 'assertive');
+      return;
+    }
+  } catch (_err) {
+    // fall through
+  }
+  try {
+    if (chrome?.tabs?.create) {
+      await chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+      return;
+    }
+  } catch (_err2) {
+    // fall through
+  }
+  window.open('chrome://extensions/shortcuts', '_blank', 'noopener,noreferrer');
+}
+
 async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   const q = String(questionText || '').trim();
   if (!q) return false;
@@ -1046,6 +1370,18 @@ async function handleNewtabTranscript(transcript, detectedLanguage, provider) {
       }).catch(() => {});
       await openSiteFromVoice(cmd.query);
     }
+    if (cmd.type === 'browser_history') {
+      await languageReady;
+      await navigateBrowserHistoryFromVoice(cmd.dir);
+    }
+    if (cmd.type === 'open_settings') {
+      await languageReady;
+      await openSettingsFromVoice();
+    }
+    if (cmd.type === 'open_shortcuts') {
+      await languageReady;
+      await openShortcutsFromVoice();
+    }
     return true;
   } finally {
     finishNewtabVoiceTurn({ delayMs: 900 });
@@ -1167,9 +1503,110 @@ function wireNewtabVoice() {
   }
 }
 
+function wireNewtabRuntimeMessages() {
+  if (!chrome?.runtime?.onMessage?.addListener) return;
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.target !== 'navable:newtab') return false;
+
+    if (msg.type === 'navable:getSpeechStatus') {
+      sendResponse({
+        ok: true,
+        supports: isVoiceSupported(),
+        listening: !!newtabWantsListening
+      });
+      return false;
+    }
+
+    if (msg.type === 'speech') {
+      const action = String(msg.action || '');
+      Promise.resolve()
+        .then(async () => {
+          if (action === 'toggle') await toggleNewtabListening();
+          else if (action === 'start') await startNewtabListening();
+          else if (action === 'stop') stopNewtabListening({ announce: true });
+          else return { ok: false, error: 'Unknown speech action.' };
+          return {
+            ok: true,
+            supports: isVoiceSupported(),
+            listening: !!newtabWantsListening
+          };
+        })
+        .then(sendResponse)
+        .catch((err) => {
+          sendResponse({ ok: false, error: String(err || 'Speech action failed.') });
+        });
+      return true;
+    }
+
+    if (msg.type === 'navable:runTypedCommand') {
+      const text = String(msg.text || '').trim();
+      if (!text) {
+        sendResponse({ ok: false, error: 'Type a command or question first.' });
+        return false;
+      }
+      handleNewtabTranscript(text, msg.detectedLanguage || '', 'typed')
+        .then(() => {
+          sendResponse({
+            ok: true,
+            speech: 'The new tab handled the typed command.',
+            feedback: {
+              status: 'success',
+              message: 'The new tab handled the typed command.'
+            }
+          });
+        })
+        .catch((err) => {
+          sendResponse({ ok: false, error: String(err || 'Typed command failed.') });
+        });
+      return true;
+    }
+
+    sendResponse({ ok: false, error: 'This command is not available on the Navable start page.' });
+    return false;
+  });
+}
+
+function consumeStartupFallbackParams() {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search || '');
+  } catch (_err) {
+    return;
+  }
+
+  const command = String(params.get('navableCommand') || '').trim();
+  const startVoice = params.get('navableVoice') === '1';
+  if (!command && !startVoice) return;
+
+  try {
+    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  } catch (_err) {
+    // ignore
+  }
+
+  setTimeout(() => {
+    if (command) {
+      handleNewtabTranscript(command, '', 'typed').catch((err) => {
+        console.warn('[Navable] startup fallback command failed', err);
+      });
+      return;
+    }
+    if (startVoice) {
+      startNewtabListening().catch((err) => {
+        console.warn('[Navable] startup fallback voice failed', err);
+      });
+    }
+  }, 250);
+}
+
 function wireNewtab() {
   updateHeader();
   setInterval(updateHeader, 10_000);
+  wireNameSetup();
+  initializeNewtabProfile().catch(() => {});
+  wireNewtabRuntimeMessages();
+  consumeStartupFallbackParams();
 
   const searchForm = document.getElementById('searchForm');
   const searchInput = document.getElementById('searchInput');

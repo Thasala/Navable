@@ -77,8 +77,119 @@ function saveSettings() {
   });
 }
 
+function setButtonLabel(button, label) {
+  if (!button) return;
+  const text = String(label || '');
+  button.setAttribute('aria-label', text);
+  button.setAttribute('title', text);
+  const labelTarget = button.querySelector('[data-button-label]');
+  if (labelTarget) labelTarget.textContent = text;
+  else if (!button.querySelector('svg')) button.textContent = text;
+}
+
+function setVoiceStatus(text) {
+  const status = document.getElementById('micStatus');
+  if (status) status.textContent = text || '';
+}
+
+function optionsVoiceTools() {
+  return window.NavableTools || null;
+}
+
+function optionsSpeechStatus() {
+  const tools = optionsVoiceTools();
+  if (!tools || typeof tools.getSpeechStatus !== 'function') {
+    return { ok: false, supports: false, listening: false };
+  }
+  return tools.getSpeechStatus();
+}
+
+function refreshOptionsVoiceUi() {
+  const btn = document.getElementById('btnMicToggle');
+  if (!btn) return;
+  const status = optionsSpeechStatus();
+  if (!status.supports) {
+    btn.disabled = true;
+    setButtonLabel(btn, 'Voice not available');
+    setVoiceStatus('Voice input is not available in this browser.');
+    return;
+  }
+  btn.disabled = false;
+  btn.setAttribute('aria-pressed', status.listening ? 'true' : 'false');
+  setButtonLabel(btn, status.listening ? 'Stop listening' : 'Start listening');
+  setVoiceStatus(status.listening ? 'Listening...' : 'Voice tools are ready for this settings page.');
+}
+
+function startOptionsListening() {
+  const tools = optionsVoiceTools();
+  if (!tools || typeof tools.startListening !== 'function') {
+    setVoiceStatus('Voice tools are still loading.');
+    return;
+  }
+  tools.startListening({ announce: true });
+  refreshOptionsVoiceUi();
+}
+
+function toggleOptionsListening() {
+  const tools = optionsVoiceTools();
+  if (!tools || typeof tools.toggleListening !== 'function') {
+    setVoiceStatus('Voice tools are still loading.');
+    return;
+  }
+  tools.toggleListening();
+  setTimeout(refreshOptionsVoiceUi, 80);
+}
+
+function consumeStartupVoiceParams() {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search || '');
+  } catch (_err) {
+    return;
+  }
+  const startVoice = params.get('navableVoice') === '1';
+  const command = String(params.get('navableCommand') || '').trim();
+  if (!startVoice && !command) return;
+
+  try {
+    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  } catch (_err) {
+    // ignore
+  }
+
+  setTimeout(() => {
+    if (startVoice) startOptionsListening();
+    if (command && optionsVoiceTools() && typeof optionsVoiceTools().handleTranscript === 'function') {
+      optionsVoiceTools().handleTranscript(command, '', 'typed').finally(refreshOptionsVoiceUi);
+    }
+  }, 250);
+}
+
+function wireOptionsVoice() {
+  refreshOptionsVoiceUi();
+  setTimeout(refreshOptionsVoiceUi, 350);
+  setInterval(refreshOptionsVoiceUi, 1500);
+  const btn = document.getElementById('btnMicToggle');
+  if (btn) btn.addEventListener('click', toggleOptionsListening);
+  consumeStartupVoiceParams();
+  window.addEventListener('navable:output-open', () => {
+    setTimeout(refreshOptionsVoiceUi, 100);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
+  const backButton = document.getElementById('btnBack');
+  if (backButton) {
+    backButton.addEventListener('click', () => {
+      if (window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+      window.location.href = '../newtab/newtab.html';
+    });
+  }
   document.body.addEventListener('change', (e) => {
     if (
       e.target &&
@@ -100,4 +211,5 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+  wireOptionsVoice();
 });

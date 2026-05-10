@@ -3,8 +3,90 @@ function isSupportedTab(tab) {
   return /^https?:/i.test(tab.url) || /^file:/i.test(tab.url);
 }
 
+async function getActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab || null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function navableExtensionPageInfo(tab) {
+  if (!tab || !tab.url) return null;
+  try {
+    const activeUrl = new URL(tab.url);
+    const rootUrl = new URL(chrome.runtime.getURL(''));
+    if (activeUrl.origin !== rootUrl.origin) return null;
+    const path = activeUrl.pathname;
+    if (path === '/src/newtab/newtab.html') return { kind: 'newtab', path };
+    if (path === '/src/options/index.html') return { kind: 'options', path };
+  } catch (_err) {
+    return null;
+  }
+  return null;
+}
+
+function canUseActivePageTools(tab) {
+  return isSupportedTab(tab) || !!navableExtensionPageInfo(tab);
+}
+
+function navableStartUrl(params = {}) {
+  const url = new URL(chrome.runtime.getURL('src/newtab/newtab.html'));
+  Object.entries(params).forEach(([key, value]) => {
+    const text = String(value || '').trim();
+    if (text) url.searchParams.set(key, text);
+  });
+  return url.toString();
+}
+
+async function openNavableStartFallback(params = {}) {
+  const url = navableStartUrl(params);
+  try {
+    if (chrome?.tabs?.create) {
+      await chrome.tabs.create({ url });
+      return true;
+    }
+  } catch (_err) {
+    // fall through
+  }
+  try {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+async function sendToNewtabPage(payload) {
+  try {
+    return await chrome.runtime.sendMessage({
+      ...payload,
+      target: 'navable:newtab'
+    });
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function sendToExtensionPage(payload, tab) {
+  const info = navableExtensionPageInfo(tab);
+  if (!info) return null;
+  if (info.kind === 'newtab') return sendToNewtabPage(payload);
+  try {
+    return await chrome.runtime.sendMessage({
+      ...payload,
+      target: 'navable:extension-page',
+      pagePath: info.path
+    });
+  } catch (_err) {
+    return null;
+  }
+}
+
 async function sendToActiveTab(payload) {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await getActiveTab();
+  if (navableExtensionPageInfo(tab)) return sendToExtensionPage(payload, tab);
   if (!isSupportedTab(tab)) return null;
   try {
     return await chrome.tabs.sendMessage(tab.id, payload);
@@ -27,6 +109,19 @@ function setDescription(text) {
   el.textContent = text || '';
 }
 
+function setButtonLabel(button, label) {
+  if (!button) return;
+  const text = String(label || '');
+  button.setAttribute('aria-label', text);
+  button.setAttribute('title', text);
+  const textTarget = button.querySelector('[data-button-label]');
+  if (textTarget) {
+    textTarget.textContent = text;
+  } else if (!button.querySelector('svg')) {
+    button.textContent = text;
+  }
+}
+
 function setTypedCommandAvailability(enabled, hintText) {
   const input = document.getElementById('typedCommandInput');
   const button = document.getElementById('btnTypedSend');
@@ -39,10 +134,19 @@ function setTypedCommandAvailability(enabled, hintText) {
 function setHelpPanelState(helpBtn, helpPanel, open) {
   if (!helpBtn || !helpPanel) return;
   const isOpen = !!open;
-  helpPanel.style.display = isOpen ? 'grid' : 'none';
+  helpPanel.style.display = isOpen ? 'flex' : 'none';
   helpPanel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
   helpBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-  helpBtn.textContent = isOpen ? 'Hide examples' : 'Show examples';
+  const label = isOpen ? 'Hide examples' : 'Show examples';
+  helpBtn.setAttribute('aria-label', label);
+  helpBtn.setAttribute('title', label);
+  helpBtn.classList.toggle('is-active', isOpen);
+  const textTarget = helpBtn.querySelector('[data-help-label]');
+  if (textTarget) {
+    textTarget.textContent = label;
+  } else if (!helpBtn.querySelector('svg')) {
+    helpBtn.textContent = label;
+  }
 }
 
 async function refreshMicStatus() {
@@ -50,21 +154,28 @@ async function refreshMicStatus() {
   const statusEl = document.getElementById('micStatus');
   if (!btn || !statusEl) return;
   try {
+    const tab = await getActiveTab();
+    if (!canUseActivePageTools(tab)) {
+      btn.disabled = false;
+      setButtonLabel(btn, 'Use Navable start page');
+      statusEl.textContent = 'This page is unsupported. Use the Navable start page fallback for voice.';
+      return;
+    }
     const res = await sendToActiveTab({ type: 'navable:getSpeechStatus' });
     if (!res) {
       btn.disabled = true;
-      btn.textContent = 'Open a page to use voice';
+      setButtonLabel(btn, 'Open a page to use voice');
       statusEl.textContent = 'Voice tools work on web pages (http/https).';
       return;
     }
     if (!res || !res.ok || !res.supports) {
       btn.disabled = true;
-      btn.textContent = 'Voice not available';
+      setButtonLabel(btn, 'Voice not available');
       statusEl.textContent = 'Voice input not available in this browser/page.';
       return;
     }
     btn.disabled = false;
-    btn.textContent = res.listening ? 'Stop listening' : 'Start listening';
+    setButtonLabel(btn, res.listening ? 'Stop listening' : 'Start listening');
     statusEl.textContent = res.listening ? 'Listening…' : 'Not listening.';
   } catch (e) {
     console.error(e);
@@ -72,7 +183,7 @@ async function refreshMicStatus() {
     const status2 = document.getElementById('micStatus');
     if (btn2 && status2) {
       btn2.disabled = true;
-      btn2.textContent = 'Voice not available';
+      setButtonLabel(btn2, 'Voice not available');
       status2.textContent = 'Voice input not available in this browser/page.';
     }
   }
@@ -80,9 +191,9 @@ async function refreshMicStatus() {
 
 async function refreshTypedCommandState() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!isSupportedTab(tab)) {
-      setTypedCommandAvailability(false, 'Open an http, https, or file page to send a typed test command.');
+    const tab = await getActiveTab();
+    if (!canUseActivePageTools(tab)) {
+      setTypedCommandAvailability(true, 'This page is unsupported. Typed commands will open in the Navable start page fallback.');
       return;
     }
     setTypedCommandAvailability(true, 'Uses the same parser and assistant path as voice. Press Ctrl+Enter or Cmd+Enter to send.');
@@ -184,6 +295,17 @@ async function handleTypedCommandSubmit(event) {
   try {
     setStatus('Sending typed command…');
     setDescription('');
+    const tab = await getActiveTab();
+    if (!canUseActivePageTools(tab)) {
+      const opened = await openNavableStartFallback({ navableCommand: q });
+      if (opened) {
+        setStatus('Opened Navable fallback.');
+        setDescription('The typed command will run on the Navable start page.');
+      } else {
+        setStatus('Could not open Navable fallback.', true);
+      }
+      return;
+    }
     const res = await sendToActiveTab({ type: 'navable:runTypedCommand', text: q });
     if (!res) {
       setStatus('Open a supported page to send a typed test command.', true);
@@ -207,6 +329,12 @@ function wirePopup() {
     micBtn.addEventListener('click', async () => {
       try {
         const statusEl = document.getElementById('micStatus');
+        const tab = await getActiveTab();
+        if (!canUseActivePageTools(tab)) {
+          if (statusEl) statusEl.textContent = 'Opening Navable start page fallback…';
+          await openNavableStartFallback({ navableVoice: '1' });
+          return;
+        }
         if (statusEl) statusEl.textContent = 'Toggling microphone…';
         await sendToActiveTab({ type: 'speech', action: 'toggle' });
         setTimeout(refreshMicStatus, 300);
@@ -236,6 +364,13 @@ function wirePopup() {
       const isOpen = helpPanel.getAttribute('aria-hidden') !== 'false';
       setHelpPanelState(helpBtn, helpPanel, isOpen);
     });
+    const helpCloseBtn = document.getElementById('btnHelpClose');
+    if (helpCloseBtn) {
+      helpCloseBtn.addEventListener('click', () => {
+        setHelpPanelState(helpBtn, helpPanel, false);
+        helpBtn.focus();
+      });
+    }
   }
 
   const typedForm = document.getElementById('typedCommandForm');

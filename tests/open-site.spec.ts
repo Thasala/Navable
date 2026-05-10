@@ -67,6 +67,59 @@ test('requestAssistant treats polite open-site phrasing as an action', async ({ 
   expect(created).toContain(res.url);
 });
 
+test('requestAssistant treats browser history phrasing as an action', async ({ page }) => {
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  const res = await page.evaluate(async () => {
+    const originalFetch = window.fetch;
+    // The direct routing should handle this before the backend assistant is called.
+    // @ts-ignore
+    window.fetch = async () => { throw new Error('backend assistant should not be called'); };
+    try {
+      // @ts-ignore - background.js defines this in the test context
+      return await (window as any).requestAssistant('can you please go back to the previous page', 'en');
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+
+  expect(res.ok).toBe(true);
+  expect(res.mode).toBe('action');
+  expect(res.action).toEqual({ type: 'browser_history', direction: 'back' });
+
+  const historyAction = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._lastHistoryAction || null;
+  });
+  expect(historyAction).toEqual({ direction: 'back', tabId: 1 });
+});
+
+test('requestAssistant treats keyboard shortcut phrasing as an extension action', async ({ page }) => {
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  const res = await page.evaluate(async () => {
+    const originalFetch = window.fetch;
+    // @ts-ignore
+    window.fetch = async () => { throw new Error('backend assistant should not be called'); };
+    try {
+      // @ts-ignore - background.js defines this in the test context
+      return await (window as any).requestAssistant('open keyboard shortcuts', 'en');
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+
+  expect(res.ok).toBe(true);
+  expect(res.mode).toBe('action');
+  expect(res.action).toEqual({ type: 'open_shortcuts' });
+
+  const created = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._created || [];
+  });
+  expect(created).toContain('chrome://extensions/shortcuts');
+});
+
 test('requestAssistant executes assistant-returned open-site actions instead of speaking a denial', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 

@@ -315,8 +315,34 @@
   );
 
   // Runtime messaging (guarded for non-extension test runs)
+  function isNavableExtensionPageContext() {
+    try {
+      if (window.location.protocol !== 'chrome-extension:') return false;
+      if (!chrome || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') return true;
+      return window.location.origin === new URL(chrome.runtime.getURL('')).origin;
+    } catch (_err) {
+      return window.location.protocol === 'chrome-extension:';
+    }
+  }
+
+  function shouldHandleRuntimeMessage(msg) {
+    if (!msg || !msg.target) return true;
+    var target = String(msg.target || '');
+    if (target === 'navable:content') return true;
+    if (target !== 'navable:extension-page') return false;
+    if (!isNavableExtensionPageContext()) return false;
+    var pagePath = String(msg.pagePath || '').trim();
+    if (!pagePath) return true;
+    try {
+      return window.location.pathname === new URL(pagePath, window.location.origin).pathname;
+    } catch (_err) {
+      return window.location.pathname === pagePath;
+    }
+  }
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!shouldHandleRuntimeMessage(msg)) return false;
       if (msg && msg.type === 'announce') {
         announce(msg.text || translate('generic_announcement'), {
           mode: msg.mode || 'polite',
@@ -328,12 +354,18 @@
       if (msg && msg.type === 'navable:announce') {
         if (msg.lang) outputLanguage = normalizeOutputLanguage(msg.lang);
         ensureOutputLanguageReady(outputLanguage).finally(function () {
-          announce(msg.text || translate('generic_announcement'), {
+          var announcedText = msg.text || translate('generic_announcement');
+          rememberCommandFeedback({
+            status: msg.status || 'success',
+            message: announcedText,
+            details: msg.details || null
+          });
+          announce(announcedText, {
             mode: msg.mode || 'polite',
             priority: !!msg.priority,
             lang: msg.lang || outputLocale(currentOutputLanguage())
           });
-          sendResponse && sendResponse({ ok: true });
+          sendResponse && sendResponse({ ok: true, feedback: getLatestCommandFeedback() });
         });
         return true;
       }
@@ -347,8 +379,13 @@
         return true;
       }
       if (msg && msg.type === 'navable:runTypedCommand') {
-        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (handled) {
-          sendResponse && sendResponse({ ok: !!handled, speech: lastSpoken || '' });
+        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (feedback) {
+          var normalized = feedbackForResponse(feedback, 'success');
+          sendResponse && sendResponse({
+            ok: !!feedback,
+            speech: normalized.message || '',
+            feedback: normalized
+          });
         }).catch(function (err) {
           sendResponse && sendResponse({ ok: false, error: String(err || 'typed command failed') });
         });
@@ -613,7 +650,8 @@
       if (t) return t;
     }
     // inputs: associated <label>
-    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+    var elementTag = String((el && el.tagName) || '').toUpperCase();
+    if (elementTag === 'INPUT' || elementTag === 'SELECT' || elementTag === 'TEXTAREA') {
       // by for=
       var id = el.id && el.id.trim();
       if (id) {
@@ -623,7 +661,7 @@
       // wrapped label
       var p = el.parentElement;
       while (p && p !== el.ownerDocument.body) {
-        if (p.tagName === 'LABEL' && p.textContent) return p.textContent.trim();
+        if (String((p && p.tagName) || '').toUpperCase() === 'LABEL' && p.textContent) return p.textContent.trim();
         p = p.parentElement;
       }
       // placeholder or value/title
@@ -652,7 +690,7 @@
       if (t) return t;
     }
     // button-like input values
-    if (el.tagName === 'INPUT') {
+    if (elementTag === 'INPUT') {
       var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'button' || inputType === 'submit' || inputType === 'reset') {
         var buttonValue = el.getAttribute('value');
@@ -669,7 +707,7 @@
       t = humanizeIdentifier(elementId);
       if (t) return t;
     }
-    if (el.tagName === 'A' && el.getAttribute) {
+    if (elementTag === 'A' && el.getAttribute) {
       t = humanizeUrlFragment(el.getAttribute('href') || '');
       if (t) return t;
     }
@@ -734,7 +772,7 @@
       return 'unlabeled button';
     }
     if (type === 'input') {
-      var inputType = String((el.getAttribute && el.getAttribute('type')) || (el.tagName || '')).toLowerCase();
+      var inputType = String((el.getAttribute && el.getAttribute('type')) || ((el && el.tagName) || '')).toLowerCase();
       if (inputType) return humanizeIdentifier(inputType) || 'input';
       return 'input';
     }
@@ -1060,7 +1098,7 @@
 
   function isSemanticallyDiscoverableActionable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'button' || tag === 'summary') return true;
     if (tag === 'label' && el.getAttribute && el.getAttribute('for')) {
@@ -1077,7 +1115,7 @@
 
   function isNativelyFocusable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     if (/^(input|select|textarea|button|summary)$/.test(tag)) return true;
     if (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) return true;
     return getTabIndexValue(el) != null;
@@ -1106,7 +1144,7 @@
   }
 
   function getType(el) {
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'a' || role === 'link') return 'link';
     if (/^h[1-6]$/.test(tag)) return 'heading';
@@ -1208,7 +1246,7 @@
     if (!el.dataset.navableId) el.dataset.navableId = nextId();
     el.dataset.navableLabel = label;
     el.dataset.navableType = type;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var item = {
       id: el.dataset.navableId,
       label: label,
@@ -1242,7 +1280,7 @@
     pushAlias(el.getAttribute('value'));
     pushAlias(humanizeIdentifier(el.getAttribute('name')));
     pushAlias(humanizeIdentifier(el.id || ''));
-    if ((el.tagName || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
+    if (((el && el.tagName) || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
     return aliases;
   }
 
@@ -1327,7 +1365,7 @@
         if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
         seen.add(el);
         var role = el.getAttribute && el.getAttribute('role');
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var label = textOf(el);
         if (!label) {
           var h = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6');
@@ -1360,7 +1398,7 @@
         if (parts.length >= 24) break;
         var el = nodes[i];
         if (isHidden(el) || isNavableUiElement(el)) continue;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         if (tag === 'label') {
           var control = null;
           var forId = el.getAttribute && el.getAttribute('for');
@@ -1429,7 +1467,7 @@
             return;
           }
           if (sensitiveInput) sensitiveInputCount += 1;
-          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
+          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (((el && el.tagName) || '')).toLowerCase();
           entry.name = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('name')) || '');
           entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
           entry.placeholder = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('placeholder')) || '');
@@ -1570,7 +1608,7 @@
         if (!el || seen.has(el)) return;
         seen.add(el);
         if (isHidden(el) || isNavableUiElement(el)) return;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
         if (tag === 'input' && /^(hidden|button|submit|reset|image|file)$/.test(inputType)) return;
         controls.push(el);
@@ -1893,7 +1931,7 @@
 
   function buildFormFieldDescriptor(el) {
     if (!el) return null;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var inputType = String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase();
     if (inputType === 'radio') return null;
     if (inputType === 'checkbox') {
@@ -1943,7 +1981,7 @@
     var container = group.container;
     if (container && (container.tagName || '').toLowerCase() === 'form') score += 12;
     group.controls.forEach(function (control) {
-      var tag = (control.tagName || '').toLowerCase();
+      var tag = ((control && control.tagName) || '').toLowerCase();
       var inputType = String((control.getAttribute && control.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'password') score += 40;
       if (inputType === 'email') score += 24;
@@ -2001,7 +2039,7 @@
         if (seenRadioGroups.has(radioKey)) return;
         seenRadioGroups.add(radioKey);
         var radios = group.controls.filter(function (candidate) {
-          return candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
+          return candidate && candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
             String(candidate.name || candidate.getAttribute('name') || '') === String(control.name || control.getAttribute('name') || '');
         });
         if (!radios.length) radios = [control];
@@ -2108,7 +2146,7 @@
     if (!field || field.kind !== 'text') return false;
     var element = field.elements && field.elements[0];
     if (!element) return false;
-    var tag = String(element.tagName || '').toLowerCase();
+    var tag = String((element && element.tagName) || '').toLowerCase();
     if (tag === 'textarea' || !!element.isContentEditable) return true;
     var rows = Number((element.getAttribute && element.getAttribute('rows')) || 0);
     if (rows >= 3) return true;
@@ -2189,12 +2227,39 @@
     return value;
   }
 
+  function buildEmailTailValue(parts) {
+    var emailParts = cloneEmailParts(parts);
+    if (!emailParts.domain) return '';
+    return emailParts.domain + (emailParts.suffix ? '.' + emailParts.suffix : '');
+  }
+
   function buildEmailFieldValueUpToSegment(parts, segment) {
     var emailParts = cloneEmailParts(parts);
     if (!emailParts.local) return '';
     if (segment === 'local') return emailParts.local;
     if (segment === 'domain') return buildEmailFieldValue({ local: emailParts.local, domain: emailParts.domain });
+    if (segment === 'tail') return buildEmailFieldValue(emailParts);
     return buildEmailFieldValue(emailParts);
+  }
+
+  function parseEmailTailParts(text) {
+    var normalized = normalizeEmailSpeechText(text);
+    if (!normalized) return null;
+    var tail = normalized;
+    var atIndex = tail.indexOf('@');
+    if (atIndex >= 0) tail = tail.slice(atIndex + 1);
+    tail = tail.replace(/^@+/g, '').trim();
+    if (!tail) return null;
+    var firstDot = tail.indexOf('.');
+    var domain = firstDot >= 0
+      ? sanitizeEmailDomainLabelText(tail.slice(0, firstDot))
+      : sanitizeEmailDomainLabelText(tail);
+    var suffix = firstDot >= 0 ? sanitizeEmailSuffixText(tail.slice(firstDot + 1)) : '';
+    if (!domain) return null;
+    return {
+      domain: domain,
+      suffix: suffix
+    };
   }
 
   function parseEmailParts(text) {
@@ -2205,15 +2270,11 @@
     var local = sanitizeEmailLocalPartText(normalized.slice(0, atIndex));
     if (!local) return null;
     var afterAt = normalized.slice(atIndex + 1);
-    var lastDot = afterAt.lastIndexOf('.');
-    var domain = lastDot >= 0
-      ? sanitizeEmailDomainLabelText(afterAt.slice(0, lastDot))
-      : sanitizeEmailDomainLabelText(afterAt);
-    var suffix = lastDot >= 0 ? sanitizeEmailSuffixText(afterAt.slice(lastDot + 1)) : '';
+    var tailParts = parseEmailTailParts(afterAt);
     return {
       local: local,
-      domain: domain,
-      suffix: suffix
+      domain: tailParts && tailParts.domain ? tailParts.domain : '',
+      suffix: tailParts && tailParts.suffix ? tailParts.suffix : ''
     };
   }
 
@@ -2230,12 +2291,14 @@
   function nextEmailSegment(segment) {
     if (segment === 'local') return 'domain';
     if (segment === 'domain') return 'suffix';
+    if (segment === 'tail') return '';
     return '';
   }
 
   function emailSegmentTranslationKey(segment) {
     if (segment === 'local') return 'form_email_segment_local';
     if (segment === 'domain') return 'form_email_segment_domain';
+    if (segment === 'tail') return 'form_email_segment_tail';
     return 'form_email_segment_suffix';
   }
 
@@ -2601,6 +2664,9 @@
         });
       }
       if (pending.mode === 'await_email_segment') {
+        if (pending.emailSegment === 'tail') {
+          return translate('form_email_prompt_tail', { label: label });
+        }
         return translate('form_email_prompt_segment', {
           label: label,
           segment: translateEmailSegment(pending.emailSegment)
@@ -2687,20 +2753,58 @@
   function applyEmailSegmentValue(session, field, segment, rawSegmentValue, details) {
     if (!session || !field || !segment) return false;
     var emailParts = cloneEmailParts(details && details.emailParts || null);
-    var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
-    if (!normalizedSegment) {
-      speak(translate('form_fill_missing_value'));
-      return false;
+    var pendingSegment = segment;
+    var speechValue = '';
+    var nextValue = '';
+    if (segment === 'tail') {
+      var tailParts = parseEmailTailParts(rawSegmentValue);
+      if (!tailParts || !tailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = tailParts.domain;
+      emailParts.suffix = tailParts.suffix || '';
+      if (emailParts.suffix) {
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        pendingSegment = 'domain';
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else if (segment === 'domain') {
+      var domainTailParts = parseEmailTailParts(rawSegmentValue);
+      if (!domainTailParts || !domainTailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = domainTailParts.domain;
+      emailParts.suffix = domainTailParts.suffix || '';
+      if (emailParts.suffix) {
+        pendingSegment = 'tail';
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else {
+      var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
+      if (!normalizedSegment) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts[segment] = normalizedSegment;
+      speechValue = normalizedSegment;
+      nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     }
-    emailParts[segment] = normalizedSegment;
     var previousState = details && details.previousState ? details.previousState : getFormFieldCurrentState(field);
-    var nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     var el = field.elements && field.elements[0];
     if (!el || !applyTextValueToElement(el, nextValue)) {
       speak(translate('not_found_generic', { target: translate('target_input') }));
       return false;
     }
-    return setPendingEmailSegment(session, field, segment, normalizedSegment, {
+    return setPendingEmailSegment(session, field, pendingSegment, speechValue, {
       fieldIndex: Number(details && details.fieldIndex != null ? details.fieldIndex : session.currentIndex || 0),
       correctionCount: Math.max(0, Number(details && details.correctionCount || 0)),
       previousState: previousState,
@@ -2746,6 +2850,26 @@
         label: field.label || translate('target_input'),
         segment: translateEmailSegment(currentSegment)
       });
+      if (currentSegment === 'local') {
+        speak(savedSegment);
+        if (emailParts.domain && emailParts.suffix) {
+          return applyEmailSegmentValue(session, field, 'tail', buildEmailTailValue(emailParts), {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        if (emailParts.domain) {
+          return applyEmailSegmentValue(session, field, 'domain', emailParts.domain, {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        return promptForNextEmailSegment(session, field, 'tail', emailParts);
+      }
       if (emailParts[nextSegment]) {
         speak(savedSegment);
         return applyEmailSegmentValue(session, field, nextSegment, emailParts[nextSegment], {
@@ -2904,7 +3028,7 @@
 
   function applyTextValueToElement(el, value) {
     if (!el) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var isInput = tag === 'input' || tag === 'textarea';
     var isSelect = tag === 'select';
     var isContentEditable = !!el.isContentEditable;
@@ -3109,7 +3233,7 @@
       var normalized = normalizeMatchText(label);
       if (!normalized) return null;
       var score = 0;
-      if ((el.tagName || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
+      if (((el && el.tagName) || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
       submitWords.forEach(function (word) {
         var normalizedWord = normalizeMatchText(word);
         if (normalized === normalizedWord) score += 60;
@@ -3264,6 +3388,15 @@
       await execCommand({ type: 'scroll', dir: step.direction || step.dir || 'down' });
       return { ok: true, message: 'Scrolled ' + (step.direction || step.dir || 'down') };
     }
+    if (action === 'browser_history') {
+      var historyDir = step.direction || step.dir || 'back';
+      await execCommand({ type: 'browser_history', dir: historyDir === 'forward' ? 'forward' : 'back' });
+      return { ok: true, message: historyDir === 'forward' ? 'Went forward' : 'Went back' };
+    }
+    if (action === 'open_shortcuts') {
+      await execCommand({ type: 'open_shortcuts' });
+      return { ok: true, message: 'Opened keyboard shortcuts' };
+    }
     if (action === 'announce') {
       speak(step.message || '');
       return { ok: true, message: 'Announced' };
@@ -3315,7 +3448,7 @@
         return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label, step) };
       }
       var elin = fillResolution.element;
-      var isInput = elin.tagName === 'INPUT' || elin.tagName === 'TEXTAREA';
+      var isInput = String((elin && elin.tagName) || '').toUpperCase() === 'INPUT' || String((elin && elin.tagName) || '').toUpperCase() === 'TEXTAREA';
       var isContentEditable = elin.isContentEditable;
       if (!isInput && !isContentEditable) return { ok: false, message: 'Target not fillable' };
       if (isSensitiveInput(elin)) return { ok: false, message: 'Refused to fill sensitive field' };
@@ -3390,6 +3523,7 @@
   var manualListening = null; // null = follow autostart; true = force on; false = force off
   var settingsLoaded = false;
   var lastSpoken = '';
+  var lastCommandFeedback = null;
   var lastUnknownCmdAt = 0;
   var lastMicBusyAt = 0;
   var recogLang = 'en-US';
@@ -3407,6 +3541,109 @@
   var ttsPlaybackInFlight = false;
   var ttsPlaybackToken = 0;
   var ttsPlaybackResumeTimer = null;
+
+  function normalizeFeedbackStatus(status) {
+    var raw = String(status || '').trim().toLowerCase();
+    if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+      return raw;
+    }
+    return 'success';
+  }
+
+  function cloneFeedbackDetails(details) {
+    if (!details || typeof details !== 'object') return null;
+    if (Array.isArray(details)) return details.slice();
+    return Object.keys(details).reduce(function (acc, key) {
+      var value = details[key];
+      acc[key] = Array.isArray(value) ? value.slice() : value;
+      return acc;
+    }, {});
+  }
+
+  function createCommandFeedback(status, message, details) {
+    return {
+      status: normalizeFeedbackStatus(status),
+      message: String(message || '').trim(),
+      details: cloneFeedbackDetails(details)
+    };
+  }
+
+  function rememberCommandFeedback(feedback) {
+    var normalized = createCommandFeedback(
+      feedback && feedback.status,
+      feedback && feedback.message,
+      feedback && feedback.details
+    );
+    if (!normalized.message && lastCommandFeedback && lastCommandFeedback.message) {
+      normalized.message = lastCommandFeedback.message;
+      if (!normalized.details && lastCommandFeedback.details) normalized.details = cloneFeedbackDetails(lastCommandFeedback.details);
+    }
+    lastCommandFeedback = normalized;
+    if (normalized.message) lastSpoken = normalized.message;
+    return normalized;
+  }
+
+  function getLatestCommandFeedback() {
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return createCommandFeedback(lastCommandFeedback.status, lastCommandFeedback.message, lastCommandFeedback.details);
+    }
+    if (lastSpoken) return createCommandFeedback('success', lastSpoken);
+    return createCommandFeedback('success', '');
+  }
+
+  function feedbackForResponse(feedback, fallbackStatus, fallbackMessage, details) {
+    if (feedback && typeof feedback === 'object' && typeof feedback.status === 'string') {
+      return rememberCommandFeedback(feedback);
+    }
+    if (feedback && typeof feedback === 'object' && feedback.feedback && typeof feedback.feedback.status === 'string') {
+      return rememberCommandFeedback(feedback.feedback);
+    }
+    var message = String(fallbackMessage || '').trim();
+    if (message) {
+      return rememberCommandFeedback({
+        status: fallbackStatus || 'success',
+        message: message,
+        details: details || null
+      });
+    }
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return getLatestCommandFeedback();
+    }
+    return rememberCommandFeedback({
+      status: fallbackStatus || 'success',
+      message: lastSpoken || '',
+      details: details || null
+    });
+  }
+
+  function speakFeedback(feedback, opts) {
+    var normalized = feedbackForResponse(feedback, 'success');
+    if (normalized.message) speak(normalized.message, opts || {});
+    return normalized;
+  }
+
+  function resolutionFeedbackStatus(resolution) {
+    return resolution && resolution.reason === 'ambiguous' ? 'clarification_needed' : 'failure';
+  }
+
+  function buildResolutionFeedbackDetails(type, resolution, label) {
+    var pending = getPendingDisambiguation();
+    return {
+      targetType: type || 'element',
+      reason: resolution && resolution.reason ? resolution.reason : 'not_found',
+      label: String(label || '').trim(),
+      options: pending && Array.isArray(pending.options)
+        ? pending.options.map(function (option) {
+          return {
+            index: option.index,
+            summary: option.summary || '',
+            label: option.label || '',
+            type: option.type || ''
+          };
+        })
+        : []
+    };
+  }
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -4045,28 +4282,47 @@
 
   async function tryPendingDisambiguationFollowUp(text) {
     var pending = getPendingDisambiguation();
-    if (!pending) return false;
+    if (!pending) return null;
     var selection = resolvePendingDisambiguationChoice(text, pending);
-    if (!selection) return false;
+    if (!selection) return null;
     if (!selection.matched) {
       if (selection.ambiguous || isOrdinalFollowUpText(text)) {
-        speak(pending.message || translate('ambiguous_target', {
-          count: pending.options.length,
-          target: targetPlural(pending.targetType || 'element'),
-          value: pending.label || ''
-        }));
-        return true;
+        return speakFeedback({
+          status: 'clarification_needed',
+          message: pending.message || translate('ambiguous_target', {
+            count: pending.options.length,
+            target: targetPlural(pending.targetType || 'element'),
+            value: pending.label || ''
+          }),
+          details: {
+            targetType: pending.targetType || 'element',
+            label: pending.label || '',
+            options: Array.isArray(pending.options) ? pending.options.map(function (option) {
+              return {
+                index: option.index,
+                summary: option.summary || '',
+                label: option.label || '',
+                type: option.type || ''
+              };
+            }) : []
+          }
+        });
       }
-      return false;
+      return null;
     }
     var nextCommand = buildCommandFromPendingOption(pending, selection.option);
     if (!nextCommand) {
-      speak(pending.message || translate('unknown_command'));
-      return true;
+      return speakFeedback({
+        status: 'failure',
+        message: pending.message || translate('unknown_command'),
+        details: {
+          targetType: pending.targetType || 'element',
+          label: pending.label || ''
+        }
+      });
     }
     clearPendingDisambiguation();
-    await execCommand(nextCommand);
-    return true;
+    return execCommand(nextCommand);
   }
 
   function rememberLocalAssistantTurn(info) {
@@ -4127,6 +4383,78 @@
     if (/\b(inputs?|fields?|forms?)\b/.test(t)) return 'input';
     if (/\b(links?|urls?)\b/.test(t)) return 'link';
     return '';
+  }
+
+  function parseBrowserHistoryCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    t = t
+      .replace(/\b(?:please|pls)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    var politePrefixes = [
+      /^(?:hey navable|navable)\s+/,
+      /^(?:can you|could you|would you|will you)\s+/,
+      /^(?:i want to|i need to|i would like to|i d like to|let me|please help me)\s+/,
+      /^(?:help me|show me how to)\s+/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < politePrefixes.length; i++) {
+        var next = t.replace(politePrefixes[i], '').trim();
+        if (next !== t) {
+          t = next;
+          changed = true;
+        }
+      }
+    }
+    if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(retour|retour en arriere|page precedente|precedent)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(avance|page suivante|suivant)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    return null;
+  }
+
+  function parseShortcutSettingsCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    if (/^(open|go to|click|configure|change|edit|show)\s+(?:keyboard\s+)?shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(open|go to|show)\s+(?:chrome\s+)?extensions?\s+shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    return null;
   }
 
   function isFormModeStartText(text) {
@@ -4203,6 +4531,12 @@
 
     var formCmd = parseFormCommand(original);
     if (formCmd) return formCmd;
+
+    var browserHistoryCmd = parseBrowserHistoryCommand(original);
+    if (browserHistoryCmd) return browserHistoryCmd;
+
+    var shortcutsCmd = parseShortcutSettingsCommand(original);
+    if (shortcutsCmd) return shortcutsCmd;
 
     var searchQuery = extractSearchSiteQuery(t);
     if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
@@ -4838,6 +5172,16 @@
 
   var lastIndexByType = {};
 
+  function currentSpeechFeedback(status, details, fallbackMessage) {
+    return feedbackForResponse(null, status, fallbackMessage || lastSpoken || '', details || null);
+  }
+
+  function currentFormFeedback(ok, details) {
+    var session = getCurrentFormSession();
+    var pending = session ? getPendingFormConfirmation(session) : null;
+    return currentSpeechFeedback(pending ? 'clarification_needed' : (ok ? 'success' : 'failure'), details);
+  }
+
   function moveBy(type, dir) {
     rescan();
     var items = index.items.filter(function (it) { return it.type === type; });
@@ -4862,126 +5206,245 @@
   async function execCommand(cmd) {
     if (!cmd) {
       var now = Date.now();
-      if (now - lastUnknownCmdAt < 5000) return;
+      if (now - lastUnknownCmdAt < 5000) return currentSpeechFeedback('failure', { command: 'unknown' });
       lastUnknownCmdAt = now;
+      rememberCommandFeedback({
+        status: 'failure',
+        message: translate('unknown_command'),
+        details: { command: 'unknown' }
+      });
       speakTransient(translate('unknown_command'), 3200);
-      return;
+      return currentSpeechFeedback('failure', { command: 'unknown' });
     }
-    if (cmd.type === 'help') { speakHelp(); return; }
+    if (cmd.type === 'help') {
+      return speakFeedback({
+        status: 'success',
+        message: translate('help_examples'),
+        details: { command: 'help' }
+      });
+    }
     if (cmd.type === 'open_site') {
-      await openSiteRequest(cmd.query, cmd.newTab !== false);
-      return;
+      return openSiteRequest(cmd.query, cmd.newTab !== false);
+    }
+    if (cmd.type === 'open_shortcuts') {
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var shortcutsRes = await chrome.runtime.sendMessage({ type: 'navable:openShortcuts' });
+          if (shortcutsRes && shortcutsRes.ok) {
+            return speakFeedback(shortcutsRes.feedback || {
+              status: 'success',
+              message: 'Opening keyboard shortcuts.',
+              details: { command: 'open_shortcuts' }
+            });
+          }
+          return speakFeedback({
+            status: 'failure',
+            message: shortcutsRes && shortcutsRes.error ? String(shortcutsRes.error) : 'Could not open keyboard shortcuts.',
+            details: { command: 'open_shortcuts' }
+          });
+        }
+      } catch (_err) {
+        // fall through to local best effort
+      }
+      try {
+        window.open('chrome://extensions/shortcuts', '_blank', 'noopener,noreferrer');
+      } catch (_err2) {
+        // ignore
+      }
+      return speakFeedback({
+        status: 'success',
+        message: 'Opening keyboard shortcuts.',
+        details: { command: 'open_shortcuts' }
+      });
+    }
+    if (cmd.type === 'browser_history') {
+      var historyDir = cmd.dir === 'forward' ? 'forward' : 'back';
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var historyRes = await chrome.runtime.sendMessage({
+            type: 'navable:browserHistory',
+            direction: historyDir
+          });
+          if (historyRes && historyRes.ok) {
+            return speakFeedback(historyRes.feedback || {
+              status: 'success',
+              message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+              details: { command: 'browser_history', direction: historyDir }
+            });
+          }
+          return speakFeedback(historyRes && historyRes.feedback ? historyRes.feedback : {
+            status: 'failure',
+            message: historyRes && historyRes.error ? String(historyRes.error) : translate('unknown_command'),
+            details: { command: 'browser_history', direction: historyDir }
+          });
+        }
+      } catch (_err) {
+        // fall through to page-level fallback in non-extension test contexts
+      }
+      try {
+        if (historyDir === 'forward') window.history.forward();
+        else window.history.back();
+      } catch (_err2) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+        details: { command: 'browser_history', direction: historyDir }
+      });
     }
     if (cmd.type === 'scroll') {
       var amount = Math.floor(window.innerHeight * 0.8);
       if (cmd.dir === 'down') {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: 'down' } });
       } else if (cmd.dir === 'up') {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak(translate('scrolled_up'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_up'), details: { command: 'scroll', direction: 'up' } });
       } else if (cmd.dir === 'top') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak(translate('scrolled_top'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_top'), details: { command: 'scroll', direction: 'top' } });
       } else if (cmd.dir === 'bottom') {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak(translate('scrolled_bottom'));
-      } else {
-        window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_bottom'), details: { command: 'scroll', direction: 'bottom' } });
       }
-      console.log('[Navable] Action: scroll', cmd.dir);
-      return;
+      window.scrollBy({ top: amount, behavior: 'smooth' });
+      return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: cmd.dir || 'down' } });
     }
     if (cmd.type === 'list') {
       var listStructure = buildPageStructure();
-      speak(listTargetText(cmd.target || 'link', listStructure));
-      console.log('[Navable] Action: list', cmd.target);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: listTargetText(cmd.target || 'link', listStructure),
+        details: { command: 'list', target: cmd.target || 'link' }
+      });
     }
     if (cmd.type === 'form_mode') {
-      if (cmd.action === 'stop') stopFormMode();
-      else startFormMode();
-      console.log('[Navable] Action: form mode', cmd.action || 'start');
-      return;
+      var formModeOk = cmd.action === 'stop' ? stopFormMode() : startFormMode();
+      return currentFormFeedback(formModeOk, {
+        command: 'form_mode',
+        action: cmd.action || 'start'
+      });
     }
     if (cmd.type === 'form_move') {
-      moveFormField(cmd.dir === 'prev' ? 'prev' : 'next');
-      console.log('[Navable] Action: form move', cmd.dir);
-      return;
+      return currentFormFeedback(moveFormField(cmd.dir === 'prev' ? 'prev' : 'next'), {
+        command: 'form_move',
+        direction: cmd.dir === 'prev' ? 'prev' : 'next'
+      });
     }
     if (cmd.type === 'form_current') {
-      readCurrentFormField();
-      console.log('[Navable] Action: form current');
-      return;
+      return currentFormFeedback(readCurrentFormField(), {
+        command: 'form_current'
+      });
     }
     if (cmd.type === 'form_fill') {
-      applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form fill');
-      return;
+      return currentFormFeedback(
+        applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_fill',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_select') {
-      selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form select');
-      return;
+      return currentFormFeedback(
+        selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_select',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_check') {
-      setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form checkbox', !!cmd.checked);
-      return;
+      return currentFormFeedback(
+        setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_check',
+          fieldLabel: cmd.fieldLabel || '',
+          checked: !!cmd.checked
+        }
+      );
     }
     if (cmd.type === 'form_review') {
       reviewActiveForm();
-      console.log('[Navable] Action: form review');
-      return;
+      return currentFormFeedback(true, { command: 'form_review' });
     }
     if (cmd.type === 'form_submit') {
-      submitActiveForm();
-      console.log('[Navable] Action: form submit');
-      return;
+      return currentFormFeedback(submitActiveForm(), { command: 'form_submit' });
     }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
-      speak(translate('title_value', { value: title || translate('value_not_found') }));
-      console.log('[Navable] Action: read title');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('title_value', { value: title || translate('value_not_found') }),
+        details: { command: 'read', what: 'title' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'selection') {
       var sel = '';
       try { sel = String(window.getSelection && window.getSelection().toString() || '').trim(); } catch (_err) { /* selection failed */ }
-      if (sel) { speak(translate('selection_value', { value: sel })); } else { speak(translate('no_selection')); }
-      console.log('[Navable] Action: read selection');
-      return;
+      if (sel) {
+        return speakFeedback({
+          status: 'success',
+          message: translate('selection_value', { value: sel }),
+          details: { command: 'read', what: 'selection' }
+        });
+      }
+      return speakFeedback({
+        status: 'failure',
+        message: translate('no_selection'),
+        details: { command: 'read', what: 'selection' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'focused') {
       var fe = getDeepActiveElement(document);
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
-        speak(fl || translate('no_focused_text'));
+        return speakFeedback({
+          status: fl ? 'success' : 'failure',
+          message: fl || translate('no_focused_text'),
+          details: { command: 'read', what: 'focused' }
+        });
       } else {
-        speak(translate('no_focused_element'));
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'read', what: 'focused' }
+        });
       }
-      console.log('[Navable] Action: read focused');
-      return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var headingResolution = await resolveCommandElement(cmd, 'heading', 'read');
-      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label, cmd)); return; }
+      if (!headingResolution.ok || !headingResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(headingResolution),
+          message: resolutionFailureMessage('heading', headingResolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('heading', headingResolution, cmd.label)
+        });
+      }
       var elhL = headingResolution.element;
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
-      speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblhL.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && !cmd.label) {
       var elh = pickNth('heading', cmd.n || 1);
-      if (!elh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+        });
+      }
       var lblh = elh.dataset.navableLabel || elh.innerText || elh.textContent || '';
-      speak(translate('heading_value', { value: lblh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblh.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
       var openResult = await performElementActionWithRetry('link', cmd.label, cmd.n, {
@@ -4991,12 +5454,20 @@
         el.click();
         return true;
       });
-      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd)); return; }
+      if (!openResult.ok || !openResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(openResult.resolution),
+          message: resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('link', openResult.resolution, cmd.label)
+        });
+      }
       var ellL = openResult.element;
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
-      speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open link by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbllL.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'auto' && cmd.label) {
       var autoOpenResult = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5007,24 +5478,37 @@
         return true;
       });
       if (!autoOpenResult.ok || !autoOpenResult.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoOpenResult.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label)
+        });
       }
       var autoOpen = autoOpenResult.element;
       var autoOpenLabel = autoOpen.dataset.navableLabel || autoOpen.innerText || autoOpen.textContent || '';
-      speak(translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
       var ell = pickNth('link', cmd.n || 1);
-      if (!ell) { speak(translate('not_found_generic', { target: localizeTarget('link') })); return; }
+      if (!ell) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('link') }),
+          details: { command: 'open', target: 'link', index: cmd.n || 1 }
+        });
+      }
       var lbll = ell.dataset.navableLabel || ell.innerText || ell.textContent || '';
-      speak(translate('opening_value', { value: lbll.trim() || translate('target_link') }));
       // Prefer click to follow anchors and SPA handlers
       ell.click();
-      console.log('[Navable] Action: open link', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbll.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
       var focusButtonResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5033,12 +5517,20 @@
         if (!el.isConnected) return false;
         return focusElementForNavigation(el);
       });
-      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd)); return; }
+      if (!focusButtonResult.ok || !focusButtonResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusButtonResult.resolution),
+          message: resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', focusButtonResult.resolution, cmd.label)
+        });
+      }
       var elbL = focusButtonResult.element;
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
-      speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblbL.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.label && (cmd.target === 'input' || cmd.target === 'auto')) {
       var focusResolution = await performElementActionWithRetry(cmd.target === 'input' ? 'input' : 'auto', cmd.label, cmd.n, {
@@ -5048,31 +5540,55 @@
         return focusElementForNavigation(el);
       });
       var focusType = commandTargetType(cmd, 'input');
-      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd)); return; }
+      if (!focusResolution.ok || !focusResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label)
+        });
+      }
       var focusElement = focusResolution.element;
       var focusLabel = focusElement.dataset.navableLabel || focusElement.innerText || focusElement.textContent || '';
-      speak(translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }));
-      console.log('[Navable] Action: focus target by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }),
+        details: { command: 'focus', target: focusType, label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
-      if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!elb) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+        });
+      }
       try { focusElementForNavigation(elb); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
-      speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblb.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
       var aef = getDeepActiveElement(document);
-      if (!aef) { speak(translate('no_focused_element')); return; }
+      if (!aef) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'activate', target: 'focused' }
+        });
+      }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
       try { aef.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: labf || translate('target_element') }));
-      console.log('[Navable] Action: activate focused');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: labf || translate('target_element') }),
+        details: { command: 'activate', target: 'focused' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
       var activateResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5083,12 +5599,20 @@
         el.click();
         return true;
       });
-      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd)); return; }
+      if (!activateResult.ok || !activateResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(activateResult.resolution),
+          message: resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', activateResult.resolution, cmd.label)
+        });
+      }
       var ab = activateResult.element;
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
-      speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labb || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'auto' && cmd.label) {
       var autoActivateResolution = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5100,66 +5624,123 @@
         return true;
       });
       if (!autoActivateResolution.ok || !autoActivateResolution.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoActivateResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label)
+        });
       }
       var autoActivate = autoActivateResolution.element;
       var autoActivateLabel = autoActivate.dataset.navableLabel || autoActivate.innerText || autoActivate.textContent || '';
-      speak(translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }));
-      console.log('[Navable] Action: activate auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }),
+        details: { command: 'activate', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
       var abin = pickNth('button', cmd.n);
-      if (!abin) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!abin) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'activate', target: 'button', index: cmd.n }
+        });
+      }
       var labbn = abin.dataset.navableLabel || abin.innerText || abin.textContent || '';
       try { abin.focus(); } catch (_err) { /* focus failed */ }
       try { abin.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: String(labbn || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labbn || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', index: cmd.n }
+      });
     }
     if (cmd.type === 'move' && (cmd.target === 'link' || cmd.target === 'button')) {
       var elmv = moveBy(cmd.target, cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmv) { speak(translate('not_found_generic', { target: localizeTarget(cmd.target) })); return; }
+      if (!elmv) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget(cmd.target) }),
+          details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       try { elmv.focus(); } catch (_err) { /* focus failed */ }
       var lblmv = elmv.dataset.navableLabel || elmv.innerText || elmv.textContent || '';
-      speak(translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }));
-      console.log('[Navable] Action: move ' + cmd.target, cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }),
+        details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
     if (cmd.type === 'move' && cmd.target === 'heading') {
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elmh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
       if (!elmh.hasAttribute('tabindex')) {
         try { elmh.setAttribute('tabindex', '-1'); } catch (_err) { /* ignore */ }
       }
       try { elmh.focus(); } catch (_err) { /* focus failed */ }
-      speak(translate('heading_value', { value: lblmh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: move heading', cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblmh.trim() || translate('unnamed') }),
+        details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
-    if (cmd.type === 'repeat') { if (lastSpoken) speak(lastSpoken); return; }
+    if (cmd.type === 'repeat') {
+      if (lastSpoken) {
+        return speakFeedback({
+          status: 'success',
+          message: lastSpoken,
+          details: { command: 'repeat' }
+        });
+      }
+      return currentSpeechFeedback('failure', { command: 'repeat' }, translate('unknown_command'));
+    }
     if (cmd.type === 'stop') {
       requestChromeTtsStop();
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ }
-      return;
+      return rememberCommandFeedback({
+        status: 'success',
+        message: '',
+        details: { command: 'stop' }
+      });
     }
+    return currentSpeechFeedback('failure', { command: cmd.type || 'unknown' }, translate('unknown_command'));
   }
 
   async function runSummaryRequest(commandText, pageStructure) {
     var cmdText = normalizeCurrentContextIntentText((commandText && String(commandText).trim()) || 'Summarize this page');
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('summarizing_wait'),
+      details: {
+        command: 'summarize',
+        input: cmdText
+      }
+    });
     announce(translate('summarizing_wait'), {
       mode: 'assertive',
       lang: outputLocale(currentOutputLanguage())
     });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      announce(translate('summarize_unavailable_page'), {
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('summarize_unavailable_page'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
-      return;
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5169,15 +5750,32 @@
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
       if (!res || res.ok !== true) {
-        announce((res && res.error) ? String(res.error) : translate('summarize_failed'), {
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('summarize_failed'),
+          details: {
+            command: 'summarize',
+            input: cmdText
+          }
+        }, {
           mode: 'assertive',
           lang: outputLocale(currentOutputLanguage())
         });
       }
-      // On success, the background will announce the summary via the live region.
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'summarize',
+        input: cmdText
+      });
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      announce(translate('summarize_request_failed'), {
+      return speakFeedback({
+        status: 'failure',
+        message: translate('summarize_request_failed'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
@@ -5187,12 +5785,25 @@
   async function openSiteRequest(query, newTab) {
     var q = String(query || '').trim();
     if (!q) {
-      speak(translate('tell_website_to_open'));
-      return;
+      return speakFeedback({
+        status: 'clarification_needed',
+        message: translate('tell_website_to_open'),
+        details: {
+          command: 'open_site',
+          newTab: newTab !== false
+        }
+      });
     }
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak(translate('open_site_unavailable'));
-      return;
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('open_site_unavailable'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5202,24 +5813,57 @@
         outputLanguage: currentOutputLanguage()
       });
       if (!res || res.ok !== true) {
-        speak((res && res.error) ? String(res.error) : translate('open_site_failed'));
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('open_site_failed'),
+          details: {
+            command: 'open_site',
+            query: q,
+            newTab: newTab !== false
+          }
+        });
       }
+      return feedbackForResponse(res && res.feedback, 'loading', res && res.speech ? String(res.speech) : '', {
+        command: 'open_site',
+        query: q,
+        newTab: newTab !== false,
+        url: res && res.url ? res.url : ''
+      });
     } catch (err) {
       console.warn('[Navable] open site via background failed', err);
-      speak(translate('open_site_failed'));
+      return speakFeedback({
+        status: 'failure',
+        message: translate('open_site_failed'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
   }
 
   async function assistantRequest(questionText, pageStructure, turnContext) {
     var q = normalizeCurrentContextIntentText(questionText).trim();
-    if (!q) return false;
+    if (!q) return null;
     var context = turnContext || {};
     var sessionContext = buildLocalAssistantSessionContext();
     var purpose = assistantPurposeForText(q, sessionContext);
     var wantsPageContext = purpose === 'summary' || purpose === 'page';
     var structure = wantsPageContext ? (pageStructure || buildPageContextSnapshot()) : null;
+    var backgroundRequestError = '';
+    var backgroundRequestFailure = null;
+    var directRequestFailure = null;
 
     await ensureOutputLanguageReady();
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('answering_question'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    });
     speakTransient(translate('answering_question'), 2500);
 
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
@@ -5249,14 +5893,22 @@
             detectedLanguage: context.detectedLanguage || '',
             recognitionProvider: context.recognitionProvider || ''
           });
-          speak(String(res.speech), { mode: 'assertive' });
-          return true;
+          return speakFeedback({
+            status: 'success',
+            message: String(res.speech),
+            details: {
+              command: 'assistant',
+              purpose: rememberedPurpose,
+              mode: res.mode || '',
+              source: 'background'
+            }
+          }, { mode: 'assertive' });
         }
         if (res && res.error) {
-          console.warn('[Navable] assistant background request returned error', res.error);
+          backgroundRequestError = String(res.error || '').trim();
         }
       } catch (err) {
-        console.warn('[Navable] assistant message request failed', err);
+        backgroundRequestFailure = err;
       }
     }
 
@@ -5280,8 +5932,7 @@
         directData.action.type === 'open_site' &&
         directData.action.query
       ) {
-        await openSiteRequest(directData.action.query, directData.action.newTab !== false);
-        return true;
+        return openSiteRequest(directData.action.query, directData.action.newTab !== false);
       }
       if (directResponse.ok && directData && directData.speech) {
         if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
@@ -5299,23 +5950,52 @@
           detectedLanguage: context.detectedLanguage || '',
           recognitionProvider: context.recognitionProvider || ''
         });
-        speak(String(directData.speech), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'success',
+          message: String(directData.speech),
+          details: {
+            command: 'assistant',
+            purpose: directRememberedPurpose,
+            mode: directData.mode || '',
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
       if (directData && directData.error) {
-        speak(String(directData.error), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'failure',
+          message: String(directData.error),
+          details: {
+            command: 'assistant',
+            purpose: purpose,
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
     } catch (err2) {
-      console.warn('[Navable] assistant direct request failed', err2);
+      directRequestFailure = err2;
     }
 
-    speak(translate('answer_failed'), { mode: 'assertive' });
-    return true;
+    if (backgroundRequestError) {
+      console.warn('[Navable] assistant background request returned error', backgroundRequestError);
+    } else if (backgroundRequestFailure) {
+      console.warn('[Navable] assistant message request failed', backgroundRequestFailure);
+    }
+    if (directRequestFailure) {
+      console.warn('[Navable] assistant direct request failed', directRequestFailure);
+    }
+    return speakFeedback({
+      status: 'failure',
+      message: translate('answer_failed'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    }, { mode: 'assertive' });
   }
 
   async function tryIntentFallback(commandText, pageStructure) {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return null;
     try {
       var res = await chrome.runtime.sendMessage({
         type: 'planner:run',
@@ -5324,21 +6004,26 @@
         preferIntentFallback: true,
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
-      return !!(res && res.ok === true && (
+      if (!(res && res.ok === true && (
         (res.plan && res.plan.steps && res.plan.steps.length) ||
         res.description ||
         res.summary
-      ));
+      ))) return null;
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'intent_fallback',
+        input: commandText
+      });
     } catch (err) {
       console.warn('[Navable] intent fallback failed', err);
-      return false;
+      return null;
     }
   }
 
   async function handleTranscript(text, detectedLanguage, provider) {
-    if (!beginVoiceTurn()) return false;
+    if (!beginVoiceTurn()) return null;
     console.log('[Navable] Recognized:', text);
     try {
+      lastCommandFeedback = null;
       lastRecognitionResultAt = Date.now();
       maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
       setOutputLanguageFromTranscript(text, detectedLanguage);
@@ -5361,44 +6046,69 @@
           await languageReady;
           if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
           else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-          return true;
+          return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+            command: 'summarize',
+            formMode: true
+          });
         }
         if (cmd && isFormContextCommand(cmd)) {
           clearPendingDisambiguation();
-          await execCommand(cmd);
-          return true;
+          return execCommand(cmd);
         }
-        if (await tryHandleActiveFormUtterance(text)) return true;
+        if (await tryHandleActiveFormUtterance(text)) {
+          var activePending = getPendingFormConfirmation(formSession);
+          return feedbackForResponse(null, activePending ? 'clarification_needed' : 'success', lastSpoken, {
+            command: 'form_utterance'
+          });
+        }
         await languageReady;
         if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
         else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-        return true;
+        return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+          command: 'form_utterance'
+        });
       }
       if (cmd && cmd.type === 'summarize') {
         clearPendingDisambiguation();
-        await runSummaryRequest(cmd.command, pageStructure);
-        return true;
+        return runSummaryRequest(cmd.command, pageStructure);
       }
       if (cmd) {
         clearPendingDisambiguation();
-        await execCommand(cmd);
-        return true;
+        return execCommand(cmd);
       }
-      if (await tryPendingDisambiguationFollowUp(text)) return true;
-      if (await tryIntentFallback(text, pageStructure)) return true;
-      if (await assistantRequest(text, pageStructure, {
+      var disambiguationFeedback = await tryPendingDisambiguationFollowUp(text);
+      if (disambiguationFeedback) return disambiguationFeedback;
+      var intentFeedback = await tryIntentFallback(text, pageStructure);
+      if (intentFeedback) return intentFeedback;
+      var assistantFeedback = await assistantRequest(text, pageStructure, {
         detectedLanguage: detectedLanguage || '',
         recognitionProvider: provider || ''
-      })) return true;
+      });
+      if (assistantFeedback) return assistantFeedback;
       await languageReady;
-      await execCommand(null);
-      return true;
+      return execCommand(null);
     } finally {
       finishVoiceTurn({ delayMs: 900 });
     }
   }
 
   window.NavableTools.handleTranscript = handleTranscript;
+  window.NavableTools.toggleListening = toggleListening;
+  window.NavableTools.startListening = function (opts) {
+    manualListening = true;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.stopListening = function (opts) {
+    manualListening = false;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.getSpeechStatus = function () {
+    return {
+      ok: true,
+      supports: !!(speech && speech.supportsRecognition && speech.supportsRecognition()),
+      listening: !!listening
+    };
+  };
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
   document.addEventListener('keydown', function (e) {
@@ -5408,11 +6118,13 @@
 	  // Allow popup/background to toggle listening
 	  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
 	    chrome.runtime.onMessage.addListener((msg) => {
+	      if (!shouldHandleRuntimeMessage(msg)) return false;
 	      if (msg && msg.type === 'speech') {
 	        if (msg.action === 'toggle') toggleListening();
 	        if (msg.action === 'start') { manualListening = true; syncListening({ announce: true }); }
 	        if (msg.action === 'stop') { manualListening = false; syncListening({ announce: true }); }
 	      }
+	      return false;
 	    });
 	  }
 

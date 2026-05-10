@@ -315,8 +315,34 @@
   );
 
   // Runtime messaging (guarded for non-extension test runs)
+  function isNavableExtensionPageContext() {
+    try {
+      if (window.location.protocol !== 'chrome-extension:') return false;
+      if (!chrome || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') return true;
+      return window.location.origin === new URL(chrome.runtime.getURL('')).origin;
+    } catch (_err) {
+      return window.location.protocol === 'chrome-extension:';
+    }
+  }
+
+  function shouldHandleRuntimeMessage(msg) {
+    if (!msg || !msg.target) return true;
+    var target = String(msg.target || '');
+    if (target === 'navable:content') return true;
+    if (target !== 'navable:extension-page') return false;
+    if (!isNavableExtensionPageContext()) return false;
+    var pagePath = String(msg.pagePath || '').trim();
+    if (!pagePath) return true;
+    try {
+      return window.location.pathname === new URL(pagePath, window.location.origin).pathname;
+    } catch (_err) {
+      return window.location.pathname === pagePath;
+    }
+  }
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!shouldHandleRuntimeMessage(msg)) return false;
       if (msg && msg.type === 'announce') {
         announce(msg.text || translate('generic_announcement'), {
           mode: msg.mode || 'polite',
@@ -3362,6 +3388,15 @@
       await execCommand({ type: 'scroll', dir: step.direction || step.dir || 'down' });
       return { ok: true, message: 'Scrolled ' + (step.direction || step.dir || 'down') };
     }
+    if (action === 'browser_history') {
+      var historyDir = step.direction || step.dir || 'back';
+      await execCommand({ type: 'browser_history', dir: historyDir === 'forward' ? 'forward' : 'back' });
+      return { ok: true, message: historyDir === 'forward' ? 'Went forward' : 'Went back' };
+    }
+    if (action === 'open_shortcuts') {
+      await execCommand({ type: 'open_shortcuts' });
+      return { ok: true, message: 'Opened keyboard shortcuts' };
+    }
     if (action === 'announce') {
       speak(step.message || '');
       return { ok: true, message: 'Announced' };
@@ -4350,6 +4385,78 @@
     return '';
   }
 
+  function parseBrowserHistoryCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    t = t
+      .replace(/\b(?:please|pls)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    var politePrefixes = [
+      /^(?:hey navable|navable)\s+/,
+      /^(?:can you|could you|would you|will you)\s+/,
+      /^(?:i want to|i need to|i would like to|i d like to|let me|please help me)\s+/,
+      /^(?:help me|show me how to)\s+/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < politePrefixes.length; i++) {
+        var next = t.replace(politePrefixes[i], '').trim();
+        if (next !== t) {
+          t = next;
+          changed = true;
+        }
+      }
+    }
+    if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(retour|retour en arriere|page precedente|precedent)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(avance|page suivante|suivant)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    return null;
+  }
+
+  function parseShortcutSettingsCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    if (/^(open|go to|click|configure|change|edit|show)\s+(?:keyboard\s+)?shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(open|go to|show)\s+(?:chrome\s+)?extensions?\s+shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    return null;
+  }
+
   function isFormModeStartText(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return false;
@@ -4424,6 +4531,12 @@
 
     var formCmd = parseFormCommand(original);
     if (formCmd) return formCmd;
+
+    var browserHistoryCmd = parseBrowserHistoryCommand(original);
+    if (browserHistoryCmd) return browserHistoryCmd;
+
+    var shortcutsCmd = parseShortcutSettingsCommand(original);
+    if (shortcutsCmd) return shortcutsCmd;
 
     var searchQuery = extractSearchSiteQuery(t);
     if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
@@ -5112,6 +5225,71 @@
     }
     if (cmd.type === 'open_site') {
       return openSiteRequest(cmd.query, cmd.newTab !== false);
+    }
+    if (cmd.type === 'open_shortcuts') {
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var shortcutsRes = await chrome.runtime.sendMessage({ type: 'navable:openShortcuts' });
+          if (shortcutsRes && shortcutsRes.ok) {
+            return speakFeedback(shortcutsRes.feedback || {
+              status: 'success',
+              message: 'Opening keyboard shortcuts.',
+              details: { command: 'open_shortcuts' }
+            });
+          }
+          return speakFeedback({
+            status: 'failure',
+            message: shortcutsRes && shortcutsRes.error ? String(shortcutsRes.error) : 'Could not open keyboard shortcuts.',
+            details: { command: 'open_shortcuts' }
+          });
+        }
+      } catch (_err) {
+        // fall through to local best effort
+      }
+      try {
+        window.open('chrome://extensions/shortcuts', '_blank', 'noopener,noreferrer');
+      } catch (_err2) {
+        // ignore
+      }
+      return speakFeedback({
+        status: 'success',
+        message: 'Opening keyboard shortcuts.',
+        details: { command: 'open_shortcuts' }
+      });
+    }
+    if (cmd.type === 'browser_history') {
+      var historyDir = cmd.dir === 'forward' ? 'forward' : 'back';
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var historyRes = await chrome.runtime.sendMessage({
+            type: 'navable:browserHistory',
+            direction: historyDir
+          });
+          if (historyRes && historyRes.ok) {
+            return speakFeedback(historyRes.feedback || {
+              status: 'success',
+              message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+              details: { command: 'browser_history', direction: historyDir }
+            });
+          }
+          return speakFeedback(historyRes && historyRes.feedback ? historyRes.feedback : {
+            status: 'failure',
+            message: historyRes && historyRes.error ? String(historyRes.error) : translate('unknown_command'),
+            details: { command: 'browser_history', direction: historyDir }
+          });
+        }
+      } catch (_err) {
+        // fall through to page-level fallback in non-extension test contexts
+      }
+      try {
+        if (historyDir === 'forward') window.history.forward();
+        else window.history.back();
+      } catch (_err2) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+        details: { command: 'browser_history', direction: historyDir }
+      });
     }
     if (cmd.type === 'scroll') {
       var amount = Math.floor(window.innerHeight * 0.8);
@@ -5915,6 +6093,22 @@
   }
 
   window.NavableTools.handleTranscript = handleTranscript;
+  window.NavableTools.toggleListening = toggleListening;
+  window.NavableTools.startListening = function (opts) {
+    manualListening = true;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.stopListening = function (opts) {
+    manualListening = false;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.getSpeechStatus = function () {
+    return {
+      ok: true,
+      supports: !!(speech && speech.supportsRecognition && speech.supportsRecognition()),
+      listening: !!listening
+    };
+  };
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
   document.addEventListener('keydown', function (e) {
@@ -5924,11 +6118,13 @@
 	  // Allow popup/background to toggle listening
 	  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
 	    chrome.runtime.onMessage.addListener((msg) => {
+	      if (!shouldHandleRuntimeMessage(msg)) return false;
 	      if (msg && msg.type === 'speech') {
 	        if (msg.action === 'toggle') toggleListening();
 	        if (msg.action === 'start') { manualListening = true; syncListening({ announce: true }); }
 	        if (msg.action === 'stop') { manualListening = false; syncListening({ announce: true }); }
 	      }
+	      return false;
 	    });
 	  }
 
