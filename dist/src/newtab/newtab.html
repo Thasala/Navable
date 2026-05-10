@@ -1,160 +1,96 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Navable</title>
-    <link rel="stylesheet" href="../common/ui.css" />
-    <link rel="stylesheet" href="newtab.css" />
-  </head>
-  <body class="nv-ui nv-newtab">
-    <main class="nv-container nv-newtab-layout">
-      <section class="nv-card nv-newtab-hero" aria-label="Navable new tab">
-        <div class="nv-card-inner nv-newtab-hero-inner">
-          <header class="nv-newtab-top">
-            <div class="nv-newtab-brand">
-              <img
-                class="nv-newtab-logo"
-                src="../../assets/navable-logo.svg"
-                width="48"
-                height="48"
-                alt=""
-                aria-hidden="true"
-              />
-              <div>
-                <p class="nv-eyebrow">Voice-First Start Page</p>
-                <div class="nv-newtab-wordmark">Navable</div>
-                <div id="greeting" class="nv-newtab-greeting">Welcome back.</div>
-              </div>
-            </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Tab — Navable</title>
+  <link rel="stylesheet" href="../common/ui.css">
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+  <!-- Ambient Background -->
+  <div class="newtab-bg" aria-hidden="true"></div>
 
-            <div class="nv-newtab-actions">
-              <div class="nv-badge" aria-label="Current time">
-                <span class="nv-dot nv-dot--ok" aria-hidden="true"></span>
-                <span id="clock" class="nv-newtab-clock">--:--</span>
-              </div>
-              <a class="nv-btn nv-btn--ghost" href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
-            </div>
-          </header>
+  <!-- Logo -->
+  <header class="newtab-header">
+    <img src="../../assets/navable-logo.svg" alt="Navable" class="newtab-header__logo" height="28">
+    <a class="btn-icon newtab-settings" href="../options/index.html" aria-label="Open settings" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.35.17.7.37 1 .6.32.25.7.4 1.1.4H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/>
+      </svg>
+    </a>
+  </header>
 
-          <div class="nv-newtab-hero-grid">
-            <section class="nv-newtab-primary">
-              <div class="nv-newtab-copy">
-                <h1 class="nv-display nv-newtab-headline">Open a place, ask a question, or let the page guide itself.</h1>
-                <p class="nv-body nv-newtab-lede">
-                  Navable keeps the opening screen quieter: fewer distractions, cleaner navigation cues, and a faster route into
-                  what you actually need.
-                </p>
-              </div>
+  <!-- Main Content -->
+  <main class="newtab-main">
+    <!-- Greeting -->
+    <h1 id="greeting" class="newtab-greeting" aria-live="polite">Good morning</h1>
 
-              <section class="nv-surface nv-newtab-voice" aria-label="Voice controls">
-                <div class="nv-newtab-block-head">
-                  <div>
-                    <p class="nv-section-kicker">Voice entry</p>
-                    <h2 class="nv-section-heading">Talk first when that is faster</h2>
-                  </div>
-                </div>
-                <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn" type="button">
-                  Checking voice support…
-                </button>
-                <div id="micStatus" class="mic-status" role="status" aria-live="polite">Not listening.</div>
-                <div class="nv-newtab-voice-hints">
-                  <span class="nv-pill">“Open YouTube”</span>
-                  <span class="nv-pill">“Open example dot com”</span>
-                  <span class="nv-pill">“What is photosynthesis?”</span>
-                </div>
-              </section>
+    <!-- Clock -->
+    <div id="clock" class="newtab-clock" aria-live="off">12:00</div>
 
-              <form id="searchForm" class="nv-newtab-search" role="search" aria-label="Search">
-                <label class="nv-sr-only" for="searchInput">Search or type a URL</label>
-                <input
-                  id="searchInput"
-                  class="nv-input"
-                  type="text"
-                  inputmode="search"
-                  autocomplete="off"
-                  placeholder="Search, paste a URL, or type a destination"
-                />
-                <button class="nv-btn nv-btn--primary" type="submit">Open or search</button>
-              </form>
-            </section>
+    <!-- Search -->
+    <form id="searchForm" class="newtab-search" action="https://www.google.com/search" method="GET" role="search">
+      <svg class="newtab-search__icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="8"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input
+        type="text"
+        id="searchInput"
+        class="input-field newtab-search__input"
+        name="q"
+        placeholder="Search or type a URL..."
+        aria-label="Search or type a URL"
+        autocomplete="off"
+        autofocus
+      >
+    </form>
 
-            <aside class="nv-newtab-rail" aria-label="Quick launch and tips">
-              <section class="nv-surface nv-newtab-panel">
-                <p class="nv-section-kicker">Jump in</p>
-                <h2 class="nv-section-heading">Launch a destination</h2>
-                <p class="nv-section-text">Keep a few clean starting points one tap away.</p>
-                <div class="nv-newtab-links">
-                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://example.com">
-                    <strong>example.com</strong>
-                    <span>Minimal page for testing structure.</span>
-                  </button>
-                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://wikipedia.org">
-                    <strong>Wikipedia</strong>
-                    <span>Good for summaries and headings.</span>
-                  </button>
-                  <button class="nv-btn nv-btn--ghost nv-launch-btn" type="button" data-open="https://news.ycombinator.com">
-                    <strong>Hacker News</strong>
-                    <span>Useful when testing dense link lists.</span>
-                  </button>
-                </div>
-              </section>
+    <!-- Voice Access -->
+    <section class="newtab-voice" aria-label="Voice navigation">
+      <button type="button" id="btnMicToggle" class="mic-button mic-button--large" aria-label="Toggle microphone" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+      <p id="micStatus" class="newtab-voice__status" aria-live="polite">Tap to start voice navigation</p>
+    </section>
+  </main>
 
-              <section class="nv-surface nv-newtab-panel">
-                <p class="nv-section-kicker">Useful cues</p>
-                <h2 class="nv-section-heading">Stay oriented without clutter</h2>
-                <ul class="nv-newtab-mini">
-                  <li>Use the popup when you want summaries, headings, or focused-element feedback.</li>
-                  <li>Press Alt+Shift+M any time to toggle voice listening.</li>
-                  <li>Use Chrome shortcuts when you want repeatable demo flows.</li>
-                </ul>
-                <button id="openShortcuts" class="nv-btn nv-btn--ghost" type="button">Keyboard shortcuts</button>
-              </section>
-            </aside>
-          </div>
-        </div>
-      </section>
+  <section id="nameSetup" class="name-setup" aria-labelledby="nameSetupTitle" aria-hidden="true">
+    <form id="nameSetupForm" class="name-setup__card">
+      <h2 id="nameSetupTitle" class="name-setup__title">What should Navable call you?</h2>
+      <label class="sr-only" for="nameSetupInput">Your name</label>
+      <input id="nameSetupInput" class="input-field" type="text" autocomplete="name" maxlength="40" placeholder="Your name">
+      <button class="btn-primary" type="submit">Save</button>
+    </form>
+  </section>
 
-      <section class="nv-newtab-guides" aria-label="Guides">
-        <article class="nv-card nv-guide-card">
-          <div class="nv-card-inner">
-            <p class="nv-section-kicker">Try saying</p>
-            <h2 class="nv-section-heading">Natural openings</h2>
-            <ul class="nv-newtab-mini">
-              <li>“Open YouTube”</li>
-              <li>“Read title”</li>
-              <li>“Summarize this page”</li>
-            </ul>
-          </div>
-        </article>
+  <!-- Shortcuts Link -->
+  <div class="newtab-shortcuts">
+    <button type="button" id="openShortcuts" class="btn-icon" aria-label="Open keyboard shortcuts">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+        <line x1="6" y1="8" x2="6" y2="8"/>
+        <line x1="10" y1="8" x2="10" y2="8"/>
+        <line x1="14" y1="8" x2="14" y2="8"/>
+        <line x1="18" y1="8" x2="18" y2="8"/>
+        <line x1="8" y1="12" x2="8" y2="12"/>
+        <line x1="12" y1="12" x2="12" y2="12"/>
+        <line x1="16" y1="12" x2="16" y2="12"/>
+        <line x1="7" y1="16" x2="17" y2="16"/>
+      </svg>
+    </button>
+  </div>
 
-        <article class="nv-card nv-guide-card">
-          <div class="nv-card-inner">
-            <p class="nv-section-kicker">Why it feels cleaner</p>
-            <h2 class="nv-section-heading">One screen, three jobs</h2>
-            <p class="nv-section-text">Open a site, ask a short question, or start listening, without stacking five unrelated widgets.</p>
-          </div>
-        </article>
-
-        <article class="nv-card nv-guide-card">
-          <div class="nv-card-inner">
-            <p class="nv-section-kicker">Built for demos</p>
-            <h2 class="nv-section-heading">Keep the story obvious</h2>
-            <p class="nv-section-text">The layout stays readable at a glance so the voice interaction remains the headline, not the chrome.</p>
-          </div>
-        </article>
-      </section>
-
-      <footer class="nv-newtab-footer">
-        <span>Press Alt+Shift+M to toggle voice.</span>
-        <span> · </span>
-        <a class="nv-link" href="../options/index.html" target="_blank" rel="noreferrer">Open settings</a>
-      </footer>
-    </main>
-
-    <script src="../common/i18n.js"></script>
-    <script src="../common/announce.js"></script>
-    <script src="../common/speech.js"></script>
-    <script src="newtab.js"></script>
-  </body>
+  <script src="../common/i18n.js"></script>
+  <script src="../common/announce.js"></script>
+  <script src="../common/speech.js"></script>
+  <script src="newtab.js"></script>
+</body>
 </html>

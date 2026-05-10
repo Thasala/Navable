@@ -1,214 +1,175 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Navable Options</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="../common/ui.css" />
-    <link rel="stylesheet" href="options.css" />
-  </head>
-  <body class="nv-ui nv-options">
-    <main class="nv-container nv-options-layout">
-      <section class="nv-card nv-options-hero" aria-label="Navable options">
-        <div class="nv-card-inner nv-options-hero-inner">
-          <div class="nv-options-hero-top">
-            <div class="nv-options-brand">
-              <img
-                class="nv-options-logo"
-                src="../../assets/navable-logo.svg"
-                width="52"
-                height="52"
-                alt=""
-                aria-hidden="true"
-              />
-              <div class="nv-options-copy">
-                <p class="nv-eyebrow">Workspace Controls</p>
-                <h1 class="nv-display nv-options-title">Tune the voice workflow without making the product feel heavier.</h1>
-                <p class="nv-body nv-options-subtitle">
-                  Keep Navable smooth by deciding how Arabic and English are handled, when listening starts, and how much AI help is available.
-                </p>
-              </div>
-            </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navable — Settings</title>
+  <link rel="stylesheet" href="../common/ui.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <!-- Header -->
+    <header class="options-header">
+      <div class="options-header__brand">
+        <button type="button" id="btnBack" class="btn-icon" aria-label="Go back" title="Back">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5"/>
+            <path d="m12 19-7-7 7-7"/>
+          </svg>
+        </button>
+        <img src="../../assets/navable-logo.svg" alt="Navable" class="options-header__logo" height="32">
+        <h1 class="options-header__title">Settings</h1>
+      </div>
+      <div id="saveStatus" class="options-header__save-status" aria-live="polite"></div>
+    </header>
 
-            <div class="nv-options-hero-side">
-              <div class="nv-surface nv-options-save-card">
-                <p class="nv-section-kicker">Status</p>
-                <p id="saveStatus" class="nv-options-save-status" aria-live="polite">Changes save automatically.</p>
-              </div>
-              <a class="nv-btn nv-btn--ghost" href="../newtab/newtab.html" target="_blank" rel="noreferrer">Open new tab</a>
-            </div>
-          </div>
+    <!-- Main Content -->
+    <main class="options-main">
+      <!-- Voice Settings -->
+      <section class="card options-section" aria-labelledby="voice-settings-heading">
+        <h2 id="voice-settings-heading" class="options-section__title">Voice Settings</h2>
 
-          <div class="nv-options-pillrow" aria-label="Highlights">
-            <span class="nv-pill">Arabic + English voice</span>
-            <span class="nv-pill">Auto or locked language</span>
-            <span class="nv-pill">Privacy-aware summaries</span>
+        <div class="options-field">
+          <label for="outputMode" class="options-field__label">Output Mode</label>
+          <select id="outputMode" class="select-field">
+            <option value="screen_reader">Screen reader</option>
+            <option value="chrome_tts">Chrome TTS</option>
+          </select>
+        </div>
+
+        <div class="options-field">
+          <label for="languageMode" class="options-field__label">Language</label>
+          <select id="languageMode" class="select-field">
+            <option value="auto">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </div>
+
+        <div class="options-field options-field--toggle">
+          <div class="options-field__info">
+            <label for="continuous" class="options-field__label">Continuous Listening</label>
+            <p class="options-field__description">Keep microphone active between commands</p>
           </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="continuous" class="toggle-switch__input">
+            <span class="toggle-switch__track" aria-hidden="true">
+              <span class="toggle-switch__thumb"></span>
+            </span>
+            <span class="sr-only">Enable continuous listening</span>
+          </label>
         </div>
       </section>
 
-      <div class="nv-options-grid" aria-label="Settings">
-        <section class="nv-card nv-options-card nv-options-card--wide" aria-label="Voice settings">
-          <div class="nv-card-inner">
-            <div class="nv-options-card-head">
-              <div>
-                <p class="nv-section-kicker">Voice</p>
-                <h2 class="nv-section-heading">Conversation behavior</h2>
-              </div>
-              <span class="nv-badge">Default path</span>
-            </div>
+      <!-- AI Features -->
+      <section class="card options-section" aria-labelledby="ai-features-heading">
+        <h2 id="ai-features-heading" class="options-section__title">AI Features</h2>
 
-            <div class="nv-options-stack">
-              <div class="nv-setting-row">
-                <div class="nv-setting-copy">
-                  <h3>Reply audio</h3>
-                  <p>Choose whether Navable replies use the screen reader path or Chrome TTS. This only affects Navable output.</p>
-                </div>
-                <div class="nv-setting-control">
-                  <label class="nv-label" for="outputMode">Output mode</label>
-                  <select id="outputMode" class="nv-select">
-                    <option value="screen_reader">Screen reader</option>
-                    <option value="chrome_tts">Chrome TTS</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="nv-setting-row">
-                <div class="nv-setting-copy">
-                  <h3>Conversation language</h3>
-                  <p>Auto follows the user’s Arabic or English speech. Lock the mode when you want one consistent reply voice.</p>
-                </div>
-                <div class="nv-setting-control">
-                  <label class="nv-label" for="languageMode">Language mode</label>
-                  <select id="languageMode" class="nv-select">
-                    <option value="auto">Auto detect Arabic or English</option>
-                    <option value="en">Always English</option>
-                    <option value="ar">Always Arabic</option>
-                  </select>
-                </div>
-              </div>
-
-              <label class="nv-setting-row nv-setting-row--toggle" for="continuous">
-                <div class="nv-setting-copy">
-                  <h3>Continuous listening</h3>
-                  <p>Start listening when a supported page opens so repeat flows and demos feel immediate instead of click-heavy.</p>
-                </div>
-                <span class="nv-toggle-control">
-                  <input type="checkbox" id="continuous" />
-                  <span>Enabled</span>
-                </span>
-              </label>
-            </div>
+        <div class="options-field options-field--toggle">
+          <div class="options-field__info">
+            <label for="aiEnabled" class="options-field__label">Enable AI</label>
+            <p class="options-field__description">Use AI for page summarization and smart navigation</p>
           </div>
-        </section>
+          <label class="toggle-switch">
+            <input type="checkbox" id="aiEnabled" class="toggle-switch__input">
+            <span class="toggle-switch__track" aria-hidden="true">
+              <span class="toggle-switch__thumb"></span>
+            </span>
+            <span class="sr-only">Enable AI features</span>
+          </label>
+        </div>
 
-        <section class="nv-card nv-options-card nv-options-card--side" aria-label="Keyboard shortcuts">
-          <div class="nv-card-inner">
-            <div class="nv-options-card-head">
-              <div>
-                <p class="nv-section-kicker">Shortcuts</p>
-                <h2 class="nv-section-heading">Keyboard fallback</h2>
-              </div>
-            </div>
+        <div class="options-field">
+          <label for="aiMode" class="options-field__label">AI Mode</label>
+          <select id="aiMode" class="select-field">
+            <option value="off">Off</option>
+            <option value="summary">Summarize only</option>
+            <option value="summary_plan">Summarize + plan execution</option>
+          </select>
+        </div>
+      </section>
 
-            <p class="nv-section-text">Use shortcuts when you want a repeatable path for demos or when voice is not the fastest route.</p>
+      <!-- Privacy -->
+      <section class="card options-section" aria-labelledby="privacy-heading">
+        <h2 id="privacy-heading" class="options-section__title">Privacy</h2>
 
-            <ul class="nv-options-list">
-              <li><span class="nv-kbd">Scroll down</span> / <span class="nv-kbd">Scroll up</span></li>
-              <li><span class="nv-kbd">Next heading</span> / <span class="nv-kbd">Previous heading</span></li>
-              <li><span class="nv-kbd">Toggle mic</span></li>
-            </ul>
-
-            <button id="openShortcuts" class="nv-btn" type="button">Open Chrome keyboard shortcuts</button>
+        <div class="options-field options-field--toggle">
+          <div class="options-field__info">
+            <label for="noSensitiveSites" class="options-field__label">Skip Sensitive Sites</label>
+            <p class="options-field__description">Disable voice navigation on banking and login pages</p>
           </div>
-        </section>
+          <label class="toggle-switch">
+            <input type="checkbox" id="noSensitiveSites" class="toggle-switch__input">
+            <span class="toggle-switch__track" aria-hidden="true">
+              <span class="toggle-switch__thumb"></span>
+            </span>
+            <span class="sr-only">Skip sensitive sites</span>
+          </label>
+        </div>
 
-        <section class="nv-card nv-options-card nv-options-card--wide" aria-label="AI settings">
-          <div class="nv-card-inner">
-            <div class="nv-options-card-head">
-              <div>
-                <p class="nv-section-kicker">AI</p>
-                <h2 class="nv-section-heading">Summaries and answer mode</h2>
-              </div>
-              <span class="nv-badge">On demand</span>
-            </div>
-
-            <div class="nv-options-stack">
-              <label class="nv-setting-row nv-setting-row--toggle" for="aiEnabled">
-                <div class="nv-setting-copy">
-                  <h3>AI features</h3>
-                  <p>Enable summarization and answer flows when you want more guidance than basic navigation commands.</p>
-                </div>
-                <span class="nv-toggle-control">
-                  <input type="checkbox" id="aiEnabled" />
-                  <span>Enabled</span>
-                </span>
-              </label>
-
-              <div class="nv-setting-row">
-                <div class="nv-setting-copy">
-                  <h3>AI mode</h3>
-                  <p>Choose whether AI only summarizes or can also prepare action plans from what it sees on the page.</p>
-                </div>
-                <div class="nv-setting-control">
-                  <label class="nv-label" for="aiMode">AI mode</label>
-                  <select id="aiMode" class="nv-select">
-                    <option value="off">Off</option>
-                    <option value="summary">Summarize only</option>
-                    <option value="summary_plan">Summarize + plan execution</option>
-                  </select>
-                </div>
-              </div>
-
-              <label class="nv-setting-row nv-setting-row--toggle" for="noSensitiveSites">
-                <div class="nv-setting-copy">
-                  <h3>Sensitive sites guardrail</h3>
-                  <p>Block summaries on pages where extra caution matters, even when AI support is turned on.</p>
-                </div>
-                <span class="nv-toggle-control">
-                  <input type="checkbox" id="noSensitiveSites" />
-                  <span>Enabled</span>
-                </span>
-              </label>
-
-              <label class="nv-setting-row nv-setting-row--toggle nv-setting-row--disabled" for="noFormFields">
-                <div class="nv-setting-copy">
-                  <h3>Form field protection</h3>
-                  <p>Form contents stay excluded from summaries by design and cannot be disabled from this screen.</p>
-                </div>
-                <span class="nv-toggle-control">
-                  <input type="checkbox" id="noFormFields" checked disabled />
-                  <span>Always on</span>
-                </span>
-              </label>
-            </div>
+        <div class="options-field options-field--toggle">
+          <div class="options-field__info">
+            <label for="noFormFields" class="options-field__label">Form Field Protection</label>
+            <p class="options-field__description">Password and credit-card fields stay excluded from summaries by design</p>
           </div>
-        </section>
+          <label class="toggle-switch">
+            <input type="checkbox" id="noFormFields" class="toggle-switch__input" checked disabled>
+            <span class="toggle-switch__track" aria-hidden="true">
+              <span class="toggle-switch__thumb"></span>
+            </span>
+            <span class="sr-only">Form field protection is always on</span>
+          </label>
+        </div>
+      </section>
 
-        <section class="nv-card nv-options-card nv-options-card--side" aria-label="Privacy">
-          <div class="nv-card-inner">
-            <div class="nv-options-card-head">
-              <div>
-                <p class="nv-section-kicker">Privacy</p>
-                <h2 class="nv-section-heading">What Navable uses</h2>
-              </div>
-            </div>
+      <!-- Voice Access -->
+      <section class="card options-section options-voice" aria-labelledby="voice-access-heading">
+        <div class="options-voice__copy">
+          <h2 id="voice-access-heading" class="options-section__title">Voice Access</h2>
+          <p id="micStatus" class="options-section__description" aria-live="polite">Voice tools are ready for this settings page.</p>
+        </div>
+        <button type="button" id="btnMicToggle" class="mic-button" aria-label="Start listening" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+      </section>
 
-            <p class="nv-section-text">
-              Navable works from structured page content such as titles, headings, links, buttons, and safe field labels. Passwords and credit card
-              fields are not collected.
-            </p>
-
-            <ul class="nv-options-list">
-              <li>Short microphone clips may be sent to the backend for transcription when voice is active.</li>
-              <li>Page snapshots are only sent for summarization when AI features are enabled.</li>
-              <li>Language mode affects replies and recognition behavior, not what page data is collected.</li>
-            </ul>
-          </div>
-        </section>
-      </div>
+      <!-- Shortcuts -->
+      <section class="card options-section" aria-labelledby="shortcuts-heading">
+        <h2 id="shortcuts-heading" class="options-section__title">Keyboard Shortcuts</h2>
+        <p class="options-section__description">Configure keyboard shortcuts to quickly access Navable features.</p>
+        <button type="button" id="openShortcuts" class="btn-secondary">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+            <line x1="6" y1="8" x2="6" y2="8"/>
+            <line x1="10" y1="8" x2="10" y2="8"/>
+            <line x1="14" y1="8" x2="14" y2="8"/>
+            <line x1="18" y1="8" x2="18" y2="8"/>
+            <line x1="8" y1="12" x2="8" y2="12"/>
+            <line x1="12" y1="12" x2="12" y2="12"/>
+            <line x1="16" y1="12" x2="16" y2="12"/>
+            <line x1="7" y1="16" x2="17" y2="16"/>
+          </svg>
+          <span>Configure Shortcuts</span>
+        </button>
+      </section>
     </main>
 
-    <script src="options.js"></script>
-  </body>
+    <!-- Footer -->
+    <footer class="options-footer">
+      <p>Navable v1.0 — Voice Navigation for the Web</p>
+    </footer>
+  </div>
+
+  <script src="../common/i18n.js"></script>
+  <script src="../common/announce.js"></script>
+  <script src="../common/speech.js"></script>
+  <script src="../content.js"></script>
+  <script src="options.js"></script>
+</body>
 </html>
