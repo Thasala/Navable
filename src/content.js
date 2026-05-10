@@ -4457,6 +4457,175 @@
     return null;
   }
 
+  function isNavableSettingsPageContext() {
+    return !!(
+      document.getElementById('outputMode') &&
+      document.getElementById('languageMode') &&
+      document.getElementById('continuous') &&
+      document.getElementById('aiEnabled') &&
+      document.getElementById('aiMode') &&
+      document.getElementById('noSensitiveSites') &&
+      document.getElementById('noFormFields')
+    );
+  }
+
+  function normalizeSettingsIntentText(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return '';
+    t = t.replace(/\b(?:please|pls)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    var prefixes = [
+      /^(?:hey navable|navable)\s+/,
+      /^(?:can you|could you|would you|will you)\s+/,
+      /^(?:i want to|i need to|i would like to|i d like to|let me)\s+/,
+      /^(?:help me|show me how to)\s+/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < prefixes.length; i++) {
+        var next = t.replace(prefixes[i], '').trim();
+        if (next !== t) {
+          t = next;
+          changed = true;
+        }
+      }
+    }
+    return t;
+  }
+
+  function hasSettingsAlias(text, aliases) {
+    for (var i = 0; i < aliases.length; i++) {
+      var alias = normalizeMatchText(aliases[i]);
+      if (alias && (text === alias || text.indexOf(alias) >= 0)) return true;
+    }
+    return false;
+  }
+
+  function isSettingsSetIntent(text) {
+    return /^(?:set|change|switch|select|choose|pick|use|make|turn)\b/.test(text);
+  }
+
+  function settingsOnOffValue(text) {
+    if (/\b(?:on|enable|enabled|activate|activated|check|checked)\b/.test(text) || /^(?:enable|activate|check)\b/.test(text)) return true;
+    if (/\b(?:off|disable|disabled|deactivate|deactivated|uncheck|unchecked)\b/.test(text) || /^(?:disable|deactivate|uncheck)\b/.test(text)) return false;
+    return null;
+  }
+
+  var NAVABLE_SELECT_SETTINGS = [
+    {
+      id: 'outputMode',
+      label: 'Output mode',
+      aliases: ['output mode', 'voice output', 'speech output', 'output'],
+      options: [
+        { value: 'screen_reader', label: 'Screen reader', aliases: ['screen reader', 'screenreader'] },
+        { value: 'chrome_tts', label: 'Chrome TTS', aliases: ['chrome tts', 'tts', 'chrome text to speech', 'text to speech'] }
+      ]
+    },
+    {
+      id: 'languageMode',
+      label: 'Language',
+      aliases: ['language', 'voice language', 'speech language'],
+      options: [
+        { value: 'auto', label: 'Auto-detect', aliases: ['auto', 'automatic', 'auto detect', 'auto detect language', 'automatic language'] },
+        { value: 'en', label: 'English', aliases: ['english', 'en'] },
+        { value: 'ar', label: 'Arabic', aliases: ['arabic', 'ar'] }
+      ]
+    },
+    {
+      id: 'aiMode',
+      label: 'AI mode',
+      aliases: ['ai mode', 'assistant mode'],
+      options: [
+        { value: 'off', label: 'Off', aliases: ['off', 'disabled', 'disable'] },
+        { value: 'summary', label: 'Summarize only', aliases: ['summary', 'summarize', 'summarize only', 'summary only'] },
+        { value: 'summary_plan', label: 'Summarize + plan execution', aliases: ['summarize plan execution', 'summarize plus plan execution', 'summarize and plan execution', 'summary plan', 'summary plus plan', 'plan execution'] }
+      ]
+    }
+  ];
+
+  var NAVABLE_CHECKBOX_SETTINGS = [
+    { id: 'continuous', label: 'Continuous listening', aliases: ['continuous listening', 'keep microphone active', 'microphone active'] },
+    { id: 'aiEnabled', label: 'AI', aliases: ['ai', 'enable ai', 'ai features', 'smart navigation'] },
+    { id: 'noSensitiveSites', label: 'Skip sensitive sites', aliases: ['skip sensitive sites', 'sensitive sites', 'banking and login pages'] }
+  ];
+
+  function resolveSettingsOption(setting, text) {
+    var best = null;
+    for (var i = 0; i < setting.options.length; i++) {
+      var option = setting.options[i];
+      for (var j = 0; j < option.aliases.length; j++) {
+        var alias = normalizeMatchText(option.aliases[j]);
+        if (!alias || (text !== alias && text.indexOf(alias) < 0)) continue;
+        if (!best || alias.length > best.aliasLength) {
+          best = { option: option, aliasLength: alias.length };
+        }
+      }
+    }
+    return best ? best.option : null;
+  }
+
+  function parseNavableSettingsCommand(text) {
+    if (!isNavableSettingsPageContext()) return null;
+    var t = normalizeSettingsIntentText(text);
+    if (!t) return null;
+
+    if (hasSettingsAlias(t, ['form field protection', 'form protection', 'password protection', 'credit card protection'])) {
+      if (isSettingsSetIntent(t) || settingsOnOffValue(t) !== null) {
+        return {
+          type: 'navable_setting',
+          control: 'locked',
+          id: 'noFormFields',
+          label: 'Form field protection'
+        };
+      }
+    }
+
+    for (var i = 0; i < NAVABLE_SELECT_SETTINGS.length; i++) {
+      var setting = NAVABLE_SELECT_SETTINGS[i];
+      var hasSetting = hasSettingsAlias(t, setting.aliases);
+      var option = resolveSettingsOption(setting, t);
+      if (hasSetting && option && isSettingsSetIntent(t)) {
+        return {
+          type: 'navable_setting',
+          control: 'select',
+          id: setting.id,
+          label: setting.label,
+          value: option.value,
+          valueLabel: option.label
+        };
+      }
+    }
+
+    if (/^(?:use|switch to|change to)\s+(?:chrome tts|tts|chrome text to speech)$/.test(t)) {
+      return { type: 'navable_setting', control: 'select', id: 'outputMode', label: 'Output mode', value: 'chrome_tts', valueLabel: 'Chrome TTS' };
+    }
+    if (/^(?:use|switch to|change to)\s+(?:screen reader|screenreader)$/.test(t)) {
+      return { type: 'navable_setting', control: 'select', id: 'outputMode', label: 'Output mode', value: 'screen_reader', valueLabel: 'Screen reader' };
+    }
+    if (/^(?:use|switch to|change to)\s+(?:english|arabic|auto|auto detect)$/.test(t)) {
+      var languageOption = resolveSettingsOption(NAVABLE_SELECT_SETTINGS[1], t);
+      if (languageOption) {
+        return { type: 'navable_setting', control: 'select', id: 'languageMode', label: 'Language', value: languageOption.value, valueLabel: languageOption.label };
+      }
+    }
+
+    for (var j = 0; j < NAVABLE_CHECKBOX_SETTINGS.length; j++) {
+      var checkbox = NAVABLE_CHECKBOX_SETTINGS[j];
+      var checked = settingsOnOffValue(t);
+      if (checked !== null && hasSettingsAlias(t, checkbox.aliases)) {
+        return {
+          type: 'navable_setting',
+          control: 'checkbox',
+          id: checkbox.id,
+          label: checkbox.label,
+          checked: checked
+        };
+      }
+    }
+
+    return null;
+  }
+
   function isFormModeStartText(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return false;
@@ -4523,6 +4692,9 @@
     ) {
       return { type: 'help' };
     }
+
+    var settingsCmd = parseNavableSettingsCommand(original);
+    if (settingsCmd) return settingsCmd;
 
     // Summary/orientation triggers in English, French, and Arabic.
     if (isSummaryCommandText(t)) {
@@ -5182,6 +5354,71 @@
     return currentSpeechFeedback(pending ? 'clarification_needed' : (ok ? 'success' : 'failure'), details);
   }
 
+  function dispatchSettingsChange(el) {
+    if (!el) return;
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { /* ignore */ }
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err2) { /* ignore */ }
+  }
+
+  function applyNavableSettingCommand(cmd) {
+    var label = cmd && cmd.label ? String(cmd.label) : 'Setting';
+    var el = cmd && cmd.id ? document.getElementById(cmd.id) : null;
+    if (!el) {
+      return speakFeedback({
+        status: 'failure',
+        message: label + ' was not found.',
+        details: { command: 'navable_setting', id: cmd && cmd.id ? cmd.id : '' }
+      });
+    }
+
+    if (cmd.control === 'locked' || el.disabled) {
+      return speakFeedback({
+        status: 'blocked',
+        message: label + ' is always on by design.',
+        details: { command: 'navable_setting', id: cmd.id, locked: true }
+      });
+    }
+
+    if (cmd.control === 'select') {
+      el.value = cmd.value || '';
+      dispatchSettingsChange(el);
+      try { el.focus(); } catch (_err2) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: label + ' set to ' + (cmd.valueLabel || cmd.value || 'selected') + '.',
+        details: {
+          command: 'navable_setting',
+          id: cmd.id,
+          value: cmd.value || ''
+        }
+      });
+    }
+
+    if (cmd.control === 'checkbox') {
+      if (!!el.checked !== !!cmd.checked) {
+        try { el.click(); } catch (_err3) { el.checked = !!cmd.checked; dispatchSettingsChange(el); }
+      } else {
+        dispatchSettingsChange(el);
+      }
+      try { el.focus(); } catch (_err4) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: label + ' turned ' + (cmd.checked ? 'on' : 'off') + '.',
+        details: {
+          command: 'navable_setting',
+          id: cmd.id,
+          checked: !!cmd.checked
+        }
+      });
+    }
+
+    return speakFeedback({
+      status: 'failure',
+      message: 'I could not change that setting.',
+      details: { command: 'navable_setting', id: cmd.id || '' }
+    });
+  }
+
   function moveBy(type, dir) {
     rescan();
     var items = index.items.filter(function (it) { return it.type === type; });
@@ -5323,6 +5560,9 @@
         command: 'form_mode',
         action: cmd.action || 'start'
       });
+    }
+    if (cmd.type === 'navable_setting') {
+      return applyNavableSettingCommand(cmd);
     }
     if (cmd.type === 'form_move') {
       return currentFormFeedback(moveFormField(cmd.dir === 'prev' ? 'prev' : 'next'), {
