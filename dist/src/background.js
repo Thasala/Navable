@@ -197,12 +197,15 @@ function buildBackendApiUrl(path) {
 
 const TRANSLATE_MESSAGES_URL = buildBackendApiUrl('/api/translate-messages');
 const RESOLVE_SITE_URL = buildBackendApiUrl('/api/resolve-site');
+const OFFSCREEN_SPEECH_DOCUMENT = 'src/offscreen/offscreen.html';
 const OUTPUT_LOCALES = {
   en: 'en-US',
   fr: 'fr-FR',
   ar: 'ar-SA'
 };
 const outputMessageLoadPromises = {};
+let creatingOffscreenSpeechDocument = null;
+const offscreenSpeechSessions = new Map();
 
 const OUTPUT_MESSAGES = {
   en: {
@@ -484,6 +487,178 @@ async function sendToSpecificTab(tabId, payload) {
 async function sendToTargetTab(tabId, payload) {
   if (tabId) return sendToSpecificTab(tabId, payload);
   return sendToActiveTab(payload);
+}
+
+function supportsOffscreenSpeechBridge() {
+  return !!(
+    chrome &&
+    chrome.offscreen &&
+    typeof chrome.offscreen.createDocument === 'function' &&
+    chrome.runtime &&
+    typeof chrome.runtime.sendMessage === 'function'
+  );
+}
+
+function sendRuntimeMessage(payload) {
+  return new Promise((resolve, reject) => {
+    if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+      reject(new Error('Runtime messaging unavailable'));
+      return;
+    }
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    }
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    }
+    try {
+      const maybePromise = chrome.runtime.sendMessage(payload, (response) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+          ? String(chrome.runtime.lastError.message)
+          : '';
+        if (lastError) {
+          fail(new Error(lastError));
+          return;
+        }
+        finish(response);
+      });
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(finish).catch(fail);
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
+async function hasOffscreenSpeechDocument() {
+  if (!chrome || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') return false;
+  const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_SPEECH_DOCUMENT);
+  if (typeof chrome.runtime.getContexts === 'function') {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT'],
+      documentUrls: [offscreenUrl]
+    });
+    return !!(contexts && contexts.length);
+  }
+  if (typeof self !== 'undefined' && self.clients && typeof self.clients.matchAll === 'function') {
+    const matchedClients = await self.clients.matchAll();
+    return matchedClients.some((client) => client && client.url === offscreenUrl);
+  }
+  return false;
+}
+
+async function ensureOffscreenSpeechDocument() {
+  if (!supportsOffscreenSpeechBridge()) {
+    throw new Error('Extension voice capture unavailable');
+  }
+  if (await hasOffscreenSpeechDocument()) return;
+  if (creatingOffscreenSpeechDocument) {
+    await creatingOffscreenSpeechDocument;
+    return;
+  }
+
+  creatingOffscreenSpeechDocument = Promise.resolve(chrome.offscreen.createDocument({
+    url: OFFSCREEN_SPEECH_DOCUMENT,
+    reasons: ['USER_MEDIA'],
+    justification: 'Capture microphone input for Navable voice commands from the extension origin.'
+  })).finally(() => {
+    creatingOffscreenSpeechDocument = null;
+  });
+  await creatingOffscreenSpeechDocument;
+}
+
+async function sendOffscreenSpeechCommand(payload) {
+  return await sendRuntimeMessage({
+    target: 'navable:offscreenSpeech',
+    ...payload
+  });
+}
+
+async function startOffscreenSpeechSession(msg, sourceTabId) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  if (!sourceTabId) return { ok: false, error: 'No source tab' };
+  if (!sessionId) return { ok: false, error: 'Missing voice session' };
+  if (!supportsOffscreenSpeechBridge()) {
+    return { ok: false, error: 'Extension voice capture unavailable' };
+  }
+
+  await ensureOffscreenSpeechDocument();
+  offscreenSpeechSessions.set(sessionId, {
+    sessionId,
+    tabId: sourceTabId,
+    updatedAt: Date.now()
+  });
+
+  const response = await sendOffscreenSpeechCommand({
+    action: 'start',
+    sessionId,
+    tabId: sourceTabId,
+    lang: msg.lang || 'en-US'
+  });
+
+  if (!response || response.ok !== true) {
+    offscreenSpeechSessions.delete(sessionId);
+    return response && typeof response === 'object'
+      ? response
+      : { ok: false, error: 'Voice capture unavailable' };
+  }
+
+  return { ok: true };
+}
+
+async function stopOffscreenSpeechSession(msg, sourceTabId) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  const session = sessionId ? offscreenSpeechSessions.get(sessionId) : null;
+  const tabId = Number((session && session.tabId) || sourceTabId || msg.tabId || 0);
+  if (sessionId) offscreenSpeechSessions.delete(sessionId);
+  if (!supportsOffscreenSpeechBridge()) return { ok: true };
+
+  try {
+    await sendOffscreenSpeechCommand({
+      action: 'stop',
+      sessionId,
+      tabId,
+      silent: !!(msg && msg.silent)
+    });
+  } catch (_err) {
+    // The tab is already stopping; a missing offscreen document is harmless.
+  }
+  return { ok: true };
+}
+
+async function stopOffscreenSpeechForTab(tabId, reason) {
+  const id = Number(tabId || 0);
+  if (!id) return;
+  const sessions = Array.from(offscreenSpeechSessions.values())
+    .filter((session) => Number(session.tabId || 0) === id);
+  await Promise.all(sessions.map((session) => stopOffscreenSpeechSession({
+    sessionId: session.sessionId,
+    tabId: id,
+    silent: true,
+    reason
+  }, id)));
+}
+
+async function relayOffscreenSpeechEvent(msg) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  const session = sessionId ? offscreenSpeechSessions.get(sessionId) : null;
+  const tabId = Number(msg.tabId || msg.targetTabId || (session && session.tabId) || 0);
+  const event = String(msg && msg.event ? msg.event : '').trim();
+  if (!tabId || !sessionId || !event) return { ok: false, error: 'Invalid voice event' };
+
+  await sendToSpecificTab(tabId, {
+    type: 'navable:voiceEvent',
+    sessionId,
+    event,
+    payload: msg.payload || {}
+  });
+  return { ok: true };
 }
 
 async function tryExecutePlan(plan) {
@@ -2347,6 +2522,11 @@ try {
         (changeInfo && changeInfo.url) ||
         (tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '');
       redirectNewTabToNavable(tabId, url);
+      if (changeInfo && changeInfo.url) {
+        stopOffscreenSpeechForTab(tabId, 'navigation').catch(() => {
+          // ignore voice cleanup failures
+        });
+      }
       resetAssistantSessionForTabNavigation(tabId, url).catch(() => {
         // ignore session reset failures
       });
@@ -2354,6 +2534,9 @@ try {
   }
   if (chrome?.tabs?.onRemoved?.addListener) {
     chrome.tabs.onRemoved.addListener((tabId) => {
+      stopOffscreenSpeechForTab(tabId, 'tab_removed').catch(() => {
+        // ignore voice cleanup failures
+      });
       clearAssistantSession(tabId).catch(() => {
         // ignore session cleanup failures
       });
@@ -2366,6 +2549,30 @@ try {
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const sourceTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
+  if (msg && msg.type === 'navable:voiceStart') {
+    startOffscreenSpeechSession(msg, sourceTabId).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice start failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:voiceStop') {
+    stopOffscreenSpeechSession(msg, sourceTabId).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice stop failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:offscreenSpeechEvent') {
+    relayOffscreenSpeechEvent(msg).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice event failed') });
+    });
+    return true;
+  }
   if (msg && msg.type === 'navable:openSite') {
     openSiteInBrowser(msg.query || '', msg.newTab, msg.outputLanguage, {
       sourceTabId
