@@ -196,6 +196,7 @@ function buildBackendApiUrl(path) {
 }
 
 const TRANSLATE_MESSAGES_URL = buildBackendApiUrl('/api/translate-messages');
+const RESOLVE_SITE_URL = buildBackendApiUrl('/api/resolve-site');
 const OUTPUT_LOCALES = {
   en: 'en-US',
   fr: 'fr-FR',
@@ -1302,6 +1303,8 @@ function extractAssistantOpenSiteQuery(text) {
     .replace(/\bfor me\b/g, '')
     .trim()
     .replace(/\bplease\b/g, '')
+    .trim()
+    .replace(/\b(?:website|site|page|app)\b$/g, '')
     .trim();
 
   return query || null;
@@ -1498,7 +1501,8 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     const action = { type: 'open_site', query: directOpenQuery, newTab: true };
     const openResult = await openSiteInBrowser(directOpenQuery, true, outputLanguage, {
       sourceTabId,
-      announce: false
+      announce: false,
+      settings
     });
     if (!openResult.ok) {
       return { ok: false, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
@@ -1559,7 +1563,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
           normalized.action.query,
           normalized.action.newTab,
           outputLanguage,
-          { sourceTabId, announce: false }
+          { sourceTabId, announce: false, settings }
         );
         if (!openResult.ok) {
           return { ok: false, structure, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
@@ -2020,6 +2024,29 @@ function resolveOpenQueryToUrl(query) {
   return resolveDirectOpenFallbackUrl(raw);
 }
 
+function resolveOpenQueryToUrlWithoutGuess(query) {
+  const raw = String(query || '').trim();
+  if (!raw) return null;
+
+  const normalized = normalizeSpokenUrl(raw);
+  const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
+  if (searchMatch && searchMatch[3]) {
+    return `https://www.google.com/search?q=${encodeURIComponent(searchMatch[3])}`;
+  }
+
+  const direct = tryParseHttpUrl(normalized);
+  if (direct) return direct;
+
+  const namedSite = resolveNamedSiteUrl(raw);
+  if (namedSite) return namedSite;
+
+  if (looksLikeHostWithOptionalPath(normalized)) {
+    return tryParseHttpUrl(`https://${normalized}`);
+  }
+
+  return null;
+}
+
 function friendlyUrlForSpeech(url) {
   try {
     const u = new URL(url);
@@ -2031,11 +2058,62 @@ function friendlyUrlForSpeech(url) {
   }
 }
 
+async function shouldUseAiSiteResolution(options = {}) {
+  if (options.aiResolution === false) return false;
+  const settings = options.settings || await loadSettings();
+  return settings && settings.aiEnabled === true;
+}
+
+async function resolveOfficialSiteUrlWithAi(query, requestedOutputLanguage) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+
+  try {
+    const response = await fetch(RESOLVE_SITE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: q,
+        outputLanguage: normalizeOutputLanguage(requestedOutputLanguage)
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return null;
+
+    const url = tryParseHttpUrl(String(data && data.url ? data.url : ''));
+    if (!url) return null;
+
+    return {
+      url,
+      name: typeof data.name === 'string' ? data.name.trim() : '',
+      confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0
+    };
+  } catch (err) {
+    console.warn('[Navable] site URL resolution failed', err);
+    return null;
+  }
+}
+
 async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options = {}) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
-  const url = resolveOpenQueryToUrl(query);
   const sourceTabId = options.sourceTabId || null;
+  let url = resolveOpenQueryToUrlWithoutGuess(query);
+  let resolutionSource = url ? 'local' : '';
+
+  if (!url && await shouldUseAiSiteResolution(options)) {
+    const resolved = await resolveOfficialSiteUrlWithAi(query, outputLanguage);
+    if (resolved && resolved.url) {
+      url = resolved.url;
+      resolutionSource = 'ai';
+    }
+  }
+
+  if (!url) {
+    url = resolveOpenQueryToUrl(query);
+    resolutionSource = url ? 'fallback' : '';
+  }
+
   if (!url) {
     const error = outputMessage('missing_url', outputLanguage);
     return {
@@ -2054,6 +2132,7 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
     command: 'open_site',
     query: String(query || '').trim(),
     url,
+    resolutionSource,
     newTab: newTab !== false
   });
   if (options.announce !== false) {
