@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import OpenAI, { toFile } from 'openai';
 import swaggerUi from 'swagger-ui-express';
 import path from 'node:path';
@@ -21,9 +22,55 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
 
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+function parseCsvEnv(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseBooleanEnv(value, defaultValue = false) {
+  if (typeof value === 'undefined' || value === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function parsePositiveIntEnv(value, defaultValue) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+const allowedCorsOrigins = new Set(parseCsvEnv(process.env.CORS_ORIGINS));
+if (process.env.NAVABLE_EXTENSION_ID) {
+  allowedCorsOrigins.add(`chrome-extension://${process.env.NAVABLE_EXTENSION_ID}`);
+}
+
+const allowAllCors = parseBooleanEnv(
+  process.env.CORS_ALLOW_ALL,
+  !isProduction && allowedCorsOrigins.size === 0
+);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowAllCors || allowedCorsOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  }
+}));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '5mb' }));
+
+const apiRateLimiter = rateLimit({
+  windowMs: parsePositiveIntEnv(process.env.RATE_LIMIT_WINDOW_MS, 60 * 1000),
+  limit: parsePositiveIntEnv(process.env.RATE_LIMIT_MAX, isProduction ? 60 : 300),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+app.use('/api', apiRateLimiter);
 
 app.get('/api-docs.json', (req, res) => {
   res.json(getOpenApiSpec(req));
@@ -56,11 +103,12 @@ const ALLOWED_ACTIONS = new Set([
 
 const DEFAULT_SETTINGS = {
   aiEnabled: true,
-  model: 'gpt-4.1-mini',
-  transcriptionModel: 'gpt-4o-mini-transcribe'
+  model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+  transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe'
 };
 
 let runtimeSettings = { ...DEFAULT_SETTINGS };
+const runtimeSettingsWritable = parseBooleanEnv(process.env.NAVABLE_SETTINGS_WRITABLE, !isProduction);
 const translatedCatalogCache = new Map();
 
 const OUTPUT_MESSAGES = {
@@ -666,10 +714,17 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/api/settings', (_req, res) => {
-  res.json(runtimeSettings);
+  res.json({
+    ...runtimeSettings,
+    writable: runtimeSettingsWritable
+  });
 });
 
 app.put('/api/settings', (req, res) => {
+  if (!runtimeSettingsWritable) {
+    return res.status(403).json({ error: 'Runtime settings changes are disabled in production' });
+  }
+
   const body = req.body;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return res.status(400).json({ error: 'Invalid JSON body' });
@@ -711,6 +766,10 @@ app.put('/api/settings', (req, res) => {
 });
 
 app.delete('/api/settings', (_req, res) => {
+  if (!runtimeSettingsWritable) {
+    return res.status(403).json({ error: 'Runtime settings changes are disabled in production' });
+  }
+
   runtimeSettings = { ...DEFAULT_SETTINGS };
   res.json(runtimeSettings);
 });

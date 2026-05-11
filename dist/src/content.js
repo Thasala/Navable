@@ -6153,7 +6153,9 @@
     }
 
     try {
-      var directResponse = await window.fetch('http://localhost:3000/api/assistant', {
+      var directResponse = await window.fetch(window.NavableConfig
+        ? window.NavableConfig.buildApiUrl('/api/assistant')
+        : 'http://localhost:3000/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

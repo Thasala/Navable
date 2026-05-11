@@ -88,6 +88,14 @@ const baseSpec = {
                 schema: { $ref: '#/components/schemas/ErrorResponse' }
               }
             }
+          },
+          403: {
+            description: 'Runtime settings changes are disabled',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
           }
         }
       },
@@ -100,6 +108,14 @@ const baseSpec = {
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/Settings' }
+              }
+            }
+          },
+          403: {
+            description: 'Runtime settings changes are disabled',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
               }
             }
           }
@@ -404,7 +420,11 @@ const baseSpec = {
               'When false, /api/assistant still returns local page-summary fallback for page context, but general answers are unavailable.'
           },
           model: { type: 'string', description: 'OpenAI model ID for assistant replies.' },
-          transcriptionModel: { type: 'string', description: 'OpenAI model ID for voice transcription.' }
+          transcriptionModel: { type: 'string', description: 'OpenAI model ID for voice transcription.' },
+          writable: {
+            type: 'boolean',
+            description: 'Whether runtime settings can be changed by API requests.'
+          }
         }
       },
       UpdateSettingsRequest: {

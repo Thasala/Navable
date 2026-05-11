@@ -187,7 +187,15 @@ const NAVABLE_NEW_TAB_URL = (() => {
   }
 })();
 
-const TRANSLATE_MESSAGES_URL = 'http://localhost:3000/api/translate-messages';
+// Keep this in sync with src/common/config.js before building a production demo.
+const BACKEND_BASE_URL = 'http://localhost:3000';
+
+function buildBackendApiUrl(path) {
+  const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
+  return `${BACKEND_BASE_URL}${normalizedPath}`;
+}
+
+const TRANSLATE_MESSAGES_URL = buildBackendApiUrl('/api/translate-messages');
 const OUTPUT_LOCALES = {
   en: 'en-US',
   fr: 'fr-FR',
@@ -1532,7 +1540,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
   }
 
   try {
-    const response = await fetch('http://localhost:3000/api/assistant', {
+    const response = await fetch(buildBackendApiUrl('/api/assistant'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

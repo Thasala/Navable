@@ -2,7 +2,9 @@
   if (typeof window === 'undefined' || window.NavableI18n) return;
 
   var DEFAULT_LANGUAGE = 'en';
-  var DEFAULT_TRANSLATE_URL = 'http://localhost:3000/api/translate-messages';
+  var DEFAULT_TRANSLATE_URL = window.NavableConfig
+    ? window.NavableConfig.buildApiUrl('/api/translate-messages')
+    : 'http://localhost:3000/api/translate-messages';
   var LOCALES = {
     en: 'en-US',
     fr: 'fr-FR',

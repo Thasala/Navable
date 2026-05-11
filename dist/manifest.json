@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Navable (Phase A)",
-  "version": "0.1.0",
-  "description": "Baseline MV3 with announce helper + messaging + CI.",
+  "name": "Navable",
+  "version": "1.0.0",
+  "description": "Voice and AI navigation assistant for web accessibility.",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
   "options_page": "src/options/index.html",
   "chrome_url_overrides": { "newtab": "src/newtab/newtab.html" },
@@ -13,7 +13,7 @@
   "content_scripts": [
     {
       "matches": ["https://*/*", "http://*/*"],
-      "js": ["src/common/i18n.js", "src/common/announce.js", "src/common/speech.js", "src/content.js"],
+      "js": ["src/common/config.js", "src/common/i18n.js", "src/common/announce.js", "src/common/speech.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],

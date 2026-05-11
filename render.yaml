@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: navable-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_TRANSCRIPTION_MODEL
+        value: gpt-4o-mini-transcribe
+      - key: CORS_ALLOW_ALL
+        value: "true"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX
+        value: "60"
+      - key: NAVABLE_SETTINGS_WRITABLE
+        value: "false"

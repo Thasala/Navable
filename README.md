@@ -1,5 +1,11 @@
 # Navable
 
+## Production prep
+
+This repo now has a Render-ready backend blueprint in `render.yaml` and a production checklist in `docs/production.md`.
+
+For a demo deployment, deploy the backend to Render first, set `OPENAI_API_KEY` there, then replace the extension backend URL in `src/common/config.js` and `src/background.js` with the Render HTTPS URL before running `npm run build`.
+
 ## Backend (Docker)
 
 Runs the local AI backend on `http://localhost:3000` for page summarization, brief answers, and speech services.
