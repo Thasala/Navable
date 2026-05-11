@@ -53,6 +53,29 @@ async function installTypedCommandHarness(page: any) {
   });
 }
 
+async function loadContentWithTypedCommands(page: any) {
+  await installTypedCommandHarness(page);
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+  await page.waitForFunction(() => (window as any).__contentListeners?.length > 0);
+
+  return async function typed(text: string) {
+    return await page.evaluate(async (utterance) => {
+      // @ts-ignore
+      const listener = (window as any).__contentListeners[0];
+      return await new Promise((resolve, reject) => {
+        try {
+          listener({ type: 'navable:runTypedCommand', text: utterance, detectedLanguage: 'en' }, {}, resolve);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }, text);
+  };
+}
+
 test('buildPageStructure returns landmarks and input metadata', async ({ page }) => {
   await page.setContent(`
     <header role="banner"><h1>Site Title</h1></header>
@@ -432,6 +455,114 @@ test('typed form mode can guide fill, select, check, and submit a form', async (
   const submit = await typed('submit form');
   expect(submit).toMatchObject({ ok: true });
   expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(true);
+});
+
+test('typed form mode uses search and go buttons as primary actions', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form id="site-search">
+        <label for="query">Search</label>
+        <input id="query" name="q" type="search" enterkeyhint="search" />
+        <button id="go" type="button">Go</button>
+        <button id="clear" type="reset">Clear</button>
+      </form>
+    </main>
+  `);
+  await page.evaluate(() => {
+    const form = document.getElementById('site-search') as HTMLFormElement;
+    const query = document.getElementById('query') as HTMLInputElement;
+    document.getElementById('go')?.addEventListener('click', () => {
+      // @ts-ignore
+      window.searchValue = query.value;
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      // @ts-ignore
+      window.requestSubmitUsed = true;
+    });
+  });
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  const start = await typed('form mode');
+  expect(start).toMatchObject({ ok: true });
+  expect(String((start as any).speech || '')).toContain('Field 1 of 1: Search');
+
+  await typed('fill lunar maps');
+  await typed('yes');
+
+  const go = await typed('go');
+  expect(go).toMatchObject({ ok: true });
+  expect(await page.evaluate(() => (window as any).searchValue)).toBe('lunar maps');
+  expect(await page.evaluate(() => Boolean((window as any).requestSubmitUsed))).toBe(false);
+});
+
+test('typed form mode treats next on the last field as the page action', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form id="wizard">
+        <label for="full-name">Full name</label>
+        <input id="full-name" name="fullName" type="text" enterkeyhint="next" />
+        <button id="next-step" type="button">Next</button>
+      </form>
+    </main>
+  `);
+  await page.evaluate(() => {
+    document.getElementById('next-step')?.addEventListener('click', () => {
+      // @ts-ignore
+      window.nextStepOpened = true;
+    });
+  });
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  await typed('form mode');
+  await typed('fill Hazim Salameh');
+  await typed('yes');
+
+  const next = await typed('next');
+  expect(next).toMatchObject({ ok: true });
+  expect(await page.evaluate(() => Boolean((window as any).nextStepOpened))).toBe(true);
+});
+
+test('typed form mode supports explicit case and Arabic letter spelling', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form>
+        <label for="english-name">English name</label>
+        <input id="english-name" name="englishName" type="text" />
+        <label for="arabic-name">Arabic name</label>
+        <input id="arabic-name" name="arabicName" type="text" lang="ar" dir="rtl" />
+      </form>
+    </main>
+  `);
+  const typed = await loadContentWithTypedCommands(page);
+
+  async function reachSpellingMode(initial: string, retryOne: string, retryTwo: string) {
+    await typed(`fill ${initial}`);
+    await typed('no');
+    await typed(retryOne);
+    await typed('no');
+    await typed(retryTwo);
+    return await typed('no');
+  }
+
+  await typed('form mode');
+
+  const englishPrompt = await reachSpellingMode('Hasem', 'Haseem', 'Hasim');
+  expect(String((englishPrompt as any).speech || '')).toContain('Please spell it letter by letter');
+
+  const englishSpelled = await typed('capital h small a z i m');
+  expect(englishSpelled).toMatchObject({ ok: true });
+  expect(await page.$eval('#english-name', (el) => (el as HTMLInputElement).value)).toBe('Hazim');
+  await typed('yes');
+
+  const arabicPrompt = await reachSpellingMode('غلط', 'غلت', 'غلاط');
+  expect(String((arabicPrompt as any).speech || '')).toContain('Please spell it letter by letter');
+
+  const arabicSpelled = await typed('ألف باء تاء');
+  expect(arabicSpelled).toMatchObject({ ok: true });
+  expect(await page.$eval('#arabic-name', (el) => (el as HTMLInputElement).value)).toBe('ابت');
 });
 
 test('typed form mode can handle radio choice groups', async ({ page }) => {

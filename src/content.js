@@ -799,11 +799,29 @@
     image: true
   };
   var FIELD_LIKE_TOKENS = ['password', 'email', 'username', 'search', 'phone', 'code', 'otp', 'pin', 'field', 'input', 'box'];
-  var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send'];
+  var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send', 'next', 'go', 'search', 'apply', 'proceed'];
   var LINK_LIKE_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin', 'sign in', 'sign-in', 'learn more', 'read more'];
   var HEADING_LIKE_TOKENS = ['heading', 'section', 'title', 'part'];
   var EMAIL_FIELD_TOKENS = ['email', 'e mail', 'mail'];
   var LONG_TEXT_FIELD_TOKENS = ['description', 'message', 'comment', 'comments', 'bio', 'about', 'notes', 'details', 'summary', 'experience', 'objective', 'cover letter'];
+  var FORM_PRIMARY_ACTION_WORDS = [
+    'submit', 'send', 'continue', 'next', 'go', 'search', 'save', 'finish', 'done', 'apply', 'proceed',
+    'confirm', 'create', 'create account', 'sign in', 'signin', 'log in', 'login', 'register', 'join',
+    'verify', 'book', 'checkout', 'place order', 'start', 'get started', 'pay', 'complete'
+  ];
+  var FORM_DANGEROUS_ACTION_WORDS = ['cancel', 'clear', 'reset', 'delete', 'remove', 'discard', 'close', 'back', 'previous'];
+  var FORM_ACTION_HINT_WORDS = {
+    search: ['search', 'go', 'find'],
+    go: ['go', 'open', 'visit', 'continue'],
+    next: ['next', 'continue', 'proceed'],
+    send: ['send', 'submit'],
+    done: ['done', 'finish', 'submit', 'save'],
+    enter: ['submit', 'continue', 'go']
+  };
+  var FORM_ACTION_COMMAND_WORDS = FORM_PRIMARY_ACTION_WORDS.reduce(function (memo, word) {
+    memo[word] = true;
+    return memo;
+  }, {});
   var GENERIC_FORM_LABEL_TEXT = {
     input: true,
     'unnamed input': true,
@@ -832,6 +850,144 @@
     slash: '/',
     backslash: '\\',
     space: ' '
+  };
+  var ARABIC_SPELLED_VALUE_TOKEN_MAP = {
+    'ا': 'ا',
+    'أ': 'أ',
+    'إ': 'إ',
+    الف: 'ا',
+    ألف: 'ا',
+    alif: 'ا',
+    alef: 'ا',
+    aleph: 'ا',
+    'ب': 'ب',
+    باء: 'ب',
+    ba: 'ب',
+    baa: 'ب',
+    'ت': 'ت',
+    تاء: 'ت',
+    ta: 'ت',
+    taa: 'ت',
+    'ث': 'ث',
+    ثاء: 'ث',
+    tha: 'ث',
+    thaa: 'ث',
+    'ج': 'ج',
+    جيم: 'ج',
+    jeem: 'ج',
+    jim: 'ج',
+    'ح': 'ح',
+    حاء: 'ح',
+    haa: 'ح',
+    'خ': 'خ',
+    خاء: 'خ',
+    kha: 'خ',
+    khaa: 'خ',
+    'د': 'د',
+    دال: 'د',
+    dal: 'د',
+    'ذ': 'ذ',
+    ذال: 'ذ',
+    dhal: 'ذ',
+    thal: 'ذ',
+    'ر': 'ر',
+    راء: 'ر',
+    ra: 'ر',
+    raa: 'ر',
+    'ز': 'ز',
+    زاي: 'ز',
+    زين: 'ز',
+    zay: 'ز',
+    zain: 'ز',
+    'س': 'س',
+    سين: 'س',
+    seen: 'س',
+    sin: 'س',
+    'ش': 'ش',
+    شين: 'ش',
+    sheen: 'ش',
+    shin: 'ش',
+    'ص': 'ص',
+    صاد: 'ص',
+    sad: 'ص',
+    saad: 'ص',
+    'ض': 'ض',
+    ضاد: 'ض',
+    dad: 'ض',
+    daad: 'ض',
+    'ط': 'ط',
+    طاء: 'ط',
+    tah: 'ط',
+    taa2: 'ط',
+    'ظ': 'ظ',
+    ظاء: 'ظ',
+    zah: 'ظ',
+    zaa2: 'ظ',
+    'ع': 'ع',
+    عين: 'ع',
+    ayn: 'ع',
+    ain: 'ع',
+    'غ': 'غ',
+    غين: 'غ',
+    ghayn: 'غ',
+    ghain: 'غ',
+    'ف': 'ف',
+    فاء: 'ف',
+    fa: 'ف',
+    faa: 'ف',
+    'ق': 'ق',
+    قاف: 'ق',
+    qaf: 'ق',
+    qaaf: 'ق',
+    'ك': 'ك',
+    كاف: 'ك',
+    kaf: 'ك',
+    kaaf: 'ك',
+    'ل': 'ل',
+    لام: 'ل',
+    lam: 'ل',
+    laam: 'ل',
+    'م': 'م',
+    ميم: 'م',
+    meem: 'م',
+    mim: 'م',
+    'ن': 'ن',
+    نون: 'ن',
+    noon: 'ن',
+    nun: 'ن',
+    'ه': 'ه',
+    هاء: 'ه',
+    ha: 'ه',
+    ha2: 'ه',
+    haa2: 'ه',
+    'و': 'و',
+    واو: 'و',
+    waw: 'و',
+    wow: 'و',
+    'ي': 'ي',
+    ياء: 'ي',
+    ya: 'ي',
+    yaa: 'ي',
+    'ى': 'ى',
+    مقصورة: 'ى',
+    'ة': 'ة',
+    مربوطة: 'ة',
+    hamza: 'ء',
+    همزة: 'ء',
+    نقطة: '.',
+    نقطه: '.',
+    دوت: '.',
+    شرطة: '-',
+    شرطه: '-',
+    ناقص: '-',
+    underscore: '_',
+    مسافة: ' ',
+    مسافه: ' ',
+    فراغ: ' ',
+    سلاش: '/',
+    slash: '/',
+    ات: '@',
+    at: '@'
   };
   var SUPPORTED_COMMAND_VERBS = ['click', 'focus', 'open', 'press', 'activate', 'read', 'scroll', 'fill', 'type', 'enter', 'select', 'choose', 'pick', 'check', 'submit'];
   var COMMAND_VERB_ALIASES = {
@@ -1600,7 +1756,7 @@
     collectSearchRoots(document).forEach(function (root) {
       var nodes = [];
       try {
-        nodes = Array.prototype.slice.call(root.querySelectorAll('input,select,textarea'));
+        nodes = Array.prototype.slice.call(root.querySelectorAll('input,select,textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]'));
       } catch (_err) {
         nodes = [];
       }
@@ -1611,6 +1767,7 @@
         var tag = ((el && el.tagName) || '').toLowerCase();
         var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
         if (tag === 'input' && /^(hidden|button|submit|reset|image|file)$/.test(inputType)) return;
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea' && !el.isContentEditable && normalizedRole(el) !== 'textbox') return;
         controls.push(el);
       });
     });
@@ -1929,10 +2086,46 @@
     };
   }
 
+  function getInheritedFormAttribute(el, attr) {
+    var current = el;
+    while (current && current !== document.body) {
+      if (current.getAttribute) {
+        var value = current.getAttribute(attr);
+        if (value) return String(value).trim();
+      }
+      current = current.parentElement;
+    }
+    return '';
+  }
+
+  function getFormControlMetadata(el, inputType) {
+    if (!el || !el.getAttribute) {
+      return {
+        inputType: inputType || '',
+        autocomplete: '',
+        inputMode: '',
+        enterKeyHint: '',
+        ariaAutocomplete: '',
+        lang: '',
+        dir: ''
+      };
+    }
+    return {
+      inputType: inputType || String(el.getAttribute('type') || '').toLowerCase(),
+      autocomplete: String(el.getAttribute('autocomplete') || '').trim().toLowerCase(),
+      inputMode: String(el.getAttribute('inputmode') || '').trim().toLowerCase(),
+      enterKeyHint: String(el.getAttribute('enterkeyhint') || el.enterKeyHint || '').trim().toLowerCase(),
+      ariaAutocomplete: String(el.getAttribute('aria-autocomplete') || '').trim().toLowerCase(),
+      lang: getInheritedFormAttribute(el, 'lang'),
+      dir: getInheritedFormAttribute(el, 'dir')
+    };
+  }
+
   function buildFormFieldDescriptor(el) {
     if (!el) return null;
     var tag = ((el && el.tagName) || '').toLowerCase();
     var inputType = String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase();
+    var metadata = getFormControlMetadata(el, inputType);
     if (inputType === 'radio') return null;
     if (inputType === 'checkbox') {
       return {
@@ -1940,6 +2133,13 @@
         label: getFormControlLabel(el),
         required: !!(el.hasAttribute && el.hasAttribute('required')),
         options: [],
+        inputType: metadata.inputType,
+        autocomplete: metadata.autocomplete,
+        inputMode: metadata.inputMode,
+        enterKeyHint: metadata.enterKeyHint,
+        ariaAutocomplete: metadata.ariaAutocomplete,
+        lang: metadata.lang,
+        dir: metadata.dir,
         elements: [el],
         history: [],
         focusElement: function () { return focusElementForNavigation(el); }
@@ -1958,6 +2158,13 @@
         label: getFormControlLabel(el),
         required: !!(el.hasAttribute && el.hasAttribute('required')),
         options: selectOptions,
+        inputType: metadata.inputType,
+        autocomplete: metadata.autocomplete,
+        inputMode: metadata.inputMode,
+        enterKeyHint: metadata.enterKeyHint,
+        ariaAutocomplete: metadata.ariaAutocomplete,
+        lang: metadata.lang,
+        dir: metadata.dir,
         elements: [el],
         history: [],
         focusElement: function () { return focusElementForNavigation(el); }
@@ -1968,7 +2175,13 @@
       label: getFormControlLabel(el),
       required: !!(el.hasAttribute && el.hasAttribute('required')),
       options: [],
-      inputType: inputType,
+      inputType: metadata.inputType,
+      autocomplete: metadata.autocomplete,
+      inputMode: metadata.inputMode,
+      enterKeyHint: metadata.enterKeyHint,
+      ariaAutocomplete: metadata.ariaAutocomplete,
+      lang: metadata.lang,
+      dir: metadata.dir,
       elements: [el],
       history: [],
       focusElement: function () { return focusElementForNavigation(el); }
@@ -2585,6 +2798,30 @@
     return /^(no|nope|nah|wrong|incorrect|change|change it|edit|not right|that s wrong|thats wrong|try again|redo|non|لا|غلط|مو صح)$/.test(normalized);
   }
 
+  function normalizeSpelledToken(token) {
+    return normalizeMatchText(token).replace(/[\u064B-\u065F\u0670\u0640]/g, '').trim();
+  }
+
+  function mapSpelledValueToken(token) {
+    var normalized = normalizeSpelledToken(token);
+    if (!normalized) return '';
+    if (Object.prototype.hasOwnProperty.call(SPELLED_VALUE_TOKEN_MAP, normalized)) {
+      return SPELLED_VALUE_TOKEN_MAP[normalized];
+    }
+    if (Object.prototype.hasOwnProperty.call(ARABIC_SPELLED_VALUE_TOKEN_MAP, normalized)) {
+      return ARABIC_SPELLED_VALUE_TOKEN_MAP[normalized];
+    }
+    if (/^[\u0600-\u06FF]$/.test(normalized)) return normalized;
+    return '';
+  }
+
+  function applySpelledCase(value, caseMode, capitalizeNext) {
+    var text = String(value || '');
+    if (!/^[a-z]+$/i.test(text)) return text;
+    if (capitalizeNext || caseMode === 'upper') return text.toUpperCase();
+    return text.toLowerCase();
+  }
+
   function parseSpelledFieldValue(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return '';
@@ -2598,20 +2835,57 @@
     if (!normalized) return '';
     var tokens = normalized.split(/\s+/).filter(Boolean);
     if (!tokens.length) return '';
-    if (tokens.length === 1) return tokens[0];
+    if (tokens.length === 1) return mapSpelledValueToken(tokens[0]) || tokens[0];
     var parts = [];
+    var caseMode = '';
+    var capitalizeNext = false;
     for (var i = 0; i < tokens.length; i += 1) {
       var token = tokens[i];
-      if (Object.prototype.hasOwnProperty.call(SPELLED_VALUE_TOKEN_MAP, token)) {
-        parts.push(SPELLED_VALUE_TOKEN_MAP[token]);
+      var nextToken = tokens[i + 1] || '';
+      if ((token === 'all' && /^(caps|capitals|capital|uppercase|upper)$/.test(nextToken)) ||
+          (token === 'uppercase' && nextToken === 'all')) {
+        caseMode = 'upper';
+        i += 1;
         continue;
       }
-      if (/^[a-z0-9]$/i.test(token) || /^[\u0600-\u06FF]$/.test(token)) {
-        parts.push(token);
+      if (/^(lowercase|lower|small)$/.test(token) && nextToken === 'all') {
+        caseMode = 'lower';
+        i += 1;
+        continue;
+      }
+      if (/^(capital|uppercase|upper|caps)$/.test(token)) {
+        capitalizeNext = true;
+        continue;
+      }
+      if (/^(lowercase|lower|small)$/.test(token)) {
+        caseMode = 'lower';
+        capitalizeNext = false;
+        continue;
+      }
+      if (/^(letter|letters)$/.test(token)) {
+        continue;
+      }
+      var mapped = mapSpelledValueToken(token);
+      var nextMapped = mapSpelledValueToken(nextToken);
+      if (mapped === 'ل' && nextMapped === 'ا') {
+        parts.push('لا');
+        i += 1;
+        capitalizeNext = false;
+        continue;
+      }
+      if (mapped) {
+        parts.push(applySpelledCase(mapped, caseMode, capitalizeNext));
+        capitalizeNext = false;
+        continue;
+      }
+      if (/^[a-z0-9]$/i.test(token)) {
+        parts.push(applySpelledCase(token, caseMode, capitalizeNext));
+        capitalizeNext = false;
         continue;
       }
       if (/^[a-z0-9]+$/i.test(token)) {
-        parts.push(token);
+        parts.push(applySpelledCase(token, caseMode, capitalizeNext));
+        capitalizeNext = false;
         continue;
       }
       return normalized;
@@ -3032,7 +3306,8 @@
     var isInput = tag === 'input' || tag === 'textarea';
     var isSelect = tag === 'select';
     var isContentEditable = !!el.isContentEditable;
-    if (!isInput && !isSelect && !isContentEditable) return false;
+    var isRoleTextbox = normalizedRole(el) === 'textbox';
+    if (!isInput && !isSelect && !isContentEditable && !isRoleTextbox) return false;
     if (isInput || isSelect) el.value = value;
     else el.textContent = value;
     try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { }
@@ -3216,30 +3491,164 @@
     return true;
   }
 
-  function findSubmitControlInSession(session) {
-    if (!session || !session.container) return null;
+  function getSessionFormElement(session) {
+    if (!session) return null;
+    var field = currentFormField(session);
+    var el = field && field.elements && field.elements[0];
+    if (el && el.form) return el.form;
     var container = session.container;
-    var selectors = 'button,input[type="submit"],input[type="button"],[role="button"],summary,[onclick],[tabindex]:not([tabindex="-1"])';
-    var candidates = [];
-    try {
-      candidates = Array.prototype.slice.call(container.querySelectorAll(selectors));
-    } catch (_err) {
-      candidates = [];
+    if (container && ((container.tagName || '').toLowerCase() === 'form')) return container;
+    return null;
+  }
+
+  function getSessionActionHint(session, explicitHint) {
+    var normalizedHint = normalizeMatchText(explicitHint || '');
+    if (normalizedHint) return normalizedHint;
+    var field = currentFormField(session);
+    if (!field) return '';
+    if (field.enterKeyHint) return normalizeMatchText(field.enterKeyHint);
+    if (field.inputType === 'search' || field.inputMode === 'search') return 'search';
+    return '';
+  }
+
+  function containsNormalizedPhrase(text, phrase) {
+    var haystack = normalizeMatchText(text);
+    var needle = normalizeMatchText(phrase);
+    if (!haystack || !needle) return false;
+    if (haystack === needle) return true;
+    return (' ' + haystack + ' ').indexOf(' ' + needle + ' ') >= 0;
+  }
+
+  function isDisabledActionControl(el) {
+    if (!el) return true;
+    if (el.disabled) return true;
+    return el.getAttribute && el.getAttribute('aria-disabled') === 'true';
+  }
+
+  function getFormActionControlText(el) {
+    if (!el) return '';
+    var parts = [];
+    function add(value) {
+      var text = String(value || '').replace(/\s+/g, ' ').trim();
+      if (text && parts.indexOf(text) < 0) parts.push(text);
     }
-    var submitWords = ['submit', 'continue', 'sign in', 'log in', 'login', 'send', 'save', 'finish', 'done'];
-    var ranked = candidates.map(function (el, index) {
-      if (!el || isHidden(el) || isNavableUiElement(el)) return null;
-      var label = textOf(el) || String((el.getAttribute && el.getAttribute('value')) || '').trim();
-      var normalized = normalizeMatchText(label);
-      if (!normalized) return null;
-      var score = 0;
-      if (((el && el.tagName) || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
-      submitWords.forEach(function (word) {
+    add(textOf(el));
+    if (el.getAttribute) {
+      add(el.getAttribute('aria-label'));
+      add(el.getAttribute('title'));
+      add(el.getAttribute('alt'));
+      add(el.getAttribute('value'));
+      add(humanizeIdentifier(el.getAttribute('name') || ''));
+      add(humanizeIdentifier(el.getAttribute('id') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-testid') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-test') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-action') || ''));
+    }
+    return parts.join(' ');
+  }
+
+  function collectFormActionCandidates(session) {
+    var selectors = 'button,input[type="submit"],input[type="button"],input[type="image"],[role="button"],summary,[onclick],[tabindex]:not([tabindex="-1"])';
+    var candidates = [];
+    var seen = new Set();
+    function add(el) {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      candidates.push(el);
+    }
+    function collect(root) {
+      if (!root || !root.querySelectorAll) return;
+      try {
+        if (root.matches && root.matches(selectors)) add(root);
+      } catch (_err) { }
+      try {
+        Array.prototype.slice.call(root.querySelectorAll(selectors)).forEach(add);
+      } catch (_err2) { }
+    }
+    collect(session && session.container);
+    var formEl = getSessionFormElement(session);
+    if (formEl && formEl.id) {
+      var formSelector = 'button[form="' + escapeAttributeValue(formEl.id) + '"],input[form="' + escapeAttributeValue(formEl.id) + '"]';
+      try {
+        Array.prototype.slice.call(document.querySelectorAll(formSelector)).forEach(add);
+      } catch (_err3) { }
+    }
+    return candidates;
+  }
+
+  function getActionControlTypeScore(el, formEl) {
+    var tag = ((el && el.tagName) || '').toLowerCase();
+    var inputType = String((el && el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    var score = 0;
+    if (tag === 'input' && inputType === 'submit') score += 110;
+    if (tag === 'input' && inputType === 'image') score += 90;
+    if (tag === 'button') {
+      if (inputType === 'submit') score += 105;
+      else if (!inputType && formEl && (el.form === formEl || formEl.contains(el))) score += 88;
+      else if (inputType === 'button') score += 20;
+    }
+    if (normalizedRole(el) === 'button') score += 18;
+    if (el && el.getAttribute && el.getAttribute('onclick')) score += 8;
+    return score;
+  }
+
+  function scoreFormActionControl(el, session, options) {
+    if (!el || isHidden(el) || isNavableUiElement(el) || isDisabledActionControl(el)) return null;
+    var tag = ((el && el.tagName) || '').toLowerCase();
+    var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (tag === 'input' && inputType === 'reset') return null;
+    var formEl = getSessionFormElement(session);
+    var actionHint = getSessionActionHint(session, options && options.actionHint);
+    var preferredWords = (FORM_ACTION_HINT_WORDS[actionHint] || (actionHint ? [actionHint] : [])).slice();
+    var label = getFormActionControlText(el);
+    var normalized = normalizeMatchText(label);
+    var hasDangerousLabel = normalized && FORM_DANGEROUS_ACTION_WORDS.some(function (word) {
+      return containsNormalizedPhrase(normalized, word);
+    });
+    if (hasDangerousLabel && (!actionHint || !containsNormalizedPhrase(normalized, actionHint))) return null;
+
+    var score = getActionControlTypeScore(el, formEl);
+    if (formEl && (el.form === formEl || formEl.contains(el))) score += 18;
+    if (session && session.container && session.container.contains && session.container.contains(el)) score += 8;
+
+    if (normalized) {
+      preferredWords.forEach(function (word) {
         var normalizedWord = normalizeMatchText(word);
-        if (normalized === normalizedWord) score += 60;
-        else if (normalized.indexOf(normalizedWord) >= 0) score += 30;
+        if (!normalizedWord) return;
+        if (normalized === normalizedWord) score += 150;
+        else if (containsNormalizedPhrase(normalized, normalizedWord)) score += 100;
       });
-      return score > 0 ? { element: el, score: score, index: index } : null;
+      FORM_PRIMARY_ACTION_WORDS.forEach(function (word) {
+        var normalizedWord = normalizeMatchText(word);
+        if (!normalizedWord) return;
+        if (normalized === normalizedWord) score += 90;
+        else if (containsNormalizedPhrase(normalized, normalizedWord)) score += 50;
+      });
+    }
+
+    var field = currentFormField(session);
+    if (field && (field.inputType === 'search' || field.inputMode === 'search')) {
+      if (containsNormalizedPhrase(normalized, 'search')) score += 80;
+      if (containsNormalizedPhrase(normalized, 'go')) score += 55;
+    }
+    if (field && field.enterKeyHint) {
+      var hintWords = FORM_ACTION_HINT_WORDS[normalizeMatchText(field.enterKeyHint)] || [field.enterKeyHint];
+      hintWords.forEach(function (word) {
+        if (containsNormalizedPhrase(normalized, word)) score += 55;
+      });
+    }
+
+    if (hasDangerousLabel) score -= 160;
+    return score > 0 ? { element: el, score: score } : null;
+  }
+
+  function findSubmitControlInSession(session, options) {
+    if (!session || !session.container) return null;
+    var ranked = collectFormActionCandidates(session).map(function (el, index) {
+      var scored = scoreFormActionControl(el, session, options || {});
+      if (!scored) return null;
+      scored.index = index;
+      return scored;
     }).filter(Boolean).sort(function (a, b) {
       if (b.score !== a.score) return b.score - a.score;
       return a.index - b.index;
@@ -3247,7 +3656,41 @@
     return ranked.length ? ranked[0].element : null;
   }
 
-  function submitActiveForm() {
+  function clickFormActionControl(control) {
+    if (!control) return false;
+    try { control.focus(); } catch (_err) { }
+    try {
+      control.click();
+      return true;
+    } catch (_err2) {
+      return false;
+    }
+  }
+
+  function dispatchEnterOnCurrentFormField(session) {
+    var field = currentFormField(session);
+    var el = field && field.elements && field.elements[0];
+    if (!el) return false;
+    try { el.focus(); } catch (_err) { }
+    var dispatched = false;
+    ['keydown', 'keypress', 'keyup'].forEach(function (eventType) {
+      try {
+        var event = new window.KeyboardEvent(eventType, {
+          bubbles: true,
+          cancelable: true,
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        el.dispatchEvent(event);
+        dispatched = true;
+      } catch (_err2) { }
+    });
+    return dispatched;
+  }
+
+  function submitActiveForm(actionHint) {
     var session = ensureFormSession({ announce: false, speakFailure: true });
     if (!session) {
       return false;
@@ -3257,6 +3700,12 @@
       return false;
     }
     var currentField = currentFormField(session);
+    var submitControl = findSubmitControlInSession(session, { actionHint: actionHint });
+    if (submitControl && clickFormActionControl(submitControl)) {
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
+    }
     var formEl = currentField && currentField.elements && currentField.elements[0] && currentField.elements[0].form;
     if (formEl && typeof formEl.requestSubmit === 'function') {
       formEl.requestSubmit();
@@ -3264,16 +3713,13 @@
       speak(translate('form_submit_done'));
       return true;
     }
-    var submitControl = findSubmitControlInSession(session);
-    if (!submitControl) {
-      speak(translate('form_submit_missing'));
-      return false;
+    if (dispatchEnterOnCurrentFormField(session)) {
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
     }
-    try { submitControl.focus(); } catch (_err2) { }
-    submitControl.click();
-    clearFormSession();
-    speak(translate('form_submit_done'));
-    return true;
+    speak(translate('form_submit_missing'));
+    return false;
   }
 
   function tryHandleActiveFormUtterance(text) {
@@ -4649,7 +5095,13 @@
     if (/^(exit|leave|stop|cancel|close) form( mode)?$/.test(t)) {
       return { type: 'form_mode', action: 'stop' };
     }
-    if (/^(next field|next input|next form field|next question)$/.test(t) || (formModeActive && /^(next|continue|skip)$/.test(t))) return { type: 'form_move', dir: 'next' };
+    if (/^(next field|next input|next form field|next question)$/.test(t)) return { type: 'form_move', dir: 'next' };
+    if (formModeActive && /^(next|continue|skip)$/.test(t)) {
+      var activeSession = getCurrentFormSession();
+      var isLastField = activeSession && Number(activeSession.currentIndex || 0) >= activeSession.fields.length - 1;
+      if (isLastField && /^(next|continue)$/.test(t)) return { type: 'form_submit', actionHint: t };
+      return { type: 'form_move', dir: 'next' };
+    }
     if (/^(previous field|prev field|previous input|prev input|back field)$/.test(t) || (formModeActive && /^(previous|prev|back|go back)$/.test(t))) return { type: 'form_move', dir: 'prev' };
     if (/^(current field|repeat field|what field am i on|where am i in this form|read current field|where am i)$/.test(t)) return { type: 'form_current' };
 
@@ -4673,7 +5125,10 @@
     if (/^(uncheck|untick|disable)$/.test(t)) return { type: 'form_check', checked: false };
 
     if (/^(review( form)?|finish( form)?|done with form|what did you fill|what did you enter|review what you filled)$/.test(t) || (formModeActive && /^(review|finish|done)$/.test(t))) return { type: 'form_review' };
-    if (/^(submit( form)?|send( form)?)$/.test(t) || (formModeActive && /^(submit|send)$/.test(t))) return { type: 'form_submit' };
+    var actionCommand = t.replace(/^(please\s+)?/, '').replace(/\s+(?:this|the)?\s*form$/, '').trim();
+    if (/^(submit|send)$/.test(actionCommand) || (formModeActive && FORM_ACTION_COMMAND_WORDS[actionCommand])) {
+      return { type: 'form_submit', actionHint: actionCommand };
+    }
     return null;
   }
 
@@ -5608,7 +6063,7 @@
       return currentFormFeedback(true, { command: 'form_review' });
     }
     if (cmd.type === 'form_submit') {
-      return currentFormFeedback(submitActiveForm(), { command: 'form_submit' });
+      return currentFormFeedback(submitActiveForm(cmd.actionHint || ''), { command: 'form_submit', actionHint: cmd.actionHint || '' });
     }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
