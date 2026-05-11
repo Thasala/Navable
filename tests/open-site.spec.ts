@@ -67,6 +67,64 @@ test('requestAssistant treats polite open-site phrasing as an action', async ({ 
   expect(created).toContain(res.url);
 });
 
+test('requestAssistant resolves unknown named websites through AI before opening', async ({ page }) => {
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  const res = await page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      // @ts-ignore
+      window.chrome.storage.sync.set({ navable_settings: { aiEnabled: true } }, resolve);
+    });
+
+    const originalFetch = window.fetch;
+    // @ts-ignore
+    window.__resolveSitePayload = null;
+    window.fetch = async (url, init) => {
+      if (!String(url).includes('/api/resolve-site')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+      // @ts-ignore
+      window.__resolveSitePayload = JSON.parse(String(init?.body || '{}'));
+      return {
+        ok: true,
+        json: async () => ({
+          url: 'https://www.just.edu.jo/',
+          name: 'Jordan University of Science and Technology',
+          confidence: 0.94,
+          source: 'ai'
+        })
+      } as Response;
+    };
+
+    try {
+      // @ts-ignore - background.js defines this in the test context
+      return await (window as any).requestAssistant('open jordan uni of science and technology website', 'en');
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
+
+  expect(res.ok).toBe(true);
+  expect(res.mode).toBe('action');
+  expect(res.action?.type).toBe('open_site');
+  expect(res.url).toBe('https://www.just.edu.jo/');
+
+  const payload = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__resolveSitePayload;
+  });
+  expect(payload).toMatchObject({
+    query: 'jordan uni of science and technology',
+    outputLanguage: 'en'
+  });
+
+  const created = await page.evaluate(() => {
+    // @ts-ignore
+    return (window as any).chrome?.tabs?._created || [];
+  });
+  expect(created).toContain('https://www.just.edu.jo/');
+});
+
 test('requestAssistant treats browser history phrasing as an action', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 

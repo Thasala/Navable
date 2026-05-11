@@ -315,6 +315,34 @@ function sanitizeAssistantAction(rawAction) {
   };
 }
 
+function sanitizeResolvedSiteUrl(candidate) {
+  const raw = String(candidate || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    if (!url.hostname || url.hostname === 'localhost') return '';
+    if (/^(?:10|127|169\.254|172\.(?:1[6-9]|2\d|3[0-1])|192\.168)\./.test(url.hostname)) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+function sanitizeResolvedSiteResult(candidate) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { url: '', name: '', confidence: 0 };
+  }
+
+  const url = sanitizeResolvedSiteUrl(candidate.url);
+  const confidence = Number(candidate.confidence);
+  return {
+    url,
+    name: typeof candidate.name === 'string' ? candidate.name.trim().slice(0, 120) : '',
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : (url ? 0.75 : 0)
+  };
+}
+
 function getOpenAiClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
@@ -468,6 +496,51 @@ async function callOpenAiAnswerQuestion(
     answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
     action: sanitizeAssistantAction(parsed.action)
   };
+}
+
+async function callOpenAiResolveSiteUrl(query, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+  if (settings.aiEnabled === false) {
+    return { url: '', name: '', confidence: 0 };
+  }
+
+  const client = getOpenAiClient();
+  if (!client) return { url: '', name: '', confidence: 0 };
+
+  const model = settings.model || DEFAULT_SETTINGS.model;
+  const completion = await client.chat.completions.create({
+    model,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You resolve spoken website names to official public homepage URLs for a browser extension.',
+          'Use your general knowledge to identify the official website for the named organization, university, company, government agency, or web app.',
+          'Return only the official homepage URL, not a search results page, news article, directory listing, social profile, or fan page.',
+          'Prefer HTTPS and canonical domains. For universities and public institutions, prefer their official .edu, .edu.<country>, .gov, .org, or country-code domain when known.',
+          'If the user provided a direct URL or domain, return that normalized URL.',
+          'If you are not confident, set url to an empty string and confidence to 0.',
+          'Return exactly one JSON object: { "url": string, "name": string, "confidence": number }.'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          query: String(query || '').trim(),
+          outputLanguage: normalizeOutputLanguage(outputLanguage)
+        })
+      }
+    ]
+  });
+
+  const raw = completion.choices?.[0]?.message?.content || '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = {};
+  }
+  return sanitizeResolvedSiteResult(parsed);
 }
 
 function isGeneralKnowledgeQuestionText(text) {
@@ -773,6 +846,35 @@ app.post('/api/translate-messages', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('[Navable backend] /api/translate-messages error:', err);
     res.status(500).json({ error: 'Message translation failed' });
+  }
+});
+
+app.post('/api/resolve-site', async (req, res) => {
+  try {
+    const { query, outputLanguage } = req.body || {};
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: 'Missing query' });
+    }
+
+    let result = null;
+    try {
+      result = await callOpenAiResolveSiteUrl(query, runtimeSettings, outputLanguage || 'en');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[Navable backend] OpenAI site resolution error:', err);
+    }
+
+    const safe = sanitizeResolvedSiteResult(result);
+    res.json({
+      url: safe.url,
+      name: safe.name,
+      confidence: safe.confidence,
+      source: safe.url ? 'ai' : ''
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[Navable backend] /api/resolve-site error:', err);
+    res.status(500).json({ error: 'Site resolution failed' });
   }
 });
 
