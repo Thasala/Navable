@@ -53,7 +53,7 @@ export default [
 
   // Content script + popup + options + shared utilities
   {
-    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/newtab/**/*.js', 'src/common/**/*.js'],
+    files: ['src/content.js', 'src/popup/**/*.js', 'src/options/**/*.js', 'src/newtab/**/*.js', 'src/common/**/*.js', 'src/offscreen/**/*.js'],
     languageOptions: {
       globals: {
         chrome: 'readonly',

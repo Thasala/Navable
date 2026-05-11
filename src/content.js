@@ -4194,8 +4194,191 @@
     speak(text, { transient: true, restoreMs: restoreMs });
   }
 
+  function createVoiceEmitter() {
+    var listeners = {
+      result: [],
+      error: [],
+      start: [],
+      end: []
+    };
+
+    function emit(type, payload) {
+      var list = listeners[type];
+      if (!list || !list.length) return;
+      list.forEach(function (handler) {
+        try {
+          handler(payload || {});
+        } catch (_err) {
+          // ignore handler failures
+        }
+      });
+    }
+
+    function on(type, handler) {
+      if (!listeners[type] || typeof handler !== 'function') return api;
+      listeners[type].push(handler);
+      return api;
+    }
+
+    var api = {
+      emit: emit,
+      on: on
+    };
+    return api;
+  }
+
+  function supportsExtensionVoiceRecognizer() {
+    try {
+      return !!(
+        !isNavableExtensionPageContext() &&
+        chrome &&
+        chrome.runtime &&
+        chrome.runtime.id &&
+        typeof chrome.runtime.getURL === 'function' &&
+        typeof chrome.runtime.sendMessage === 'function' &&
+        chrome.runtime.onMessage &&
+        typeof chrome.runtime.onMessage.addListener === 'function'
+      );
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function buildVoiceSessionId() {
+    try {
+      if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch (_err) {
+      // ignore
+    }
+    return 'voice-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
+  function sendVoiceBridgeMessage(payload) {
+    return new Promise(function (resolve) {
+      if (!(chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function')) {
+        resolve({ ok: false, error: 'Runtime messaging unavailable' });
+        return;
+      }
+
+      var settled = false;
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        resolve(value || { ok: false });
+      }
+
+      try {
+        var maybePromise = chrome.runtime.sendMessage(payload, function (response) {
+          var lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+            ? String(chrome.runtime.lastError.message)
+            : '';
+          if (lastError) {
+            finish({ ok: false, error: lastError });
+            return;
+          }
+          finish(response || { ok: true });
+        });
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then(function (response) {
+            finish(response || { ok: true });
+          }).catch(function (err) {
+            finish({ ok: false, error: String(err || 'Runtime messaging failed') });
+          });
+        }
+      } catch (err2) {
+        finish({ ok: false, error: String(err2 || 'Runtime messaging failed') });
+      }
+    });
+  }
+
+  function createExtensionVoiceRecognizer(options) {
+    options = options || {};
+    var emitter = createVoiceEmitter();
+    var sessionId = buildVoiceSessionId();
+    var listenerAttached = false;
+    var started = false;
+    var starting = false;
+
+    function handleVoiceEvent(msg) {
+      if (!msg || msg.type !== 'navable:voiceEvent') return false;
+      if (String(msg.sessionId || '') !== sessionId) return false;
+
+      var event = String(msg.event || '');
+      var payload = msg.payload || {};
+      if (event === 'start') {
+        starting = false;
+        started = true;
+      } else if (event === 'end') {
+        starting = false;
+        started = false;
+      } else if (event === 'error') {
+        starting = false;
+      }
+      emitter.emit(event, payload);
+      return false;
+    }
+
+    function attachListener() {
+      if (listenerAttached) return;
+      chrome.runtime.onMessage.addListener(handleVoiceEvent);
+      listenerAttached = true;
+    }
+
+    function detachListener() {
+      if (!listenerAttached) return;
+      try {
+        if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.removeListener === 'function') {
+          chrome.runtime.onMessage.removeListener(handleVoiceEvent);
+        }
+      } catch (_err) {
+        // ignore
+      }
+      listenerAttached = false;
+    }
+
+    return {
+      start: function () {
+        if (started || starting) return;
+        attachListener();
+        starting = true;
+        sendVoiceBridgeMessage({
+          type: 'navable:voiceStart',
+          sessionId: sessionId,
+          lang: options.lang || recogLang || 'en-US'
+        }).then(function (response) {
+          if (response && response.ok === true) return;
+          starting = false;
+          emitter.emit('error', {
+            error: 'start-failed',
+            message: response && response.error ? String(response.error) : 'Voice capture unavailable',
+            provider: 'extension'
+          });
+        });
+      },
+      stop: function (opts) {
+        opts = opts || {};
+        starting = false;
+        started = false;
+        sendVoiceBridgeMessage({
+          type: 'navable:voiceStop',
+          sessionId: sessionId,
+          silent: !!opts.silent
+        }).finally(function () {
+          detachListener();
+        });
+      },
+      on: emitter.on
+    };
+  }
+
+  function createContentVoiceRecognizer(options) {
+    if (supportsExtensionVoiceRecognizer()) return createExtensionVoiceRecognizer(options);
+    if (speech && typeof speech.createRecognizer === 'function') return speech.createRecognizer(options);
+    throw new Error('Speech recognition not supported');
+  }
+
   function isVoiceSupported() {
-    return !!(speech && speech.supportsRecognition && speech.supportsRecognition());
+    return supportsExtensionVoiceRecognizer() || !!(speech && speech.supportsRecognition && speech.supportsRecognition());
   }
 
   function isPageActiveForVoice() {
@@ -4291,7 +4474,7 @@
 
   function ensureRecognizer() {
     if (recognizer || !isVoiceSupported()) return recognizer;
-    recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
+    recognizer = createContentVoiceRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
     recognizer.on('result', function (ev) {
       if (!ev || !ev.transcript) return;
       if (voiceTurnInFlight) return;
@@ -6597,7 +6780,9 @@
     }
 
     try {
-      var directResponse = await window.fetch('http://localhost:3000/api/assistant', {
+      var directResponse = await window.fetch(window.NavableConfig
+        ? window.NavableConfig.buildApiUrl('/api/assistant')
+        : 'http://localhost:3000/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -6789,7 +6974,7 @@
   window.NavableTools.getSpeechStatus = function () {
     return {
       ok: true,
-      supports: !!(speech && speech.supportsRecognition && speech.supportsRecognition()),
+      supports: isVoiceSupported(),
       listening: !!listening
     };
   };
