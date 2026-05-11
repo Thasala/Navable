@@ -16,11 +16,6 @@ test('options page mic button uses Navable command tools on the extension page',
       </select>
       <input id="continuous" type="checkbox">
       <input id="aiEnabled" type="checkbox">
-      <select id="aiMode">
-        <option value="off">Off</option>
-        <option value="summary">Summarize only</option>
-        <option value="summary_plan">Summarize + plan execution</option>
-      </select>
       <input id="noSensitiveSites" type="checkbox">
       <input id="noFormFields" type="checkbox">
       <button id="openShortcuts" type="button">Configure Shortcuts</button>
@@ -121,12 +116,6 @@ test('options page settings can be changed with direct Navable commands', async 
       </select>
       <label><input id="continuous" type="checkbox"> Continuous Listening</label>
       <label><input id="aiEnabled" type="checkbox"> Enable AI</label>
-      <label for="aiMode">AI Mode</label>
-      <select id="aiMode">
-        <option value="off">Off</option>
-        <option value="summary">Summarize only</option>
-        <option value="summary_plan">Summarize + plan execution</option>
-      </select>
       <label><input id="noSensitiveSites" type="checkbox"> Skip Sensitive Sites</label>
       <label><input id="noFormFields" type="checkbox" checked disabled> Form Field Protection</label>
       <button id="openShortcuts" type="button">Configure Shortcuts</button>
@@ -162,7 +151,6 @@ test('options page settings can be changed with direct Navable commands', async 
                 outputMode: 'screen_reader',
                 autostart: false,
                 aiEnabled: false,
-                aiMode: 'off',
                 noSensitiveSites: false
               }
             });
@@ -199,27 +187,24 @@ test('options page settings can be changed with direct Navable commands', async 
   await command('set language to Arabic');
   await command('turn on continuous listening');
   await command('enable AI');
-  await command('set AI mode to summarize plus plan execution');
   await command('turn on skip sensitive sites');
 
   expect(await page.$eval('#outputMode', (el) => (el as HTMLSelectElement).value)).toBe('chrome_tts');
   expect(await page.$eval('#languageMode', (el) => (el as HTMLSelectElement).value)).toBe('ar');
   expect(await page.$eval('#continuous', (el) => (el as HTMLInputElement).checked)).toBe(true);
   expect(await page.$eval('#aiEnabled', (el) => (el as HTMLInputElement).checked)).toBe(true);
-  expect(await page.$eval('#aiMode', (el) => (el as HTMLSelectElement).value)).toBe('summary_plan');
   expect(await page.$eval('#noSensitiveSites', (el) => (el as HTMLInputElement).checked)).toBe(true);
 
   const saved = await page.evaluate(() => {
     // @ts-ignore
     return window.__savedSettings;
   });
-  expect(saved.length).toBeGreaterThanOrEqual(6);
+  expect(saved.length).toBeGreaterThanOrEqual(5);
   expect(saved[saved.length - 1]).toMatchObject({
     languageMode: 'ar',
     outputMode: 'chrome_tts',
     autostart: true,
     aiEnabled: true,
-    aiMode: 'summary_plan',
     noSensitiveSites: true
   });
 

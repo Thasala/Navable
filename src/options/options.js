@@ -31,7 +31,6 @@ function loadSettings() {
     const outputMode = document.getElementById('outputMode');
     const continuous = document.getElementById('continuous');
     const aiEnabled = document.getElementById('aiEnabled');
-    const aiMode = document.getElementById('aiMode');
     const noFormFields = document.getElementById('noFormFields');
     const noSensitiveSites = document.getElementById('noSensitiveSites');
 
@@ -40,7 +39,6 @@ function loadSettings() {
     if (outputMode) outputMode.value = normalizeOutputMode(s.outputMode);
     if (continuous) continuous.checked = typeof s.autostart === 'boolean' ? s.autostart : true;
     if (aiEnabled) aiEnabled.checked = !!s.aiEnabled;
-    if (aiMode) aiMode.value = s.aiMode || 'off';
     if (noFormFields) noFormFields.checked = true; // always enforced by design
     if (noSensitiveSites) noSensitiveSites.checked = !!s.noSensitiveSites;
   });
@@ -52,7 +50,6 @@ function saveSettings() {
   const outputMode = document.getElementById('outputMode');
   const continuous = document.getElementById('continuous');
   const aiEnabled = document.getElementById('aiEnabled');
-  const aiMode = document.getElementById('aiMode');
   const noSensitiveSites = document.getElementById('noSensitiveSites');
   const saveStatus = document.getElementById('saveStatus');
   const normalizedLanguageMode = normalizeLanguageMode(languageMode ? languageMode.value : 'auto', currentLanguageLocale);
@@ -65,7 +62,6 @@ function saveSettings() {
     overlay: false,
     autostart: continuous ? continuous.checked : true,
     aiEnabled: aiEnabled ? aiEnabled.checked : false,
-    aiMode: aiMode ? aiMode.value : 'off',
     noSensitiveSites: noSensitiveSites ? noSensitiveSites.checked : false
   };
 
@@ -197,7 +193,6 @@ document.addEventListener('DOMContentLoaded', () => {
         e.target.id === 'outputMode' ||
         e.target.id === 'continuous' ||
         e.target.id === 'aiEnabled' ||
-        e.target.id === 'aiMode' ||
         e.target.id === 'noSensitiveSites')
     ) {
       saveSettings();
