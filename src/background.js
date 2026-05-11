@@ -188,7 +188,7 @@ const NAVABLE_NEW_TAB_URL = (() => {
 })();
 
 // Keep this in sync with src/common/config.js before building a production demo.
-const BACKEND_BASE_URL = 'http://localhost:3000';
+const BACKEND_BASE_URL = 'https://navable.onrender.com';
 
 function buildBackendApiUrl(path) {
   const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
