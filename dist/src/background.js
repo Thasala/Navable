@@ -1625,7 +1625,6 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
 
   // If the user asks to summarize/summary, prefer backend AI + plan where allowed by settings.
   if (isSummaryRequest) {
-    const aiMode = settings.aiMode || 'off';
     const canUseCache =
       summaryCache.url &&
       structure &&
@@ -1634,7 +1633,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       summaryCache.outputLanguage === outputLanguage &&
       Date.now() - summaryCache.ts < 2 * 60 * 1000;
 
-    if (!!settings.aiEnabled && aiMode !== 'off') {
+    if (settings.aiEnabled) {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
         const cachedFeedback = buildFeedback('success', cached.description || cached.summary || '', {
@@ -1651,7 +1650,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             details: cachedFeedback.details
           });
         }
-        if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
+        if (cached.plan && cached.plan.steps && cached.plan.steps.length) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: cached.plan,
@@ -1691,7 +1690,6 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           });
         }
         if (
-          aiMode === 'summary_plan' &&
           assistantResult.plan &&
           assistantResult.plan.steps &&
           assistantResult.plan.steps.length

@@ -4909,7 +4909,6 @@
       document.getElementById('languageMode') &&
       document.getElementById('continuous') &&
       document.getElementById('aiEnabled') &&
-      document.getElementById('aiMode') &&
       document.getElementById('noSensitiveSites') &&
       document.getElementById('noFormFields')
     );
@@ -4975,16 +4974,6 @@
         { value: 'auto', label: 'Auto-detect', aliases: ['auto', 'automatic', 'auto detect', 'auto detect language', 'automatic language'] },
         { value: 'en', label: 'English', aliases: ['english', 'en'] },
         { value: 'ar', label: 'Arabic', aliases: ['arabic', 'ar'] }
-      ]
-    },
-    {
-      id: 'aiMode',
-      label: 'AI mode',
-      aliases: ['ai mode', 'assistant mode'],
-      options: [
-        { value: 'off', label: 'Off', aliases: ['off', 'disabled', 'disable'] },
-        { value: 'summary', label: 'Summarize only', aliases: ['summary', 'summarize', 'summarize only', 'summary only'] },
-        { value: 'summary_plan', label: 'Summarize + plan execution', aliases: ['summarize plan execution', 'summarize plus plan execution', 'summarize and plan execution', 'summary plan', 'summary plus plan', 'plan execution'] }
       ]
     }
   ];

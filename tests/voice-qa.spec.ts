@@ -43,7 +43,6 @@ test('unknown spoken question falls back to a brief AI answer', async ({ page })
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -193,7 +192,6 @@ test('chrome tts mode speaks only Navable output for assistant replies', async (
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false,
           outputMode: 'chrome_tts'
@@ -275,7 +273,6 @@ test('short spoken questions on content tabs stay on the answer path', async ({ 
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -396,7 +393,6 @@ test('page follow-up questions reuse session memory on content tabs', async ({ p
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -473,7 +469,6 @@ test('spoken question retries assistant directly when background returns a gener
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -585,7 +580,6 @@ test('direct assistant fallback keeps session memory for follow-up questions', a
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -665,7 +659,6 @@ test('summary requests use the unified assistant endpoint', async ({ page }) => 
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: false
         }
@@ -740,7 +733,6 @@ test('summary plan keeps the summary output visible while follow-up steps run', 
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary_plan',
           language: 'en-US',
           autostart: false
         }
