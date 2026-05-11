@@ -1,253 +1,245 @@
-html,
-body {
-  width: 620px;
-  min-width: 620px;
-}
+/* ============================================================
+   Navable — Popup Styles
+   ============================================================ */
 
-.nv-popup {
-  min-height: 0;
-  width: 620px;
-  max-width: 620px;
-  padding: 10px;
+/* Popup container */
+.popup-container {
+  width: 380px;
+  min-height: 400px;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-heading);
+  position: relative;
   overflow: hidden;
+  animation: fadeIn 0.25s ease;
 }
 
-.nv-popup-panel {
-  overflow: hidden;
-}
-
-.nv-popup-panel::after {
-  content: '';
-  position: absolute;
-  inset: auto -84px -112px auto;
-  width: 230px;
-  height: 230px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 35% 35%, rgba(255, 123, 99, 0.2), transparent 58%),
-    radial-gradient(circle at 60% 55%, rgba(88, 196, 255, 0.16), transparent 66%);
-  filter: blur(14px);
-  pointer-events: none;
-}
-
-.nv-popup-inner {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-.nv-popup-header,
-.nv-popup-section-head,
-.nv-popup-help-row,
-.nv-popup-status-head {
+/* -----------------------------------------------------------
+   Header
+   ----------------------------------------------------------- */
+.popup-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  padding: var(--space-md) 20px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.nv-popup-brand,
-.nv-popup-header-actions {
+.popup-header__logo {
+  height: 24px;
+  width: auto;
+}
+
+.popup-header__actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
-.nv-popup-logo {
-  width: 38px;
-  height: 38px;
-  border-radius: 14px;
-  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.26);
-}
-
-.nv-popup-wordmark {
-  margin: 2px 0 0;
-  font-size: 18px;
-  line-height: 1;
-  letter-spacing: -0.04em;
-}
-
-.nv-popup-link {
-  min-height: 34px;
-  padding: 7px 11px;
-  font-size: 12px;
-}
-
-.nv-popup-topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.95fr);
-  gap: 12px;
-}
-
-.nv-popup-voice,
-.nv-popup-actions {
-  display: grid;
-  gap: 10px;
-}
-
-.nv-mic-btn {
-  width: 100%;
-  min-height: 50px;
-  justify-content: flex-start;
-  padding: 14px 16px;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.nv-mic-btn::before {
-  content: '';
-  width: 12px;
-  height: 12px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.14);
-}
-
-.mic-status,
-.nv-status-copy,
-.hint,
-.nv-popup-help-note {
-  color: var(--nv-muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.nv-popup-status-card {
-  display: grid;
-  gap: 8px;
-  min-height: 100%;
-  padding: 12px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.status {
-  min-height: 14px;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.status.ok {
-  color: var(--nv-success);
-}
-
-.status.error {
-  color: var(--nv-danger);
-}
-
-.hint {
-  min-height: 34px;
-}
-
-.nv-popup-actions-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.nv-popup-action {
-  min-height: 84px;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 10px;
-  padding: 11px;
-  border-radius: 18px;
-  text-align: left;
-}
-
-.nv-popup-action-copy {
-  display: grid;
-  gap: 3px;
-}
-
-.nv-popup-action-copy strong {
-  font-size: 13px;
-}
-
-.nv-popup-action-copy small {
-  color: var(--nv-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.nv-popup-action-icon {
-  display: inline-flex;
+/* -----------------------------------------------------------
+   Mic Control Section
+   ----------------------------------------------------------- */
+.popup-mic {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  background: rgba(88, 196, 255, 0.12);
-  color: var(--nv-primary);
+  gap: var(--space-md);
+  padding: var(--space-lg) 20px;
+  background: linear-gradient(180deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
 }
 
-.nv-popup-action-icon svg {
+/* Mic button entry animation */
+.popup-mic .mic-button {
+  animation: micPulse 2.5s infinite ease-in-out, fadeInUp 0.3s ease 0.1s both;
+}
+
+.popup-mic__status {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  max-width: 320px;
+  min-height: 20px;
+  transition: opacity 0.2s ease;
+}
+
+.popup-mic__status.ok {
+  color: var(--color-success);
+}
+
+.popup-mic__status.error {
+  color: var(--color-error);
+}
+
+.popup-mic__description {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  max-width: 320px;
+  min-height: 18px;
+  transition: opacity 0.2s ease;
+}
+
+/* -----------------------------------------------------------
+   Quick Actions
+   ----------------------------------------------------------- */
+.popup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  padding: var(--space-md) 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.popup-actions__btn {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13px;
+  opacity: 0;
+  animation: fadeInUp 0.2s ease both;
+}
+
+.popup-actions__btn:nth-child(1) { animation-delay: 0.2s; }
+.popup-actions__btn:nth-child(2) { animation-delay: 0.25s; }
+.popup-actions__btn:nth-child(3) { animation-delay: 0.3s; }
+.popup-actions__btn:nth-child(4) { animation-delay: 0.35s; }
+
+.popup-actions__btn svg {
   width: 18px;
   height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
 }
 
-.help-box {
-  display: none;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+/* -----------------------------------------------------------
+   Typed Command
+   ----------------------------------------------------------- */
+.popup-command {
+  padding: var(--space-md) 20px;
+  border-top: 1px solid var(--color-border);
 }
 
-.nv-popup-typed {
-  display: grid;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.04);
+.popup-command__form {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
 }
 
-.nv-popup-typed-input {
-  min-height: 94px;
-  resize: vertical;
-  line-height: 1.45;
+.popup-command__form .input-field {
+  flex: 1;
+  min-width: 0;
 }
 
-.nv-popup-typed-note {
-  margin: 0;
-  max-width: none;
-  text-align: left;
-}
-
-.nv-popup-help-group {
-  padding: 10px 11px;
-  border-radius: 16px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.nv-popup-help-group h3 {
-  margin: 0;
-  font-size: 13px;
-  letter-spacing: -0.02em;
-}
-
-.nv-popup-help-group ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--nv-muted);
+.popup-command__hint {
+  margin-top: var(--space-sm);
   font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: center;
 }
 
-.nv-popup-help-group li + li {
-  margin-top: 6px;
+/* -----------------------------------------------------------
+   Help Panel
+   ----------------------------------------------------------- */
+.help-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-bg-secondary);
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.nv-popup-help-strip {
-  padding-top: 4px;
-  border-top: 1px solid var(--nv-border);
+.help-panel[aria-hidden="false"] {
+  transform: translateX(0);
+  opacity: 1;
 }
 
-.nv-popup-help-note {
+.help-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) 20px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.help-panel__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
   margin: 0;
-  max-width: 30ch;
-  text-align: right;
+}
+
+.help-panel__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px 20px;
+}
+
+.help-panel__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.help-panel__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.help-panel__item:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.help-panel__phrase {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-accent);
+  min-width: 140px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+.help-panel__desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* -----------------------------------------------------------
+   Focus styles for popup-specific elements
+   ----------------------------------------------------------- */
+.popup-container *:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-glow-accent);
+  border-radius: var(--radius-sm);
+}
+
+/* Mic button focus */
+#btnMicToggle:focus-visible {
+  box-shadow: var(--shadow-glow-accent), var(--shadow-glow-mic);
+  border-radius: 50%;
+}
+
+/* Ensure buttons in popup have proper focus */
+.btn-secondary:focus-visible {
+  border-radius: var(--radius-pill);
+}
+
+.btn-icon:focus-visible {
+  border-radius: var(--radius-md);
 }

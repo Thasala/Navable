@@ -4,8 +4,12 @@
 (function () {
   if (typeof window === 'undefined' || window.NavableSpeech) return;
 
-  var DEFAULT_TRANSCRIBE_URL = 'http://localhost:3000/api/transcribe';
-  var DEFAULT_HEALTH_URL = 'http://localhost:3000/health';
+  var DEFAULT_TRANSCRIBE_URL = window.NavableConfig
+    ? window.NavableConfig.buildApiUrl('/api/transcribe')
+    : 'http://localhost:3000/api/transcribe';
+  var DEFAULT_HEALTH_URL = window.NavableConfig
+    ? window.NavableConfig.buildApiUrl('/health')
+    : 'http://localhost:3000/health';
 
   function getSpeechEnv() {
     return window.__NavableSpeechEnv || {};

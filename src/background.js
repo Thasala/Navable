@@ -84,6 +84,14 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
         const url = props && props.url ? String(props.url) : undefined;
         return Promise.resolve({ id: typeof tabId === 'number' ? tabId : 1, url });
       },
+      goBack(tabId) {
+        chrome.tabs._lastHistoryAction = { direction: 'back', tabId: typeof tabId === 'number' ? tabId : 1 };
+        return Promise.resolve();
+      },
+      goForward(tabId) {
+        chrome.tabs._lastHistoryAction = { direction: 'forward', tabId: typeof tabId === 'number' ? tabId : 1 };
+        return Promise.resolve();
+      },
       sendMessage(_tabId, payload) {
         return new Promise((resolve) => {
           const listeners = (chrome.runtime._listeners || []);
@@ -180,12 +188,16 @@ const NAVABLE_NEW_TAB_URL = (() => {
 })();
 
 const TRANSLATE_MESSAGES_URL = 'http://localhost:3000/api/translate-messages';
+const RESOLVE_SITE_URL = 'http://localhost:3000/api/resolve-site';
+const OFFSCREEN_SPEECH_DOCUMENT = 'src/offscreen/offscreen.html';
 const OUTPUT_LOCALES = {
   en: 'en-US',
   fr: 'fr-FR',
   ar: 'ar-SA'
 };
 const outputMessageLoadPromises = {};
+let creatingOffscreenSpeechDocument = null;
+const offscreenSpeechSessions = new Map();
 
 const OUTPUT_MESSAGES = {
   en: {
@@ -469,6 +481,178 @@ async function sendToTargetTab(tabId, payload) {
   return sendToActiveTab(payload);
 }
 
+function supportsOffscreenSpeechBridge() {
+  return !!(
+    chrome &&
+    chrome.offscreen &&
+    typeof chrome.offscreen.createDocument === 'function' &&
+    chrome.runtime &&
+    typeof chrome.runtime.sendMessage === 'function'
+  );
+}
+
+function sendRuntimeMessage(payload) {
+  return new Promise((resolve, reject) => {
+    if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+      reject(new Error('Runtime messaging unavailable'));
+      return;
+    }
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    }
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    }
+    try {
+      const maybePromise = chrome.runtime.sendMessage(payload, (response) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+          ? String(chrome.runtime.lastError.message)
+          : '';
+        if (lastError) {
+          fail(new Error(lastError));
+          return;
+        }
+        finish(response);
+      });
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(finish).catch(fail);
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
+async function hasOffscreenSpeechDocument() {
+  if (!chrome || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') return false;
+  const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_SPEECH_DOCUMENT);
+  if (typeof chrome.runtime.getContexts === 'function') {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT'],
+      documentUrls: [offscreenUrl]
+    });
+    return !!(contexts && contexts.length);
+  }
+  if (typeof self !== 'undefined' && self.clients && typeof self.clients.matchAll === 'function') {
+    const matchedClients = await self.clients.matchAll();
+    return matchedClients.some((client) => client && client.url === offscreenUrl);
+  }
+  return false;
+}
+
+async function ensureOffscreenSpeechDocument() {
+  if (!supportsOffscreenSpeechBridge()) {
+    throw new Error('Extension voice capture unavailable');
+  }
+  if (await hasOffscreenSpeechDocument()) return;
+  if (creatingOffscreenSpeechDocument) {
+    await creatingOffscreenSpeechDocument;
+    return;
+  }
+
+  creatingOffscreenSpeechDocument = Promise.resolve(chrome.offscreen.createDocument({
+    url: OFFSCREEN_SPEECH_DOCUMENT,
+    reasons: ['USER_MEDIA'],
+    justification: 'Capture microphone input for Navable voice commands from the extension origin.'
+  })).finally(() => {
+    creatingOffscreenSpeechDocument = null;
+  });
+  await creatingOffscreenSpeechDocument;
+}
+
+async function sendOffscreenSpeechCommand(payload) {
+  return await sendRuntimeMessage({
+    target: 'navable:offscreenSpeech',
+    ...payload
+  });
+}
+
+async function startOffscreenSpeechSession(msg, sourceTabId) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  if (!sourceTabId) return { ok: false, error: 'No source tab' };
+  if (!sessionId) return { ok: false, error: 'Missing voice session' };
+  if (!supportsOffscreenSpeechBridge()) {
+    return { ok: false, error: 'Extension voice capture unavailable' };
+  }
+
+  await ensureOffscreenSpeechDocument();
+  offscreenSpeechSessions.set(sessionId, {
+    sessionId,
+    tabId: sourceTabId,
+    updatedAt: Date.now()
+  });
+
+  const response = await sendOffscreenSpeechCommand({
+    action: 'start',
+    sessionId,
+    tabId: sourceTabId,
+    lang: msg.lang || 'en-US'
+  });
+
+  if (!response || response.ok !== true) {
+    offscreenSpeechSessions.delete(sessionId);
+    return response && typeof response === 'object'
+      ? response
+      : { ok: false, error: 'Voice capture unavailable' };
+  }
+
+  return { ok: true };
+}
+
+async function stopOffscreenSpeechSession(msg, sourceTabId) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  const session = sessionId ? offscreenSpeechSessions.get(sessionId) : null;
+  const tabId = Number((session && session.tabId) || sourceTabId || msg.tabId || 0);
+  if (sessionId) offscreenSpeechSessions.delete(sessionId);
+  if (!supportsOffscreenSpeechBridge()) return { ok: true };
+
+  try {
+    await sendOffscreenSpeechCommand({
+      action: 'stop',
+      sessionId,
+      tabId,
+      silent: !!(msg && msg.silent)
+    });
+  } catch (_err) {
+    // The tab is already stopping; a missing offscreen document is harmless.
+  }
+  return { ok: true };
+}
+
+async function stopOffscreenSpeechForTab(tabId, reason) {
+  const id = Number(tabId || 0);
+  if (!id) return;
+  const sessions = Array.from(offscreenSpeechSessions.values())
+    .filter((session) => Number(session.tabId || 0) === id);
+  await Promise.all(sessions.map((session) => stopOffscreenSpeechSession({
+    sessionId: session.sessionId,
+    tabId: id,
+    silent: true,
+    reason
+  }, id)));
+}
+
+async function relayOffscreenSpeechEvent(msg) {
+  const sessionId = String(msg && msg.sessionId ? msg.sessionId : '').trim();
+  const session = sessionId ? offscreenSpeechSessions.get(sessionId) : null;
+  const tabId = Number(msg.tabId || msg.targetTabId || (session && session.tabId) || 0);
+  const event = String(msg && msg.event ? msg.event : '').trim();
+  if (!tabId || !sessionId || !event) return { ok: false, error: 'Invalid voice event' };
+
+  await sendToSpecificTab(tabId, {
+    type: 'navable:voiceEvent',
+    sessionId,
+    event,
+    payload: msg.payload || {}
+  });
+  return { ok: true };
+}
+
 async function tryExecutePlan(plan) {
   try {
     await sendToActiveTab({ type: 'navable:executePlan', plan });
@@ -646,6 +830,22 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     /لخص هذه الصفحة|صف هذه الصفحة|أين أنا|اين انا|ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو هاي الصفحة|ايش هاي الصفحة|شو موجود هون|احكيلي عن الصفحة|اعطيني ملخص/.test(text)
   ) {
     description = orientation;
+    matched = true;
+  } else if (hasIntent(text, [
+    /\bgo back\b/, /^back$/, /^previous$/, /\btake me back\b/, /\bnavigate back\b/, /\bbrowser back\b/, /\bprevious page\b/, /\blast page\b/, /\breturn to previous page\b/,
+    /\b(?:go|take me|return|navigate)\s+(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+page\b/,
+    /\bretour\b/, /\bretour en arriere\b/, /\bpage precedente\b/,
+    /^(?:ارجع|رجوع|الصفحة السابقة|السابق)$/
+  ])) {
+    steps.push({ action: 'browser_history', direction: 'back' });
+    matched = true;
+  } else if (hasIntent(text, [
+    /\bgo forward\b/, /^forward$/, /^next$/, /\btake me forward\b/, /\bnavigate forward\b/, /\bbrowser forward\b/, /\bnext page\b/, /\bgo next\b/, /\bgo next page\b/, /\bgo to next page\b/,
+    /\b(?:go|take me|navigate)\s+(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+page\b/,
+    /\bavance\b/, /\bpage suivante\b/, /\bsuivant\b/,
+    /^(?:تقدم|للأمام|للامام|الصفحة التالية|التالي)$/
+  ])) {
+    steps.push({ action: 'browser_history', direction: 'forward' });
     matched = true;
   } else if (hasIntent(text, [
     /\bscroll up\b/, /\bgo up\b/, /\bmove up\b/, /\bback up\b/, /\bup a bit\b/, /\bhigher\b/,
@@ -1270,9 +1470,81 @@ function extractAssistantOpenSiteQuery(text) {
     .replace(/\bfor me\b/g, '')
     .trim()
     .replace(/\bplease\b/g, '')
+    .trim()
+    .replace(/\b(?:website|site|page|app)\b$/g, '')
     .trim();
 
   return query || null;
+}
+
+function normalizeBrowserHistoryIntentText(text) {
+  let value = String(text || '')
+    .toLowerCase()
+    .replace(/[^\w\u0600-\u06ff\s]+/g, ' ')
+    .replace(/\b(?:please|pls)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!value) return '';
+
+  const prefixes = [
+    /^(?:hey navable|navable)\s+/,
+    /^(?:can you|could you|would you|will you)\s+/,
+    /^(?:i want to|i need to|i would like to|i d like to|let me|please help me)\s+/,
+    /^(?:help me|show me how to)\s+/,
+    /^(?:peux tu|pourrais tu|tu peux|svp|stp|s il te plait)\s+/,
+    /^(?:لو سمحت|من فضلك|رجاء|ممكن|بتقدر|تقدر)\s+/
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of prefixes) {
+      const next = value.replace(pattern, '').trim();
+      if (next !== value) {
+        value = next;
+        changed = true;
+      }
+    }
+  }
+  return value;
+}
+
+function parseAssistantBrowserHistoryCommand(text) {
+  const t = normalizeBrowserHistoryIntentText(text);
+  if (!t || /\b(?:can t|cannot|cant|don t|do not|won t|unable)\b/.test(t)) return null;
+  if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+    return 'back';
+  }
+  if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+    return 'forward';
+  }
+  if (/^(retour|retour en arriere|page precedente|precedent)$/.test(t)) return 'back';
+  if (/^(avance|page suivante|suivant)$/.test(t)) return 'forward';
+  if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(t)) return 'back';
+  if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(t)) return 'forward';
+  return null;
+}
+
+function parseAssistantShortcutsCommand(text) {
+  const t = normalizeBrowserHistoryIntentText(text);
+  if (!t) return false;
+  return (
+    /^(open|go to|click|configure|change|edit|show)\s+(?:keyboard\s+)?shortcuts?$/.test(t) ||
+    /^(open|go to|show)\s+(?:chrome\s+)?extensions?\s+shortcuts?$/.test(t) ||
+    /^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(t)
+  );
 }
 
 function normalizeAssistantResult(data) {
@@ -1292,6 +1564,22 @@ function normalizeAssistantResult(data) {
     suggestions,
     plan,
     action
+  };
+}
+
+function normalizeFeedbackStatus(status) {
+  const raw = String(status || '').trim().toLowerCase();
+  if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+    return raw;
+  }
+  return 'success';
+}
+
+function buildFeedback(status, message, details = null) {
+  return {
+    status: normalizeFeedbackStatus(status),
+    message: String(message || '').trim(),
+    details: details && typeof details === 'object' ? { ...details } : null
   };
 }
 
@@ -1316,12 +1604,72 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     return { ok: false, error: outputMessage('answer_unavailable', outputLanguage) };
   }
 
+  const directHistoryDirection = parseAssistantBrowserHistoryCommand(text);
+  if (directHistoryDirection) {
+    const historyResult = await navigateBrowserHistory(directHistoryDirection, { sourceTabId });
+    if (!historyResult.ok) {
+      return { ok: false, error: historyResult.error || 'Browser history navigation failed.', feedback: historyResult.feedback };
+    }
+
+    await rememberAssistantTurn(sourceTabId, {
+      input: text,
+      purpose: 'answer',
+      outputLanguage,
+      speech: historyResult.speech || '',
+      detectedLanguage: options.detectedLanguage || '',
+      recognitionProvider: options.recognitionProvider || ''
+    });
+
+    return {
+      ok: true,
+      structure: null,
+      mode: 'action',
+      speech: historyResult.speech || '',
+      description: historyResult.speech || '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [{ action: 'browser_history', direction: directHistoryDirection }] },
+      action: { type: 'browser_history', direction: directHistoryDirection },
+      feedback: historyResult.feedback || null
+    };
+  }
+
+  if (parseAssistantShortcutsCommand(text)) {
+    const shortcutsResult = await openChromeShortcutsPage(outputLanguage);
+    if (!shortcutsResult.ok) {
+      return { ok: false, error: shortcutsResult.error || 'Could not open keyboard shortcuts.', feedback: shortcutsResult.feedback };
+    }
+    await rememberAssistantTurn(sourceTabId, {
+      input: text,
+      purpose: 'answer',
+      outputLanguage,
+      speech: shortcutsResult.speech || '',
+      detectedLanguage: options.detectedLanguage || '',
+      recognitionProvider: options.recognitionProvider || ''
+    });
+    return {
+      ok: true,
+      structure: null,
+      mode: 'action',
+      speech: shortcutsResult.speech || '',
+      description: shortcutsResult.speech || '',
+      summary: '',
+      answer: '',
+      suggestions: [],
+      plan: { steps: [{ action: 'open_shortcuts' }] },
+      action: { type: 'open_shortcuts' },
+      feedback: shortcutsResult.feedback || null
+    };
+  }
+
   const directOpenQuery = extractAssistantOpenSiteQuery(text);
   if (directOpenQuery) {
     const action = { type: 'open_site', query: directOpenQuery, newTab: true };
     const openResult = await openSiteInBrowser(directOpenQuery, true, outputLanguage, {
       sourceTabId,
-      announce: false
+      announce: false,
+      settings
     });
     if (!openResult.ok) {
       return { ok: false, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
@@ -1382,7 +1730,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
           normalized.action.query,
           normalized.action.newTab,
           outputLanguage,
-          { sourceTabId, announce: false }
+          { sourceTabId, announce: false, settings }
         );
         if (!openResult.ok) {
           return { ok: false, structure, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
@@ -1456,7 +1804,6 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
 
   // If the user asks to summarize/summary, prefer backend AI + plan where allowed by settings.
   if (isSummaryRequest) {
-    const aiMode = settings.aiMode || 'off';
     const canUseCache =
       summaryCache.url &&
       structure &&
@@ -1465,25 +1812,31 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       summaryCache.outputLanguage === outputLanguage &&
       Date.now() - summaryCache.ts < 2 * 60 * 1000;
 
-    if (!!settings.aiEnabled && aiMode !== 'off') {
+    if (settings.aiEnabled) {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
+        const cachedFeedback = buildFeedback('success', cached.description || cached.summary || '', {
+          command: 'summarize',
+          cached: true
+        });
         if (cached.description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: cached.description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: cachedFeedback.status,
+            details: cachedFeedback.details
           });
         }
-        if (aiMode === 'summary_plan' && cached.plan && cached.plan.steps && cached.plan.steps.length) {
+        if (cached.plan && cached.plan.steps && cached.plan.steps.length) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: cached.plan,
             silentOutput: true
           });
         }
-        return { ...cached, structure, cached: true, ok: true };
+        return { ...cached, structure, cached: true, ok: true, feedback: cachedFeedback };
       }
 
       const assistantResult = await requestAssistant(command || 'Summarize this page', outputLanguage, {
@@ -1500,17 +1853,22 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             ? ' Suggestions: ' + assistantResult.suggestions.join(' ')
             : '';
         const description = (summaryText + suggestionsText).trim();
+        const feedback = buildFeedback('success', description, {
+          command: 'summarize',
+          cached: false
+        });
 
         if (description) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:announce',
             text: description,
             mode: 'assertive',
-            lang: outputLocale(outputLanguage)
+            lang: outputLocale(outputLanguage),
+            status: feedback.status,
+            details: feedback.details
           });
         }
         if (
-          aiMode === 'summary_plan' &&
           assistantResult.plan &&
           assistantResult.plan.steps &&
           assistantResult.plan.steps.length
@@ -1528,7 +1886,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           structure,
           description,
           summary: summaryText,
-          suggestions: assistantResult.suggestions
+          suggestions: assistantResult.suggestions,
+          feedback
         };
         summaryCache.url = structure && structure.url ? structure.url : null;
         summaryCache.outputLanguage = outputLanguage;
@@ -1541,11 +1900,17 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       // AI disabled: give a friendly orientation and tell the user how to enable AI.
       await outputMessagesReady;
       const description = `${buildFriendlyOrientation(structure, outputLanguage)} ${outputMessage('ai_summaries_off', outputLanguage)}`;
+      const feedback = buildFeedback('success', description, {
+        command: 'summarize',
+        aiEnabled: false
+      });
       await sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: description,
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       });
       await rememberAssistantTurn(sourceTabId, {
         input: command,
@@ -1562,7 +1927,8 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
         structure,
         description,
         summary: description,
-        suggestions: []
+        suggestions: [],
+        feedback
       };
     }
   }
@@ -1570,16 +1936,35 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
   const plan = stubPlanner(command, structure, outputLanguage, !!preferIntentFallback);
 
   if (preferIntentFallback && !plan.matched && !plan.description && (!plan.steps || !plan.steps.length)) {
-    return { ok: false, error: 'Intent not understood', unhandled: true, plan: { steps: [] }, structure };
+    const error = 'Intent not understood';
+    return {
+      ok: false,
+      error,
+      unhandled: true,
+      plan: { steps: [] },
+      structure,
+      feedback: buildFeedback('failure', error, {
+        command: 'intent_fallback',
+        input: command
+      })
+    };
   }
 
+  const feedback = plan.description
+    ? buildFeedback('success', plan.description, {
+      command: isSummaryRequest ? 'summarize' : 'intent_fallback',
+      matched: !!plan.matched
+    })
+    : null;
   if (plan.description) {
     await outputMessagesReady;
     await sendToTargetTab(sourceTabId, {
       type: 'navable:announce',
       text: plan.description,
       mode: isSummaryRequest ? 'assertive' : 'polite',
-      lang: outputLocale(outputLanguage)
+      lang: outputLocale(outputLanguage),
+      status: feedback.status,
+      details: feedback.details
     });
   }
   if (plan.steps && plan.steps.length) {
@@ -1605,7 +1990,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
     });
   }
 
-  return { ok: true, plan, structure };
+  return { ok: true, plan, structure, feedback };
 }
 
 function normalizeSpokenUrl(query) {
@@ -1806,6 +2191,29 @@ function resolveOpenQueryToUrl(query) {
   return resolveDirectOpenFallbackUrl(raw);
 }
 
+function resolveOpenQueryToUrlWithoutGuess(query) {
+  const raw = String(query || '').trim();
+  if (!raw) return null;
+
+  const normalized = normalizeSpokenUrl(raw);
+  const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
+  if (searchMatch && searchMatch[3]) {
+    return `https://www.google.com/search?q=${encodeURIComponent(searchMatch[3])}`;
+  }
+
+  const direct = tryParseHttpUrl(normalized);
+  if (direct) return direct;
+
+  const namedSite = resolveNamedSiteUrl(raw);
+  if (namedSite) return namedSite;
+
+  if (looksLikeHostWithOptionalPath(normalized)) {
+    return tryParseHttpUrl(`https://${normalized}`);
+  }
+
+  return null;
+}
+
 function friendlyUrlForSpeech(url) {
   try {
     const u = new URL(url);
@@ -1817,21 +2225,92 @@ function friendlyUrlForSpeech(url) {
   }
 }
 
+async function shouldUseAiSiteResolution(options = {}) {
+  if (options.aiResolution === false) return false;
+  const settings = options.settings || await loadSettings();
+  return settings && settings.aiEnabled === true;
+}
+
+async function resolveOfficialSiteUrlWithAi(query, requestedOutputLanguage) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+
+  try {
+    const response = await fetch(RESOLVE_SITE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: q,
+        outputLanguage: normalizeOutputLanguage(requestedOutputLanguage)
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return null;
+
+    const url = tryParseHttpUrl(String(data && data.url ? data.url : ''));
+    if (!url) return null;
+
+    return {
+      url,
+      name: typeof data.name === 'string' ? data.name.trim() : '',
+      confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0
+    };
+  } catch (err) {
+    console.warn('[Navable] site URL resolution failed', err);
+    return null;
+  }
+}
+
 async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options = {}) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
-  const url = resolveOpenQueryToUrl(query);
   const sourceTabId = options.sourceTabId || null;
-  if (!url) return { ok: false, error: outputMessage('missing_url', outputLanguage) };
+  let url = resolveOpenQueryToUrlWithoutGuess(query);
+  let resolutionSource = url ? 'local' : '';
+
+  if (!url && await shouldUseAiSiteResolution(options)) {
+    const resolved = await resolveOfficialSiteUrlWithAi(query, outputLanguage);
+    if (resolved && resolved.url) {
+      url = resolved.url;
+      resolutionSource = 'ai';
+    }
+  }
+
+  if (!url) {
+    url = resolveOpenQueryToUrl(query);
+    resolutionSource = url ? 'fallback' : '';
+  }
+
+  if (!url) {
+    const error = outputMessage('missing_url', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('clarification_needed', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        newTab: newTab !== false
+      })
+    };
+  }
 
   const speech = outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) });
+  const feedback = buildFeedback('loading', speech, {
+    command: 'open_site',
+    query: String(query || '').trim(),
+    url,
+    resolutionSource,
+    newTab: newTab !== false
+  });
   if (options.announce !== false) {
     outputMessagesReady.then(() => (
       sendToTargetTab(sourceTabId, {
         type: 'navable:announce',
         text: outputMessage('opening_value', outputLanguage, { value: friendlyUrlForSpeech(url) }),
         mode: 'assertive',
-        lang: outputLocale(outputLanguage)
+        lang: outputLocale(outputLanguage),
+        status: feedback.status,
+        details: feedback.details
       })
     )).catch(() => {
       // ignore announce failures (e.g., unsupported active tab)
@@ -1858,10 +2337,19 @@ async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options
       outputLanguage,
       url
     });
-    return { ok: true, url, speech };
+    return { ok: true, url, speech, feedback };
   } catch (err) {
     console.warn('[Navable] openSite failed', err);
-    return { ok: false, error: outputMessage('open_website_failed', outputLanguage) };
+    const error = outputMessage('open_website_failed', outputLanguage);
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'open_site',
+        query: String(query || '').trim(),
+        url
+      })
+    };
   }
 }
 
@@ -1873,6 +2361,104 @@ async function resetAssistantSessionForTabNavigation(tabId, url) {
   if (!existing || !existing.host) return;
   if (existing.host !== nextHost) {
     await clearAssistantSession(tabId);
+  }
+}
+
+async function openChromeShortcutsPage(requestedOutputLanguage) {
+  void requestedOutputLanguage;
+  const url = 'chrome://extensions/shortcuts';
+  const speech = 'Opening keyboard shortcuts.';
+  const feedback = buildFeedback('success', speech, {
+    command: 'open_shortcuts',
+    url
+  });
+  try {
+    await chrome.tabs.create({ url });
+    return {
+      ok: true,
+      url,
+      speech,
+      feedback,
+      restricted: true,
+      note: 'Chrome does not allow extensions to inject page tools into chrome://extensions/shortcuts.'
+    };
+  } catch (err) {
+    const error = 'Could not open keyboard shortcuts.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'open_shortcuts',
+        url,
+        error: String(err || '')
+      })
+    };
+  }
+}
+
+async function resolveTargetTabId(sourceTabId) {
+  if (sourceTabId) return sourceTabId;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab && tab.id ? tab.id : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function navigateBrowserHistory(direction, options = {}) {
+  const dir = direction === 'forward' ? 'forward' : 'back';
+  const tabId = await resolveTargetTabId(options.sourceTabId || null);
+  if (!tabId) {
+    const error = 'No active tab available.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir
+      })
+    };
+  }
+
+  const apiName = dir === 'forward' ? 'goForward' : 'goBack';
+  if (!chrome.tabs || typeof chrome.tabs[apiName] !== 'function') {
+    const error = 'Browser history navigation is unavailable.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir,
+        tabId
+      })
+    };
+  }
+
+  try {
+    await chrome.tabs[apiName](tabId);
+    const speech = dir === 'forward' ? 'Going forward.' : 'Going back.';
+    return {
+      ok: true,
+      speech,
+      feedback: buildFeedback('success', speech, {
+        command: 'browser_history',
+        direction: dir,
+        tabId
+      })
+    };
+  } catch (err) {
+    const error = dir === 'forward' ? 'Could not go forward.' : 'Could not go back.';
+    return {
+      ok: false,
+      error,
+      feedback: buildFeedback('failure', error, {
+        command: 'browser_history',
+        direction: dir,
+        tabId,
+        error: String(err || '')
+      })
+    };
   }
 }
 
@@ -1928,6 +2514,11 @@ try {
         (changeInfo && changeInfo.url) ||
         (tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '');
       redirectNewTabToNavable(tabId, url);
+      if (changeInfo && changeInfo.url) {
+        stopOffscreenSpeechForTab(tabId, 'navigation').catch(() => {
+          // ignore voice cleanup failures
+        });
+      }
       resetAssistantSessionForTabNavigation(tabId, url).catch(() => {
         // ignore session reset failures
       });
@@ -1935,6 +2526,9 @@ try {
   }
   if (chrome?.tabs?.onRemoved?.addListener) {
     chrome.tabs.onRemoved.addListener((tabId) => {
+      stopOffscreenSpeechForTab(tabId, 'tab_removed').catch(() => {
+        // ignore voice cleanup failures
+      });
       clearAssistantSession(tabId).catch(() => {
         // ignore session cleanup failures
       });
@@ -1947,6 +2541,30 @@ try {
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const sourceTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
+  if (msg && msg.type === 'navable:voiceStart') {
+    startOffscreenSpeechSession(msg, sourceTabId).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice start failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:voiceStop') {
+    stopOffscreenSpeechSession(msg, sourceTabId).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice stop failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:offscreenSpeechEvent') {
+    relayOffscreenSpeechEvent(msg).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'voice event failed') });
+    });
+    return true;
+  }
   if (msg && msg.type === 'navable:openSite') {
     openSiteInBrowser(msg.query || '', msg.newTab, msg.outputLanguage, {
       sourceTabId
@@ -1954,6 +2572,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(res);
     }).catch((err) => {
       sendResponse({ ok: false, error: String(err || 'open site failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:browserHistory') {
+    navigateBrowserHistory(msg.direction || msg.dir || 'back', {
+      sourceTabId
+    }).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'browser history failed') });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'navable:openShortcuts') {
+    openChromeShortcutsPage(msg.outputLanguage).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'open shortcuts failed') });
     });
     return true;
   }

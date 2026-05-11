@@ -1,439 +1,485 @@
+/* ============================================================
+   Navable — Common UI Styles
+   Shared design tokens, components, and utilities
+   ============================================================ */
+
+/* -----------------------------------------------------------
+   CSS Custom Properties (Design Tokens)
+   ----------------------------------------------------------- */
 :root {
-  color-scheme: dark;
-  --nv-font: 'Avenir Next', 'IBM Plex Sans', 'Segoe UI', sans-serif;
-  --nv-display-font: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', serif;
-  --nv-mono: 'SF Mono', 'IBM Plex Mono', 'Menlo', monospace;
+  /* Background */
+  --color-bg-primary: #0F172A;
+  --color-bg-secondary: #1E293B;
+  --color-bg-tertiary: #334155;
+  --color-bg-input: #1E293B;
 
-  --nv-bg0: #0a1020;
-  --nv-bg1: #111a34;
-  --nv-bg2: #0f2a39;
-  --nv-fg: #f8f2ec;
-  --nv-muted: #adb8d1;
-  --nv-muted-strong: #e1e8f7;
+  /* Borders */
+  --color-border: #475569;
+  --color-border-focus: #5EEAD4;
 
-  --nv-card: rgba(18, 24, 45, 0.82);
-  --nv-card-strong: rgba(24, 31, 56, 0.95);
-  --nv-surface: rgba(15, 34, 48, 0.9);
-  --nv-surface-strong: rgba(22, 46, 63, 0.98);
-  --nv-border: rgba(248, 242, 236, 0.11);
-  --nv-border-strong: rgba(248, 242, 236, 0.2);
+  /* Text */
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #CBD5E1;
+  --color-text-tertiary: #94A3B8;
 
-  --nv-primary: #58c4ff;
-  --nv-primary-strong: #2787d9;
-  --nv-secondary: #ff7b63;
-  --nv-accent: #ffc857;
-  --nv-success: #5dd8b7;
-  --nv-danger: #ff868d;
-  --nv-warning: #ffbc59;
-  --nv-focus: rgba(88, 196, 255, 0.34);
+  /* Accent (Teal) */
+  --color-accent: #5EEAD4;
+  --color-accent-hover: #2DD4BF;
+  --color-accent-muted: rgba(94, 234, 212, 0.15);
 
-  --nv-shadow: 0 32px 90px rgba(3, 7, 18, 0.48);
-  --nv-shadow-soft: 0 16px 36px rgba(3, 7, 18, 0.3);
-  --nv-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  /* Status */
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-error: #F87171;
 
-  --nv-radius-sm: 16px;
-  --nv-radius-md: 22px;
-  --nv-radius-lg: 32px;
+  /* Mic */
+  --color-mic-active: #EF4444;
+  --color-mic-idle: #5EEAD4;
 
-  --nv-gap-1: 8px;
-  --nv-gap-2: 12px;
-  --nv-gap-3: 16px;
-  --nv-gap-4: 24px;
-  --nv-gap-5: 32px;
+  /* Typography */
+  --font-heading: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-glow-accent: 0 0 0 3px rgba(94, 234, 212, 0.3);
+  --shadow-glow-mic: 0 0 20px rgba(239, 68, 68, 0.4);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.25s ease;
+  --transition-slow: 0.4s ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --nv-bg0: #070b17;
-    --nv-bg1: #0f1530;
-    --nv-bg2: #0b2332;
-    --nv-fg: #fcf5ef;
-    --nv-muted: #bac4dc;
-    --nv-muted-strong: #ebf1ff;
-
-    --nv-card: rgba(14, 20, 39, 0.86);
-    --nv-card-strong: rgba(20, 27, 50, 0.97);
-    --nv-surface: rgba(13, 31, 45, 0.9);
-    --nv-surface-strong: rgba(18, 41, 58, 0.99);
-    --nv-border: rgba(252, 245, 239, 0.12);
-    --nv-border-strong: rgba(252, 245, 239, 0.22);
-
-    --nv-primary: #6bcbff;
-    --nv-primary-strong: #3090df;
-    --nv-secondary: #ff8b73;
-    --nv-accent: #ffd36b;
-    --nv-success: #65dfbe;
-    --nv-danger: #ff9096;
-    --nv-warning: #ffc56a;
-    --nv-focus: rgba(107, 203, 255, 0.36);
-
-    --nv-shadow: 0 32px 90px rgba(0, 0, 0, 0.5);
-    --nv-shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.34);
-    --nv-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-}
-
-*,
-*::before,
-*::after {
+/* -----------------------------------------------------------
+   Reset & Base
+   ----------------------------------------------------------- */
+*, *::before, *::after {
   box-sizing: border-box;
-}
-
-html {
-  background: var(--nv-bg0);
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.nv-ui {
-  position: relative;
-  min-height: 100vh;
-  margin: 0;
-  font-family: var(--nv-font);
-  color: var(--nv-fg);
-  background:
-    radial-gradient(1100px 720px at 8% 8%, rgba(255, 123, 99, 0.18), transparent 56%),
-    radial-gradient(980px 680px at 94% 6%, rgba(88, 196, 255, 0.18), transparent 54%),
-    radial-gradient(960px 760px at 52% 100%, rgba(255, 200, 87, 0.11), transparent 58%),
-    linear-gradient(154deg, var(--nv-bg0), var(--nv-bg1) 44%, var(--nv-bg2));
+/* Focus styles — visible, consistent, accessible */
+*:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-glow-accent);
+  border-radius: var(--radius-sm);
 }
 
-.nv-ui::before,
-.nv-ui::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
+/* Remove default button styles */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
 }
 
-.nv-ui::before {
-  background:
-    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.4), transparent 0.8%),
-    radial-gradient(circle at 78% 30%, rgba(255, 255, 255, 0.28), transparent 0.7%),
-    radial-gradient(circle at 64% 76%, rgba(255, 255, 255, 0.2), transparent 0.9%),
-    radial-gradient(circle at 28% 78%, rgba(255, 255, 255, 0.18), transparent 0.7%);
-  opacity: 0.42;
-  mix-blend-mode: soft-light;
+/* Remove default input styles */
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
 }
 
-.nv-ui::after {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.08)) top/100% 1px no-repeat,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)) left/1px 100% no-repeat,
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 72px,
-      rgba(255, 255, 255, 0.05) 72px,
-      rgba(255, 255, 255, 0.05) 73px
-    ),
-    repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 72px,
-      rgba(255, 255, 255, 0.03) 72px,
-      rgba(255, 255, 255, 0.03) 73px
-    );
-  opacity: 0.16;
-}
-
+/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .nv-ui::before,
-  .nv-ui::after {
-    opacity: 0.14;
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
-.nv-container {
-  width: min(1160px, calc(100% - 40px));
-  margin: 0 auto;
+/* -----------------------------------------------------------
+   Keyframes
+   ----------------------------------------------------------- */
+@keyframes micPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
 }
 
-.nv-card {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--nv-radius-lg);
-  border: 1px solid var(--nv-border);
-  background: linear-gradient(180deg, var(--nv-card-strong), var(--nv-card));
-  box-shadow: var(--nv-shadow);
-  backdrop-filter: blur(18px);
-  animation: nv-rise 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+@keyframes micPulseActive {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
 }
 
-.nv-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.42), transparent 38%, transparent 72%, rgba(255, 255, 255, 0.12));
-  opacity: 0.78;
-  pointer-events: none;
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
-.nv-card > * {
-  position: relative;
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.nv-card-inner {
-  padding: 26px;
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.nv-surface {
-  border-radius: var(--nv-radius-md);
-  border: 1px solid var(--nv-border);
-  background: linear-gradient(180deg, var(--nv-surface-strong), var(--nv-surface));
-  box-shadow: var(--nv-shadow-inset), var(--nv-shadow-soft);
+@keyframes saveStatusFade {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
-.nv-title {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-}
-
-.nv-subtitle {
-  margin: 6px 0 0;
-  color: var(--nv-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.nv-eyebrow {
-  margin: 0;
-  color: var(--nv-primary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.nv-display {
-  margin: 0;
-  font-family: var(--nv-display-font);
-  font-size: clamp(2rem, 3vw, 3.9rem);
-  line-height: 0.98;
-  letter-spacing: -0.045em;
-  font-weight: 700;
-}
-
-.nv-body {
-  margin: 0;
-  color: var(--nv-muted);
-  font-size: 15px;
-  line-height: 1.68;
-}
-
-.nv-section-kicker {
-  margin: 0 0 6px;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--nv-muted);
-  font-weight: 700;
-}
-
-.nv-section-heading {
-  margin: 0;
-  font-size: 21px;
-  line-height: 1.18;
-  letter-spacing: -0.03em;
-}
-
-.nv-section-text {
-  margin: 8px 0 0;
-  color: var(--nv-muted);
-  font-size: 14px;
-  line-height: 1.58;
-}
-
-.nv-row {
-  display: flex;
-  align-items: center;
-  gap: var(--nv-gap-2);
-}
-
-.nv-row-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--nv-gap-2);
-}
-
-.nv-grid {
-  display: grid;
-  gap: var(--nv-gap-2);
-}
-
-.nv-pill,
-.nv-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.38);
-  color: var(--nv-muted-strong);
-  font-size: 12px;
-  line-height: 1;
-  box-shadow: var(--nv-shadow-inset);
-}
-
-.nv-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(24, 48, 56, 0.18);
-  box-shadow: 0 0 0 4px rgba(24, 48, 56, 0.08);
-}
-
-.nv-dot--ok {
-  background: var(--nv-success);
-  box-shadow: 0 0 0 4px rgba(32, 129, 97, 0.15);
-}
-
-.nv-dot--warn {
-  background: var(--nv-warning);
-  box-shadow: 0 0 0 4px rgba(202, 150, 64, 0.14);
-}
-
-.nv-dot--err {
-  background: var(--nv-danger);
-  box-shadow: 0 0 0 4px rgba(187, 94, 84, 0.16);
-}
-
-.nv-btn {
-  appearance: none;
+/* -----------------------------------------------------------
+   Component: Button — Primary
+   ----------------------------------------------------------- */
+.btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 12px 16px;
-  border-radius: 20px;
-  border: 1px solid var(--nv-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.42));
-  color: var(--nv-fg);
-  text-decoration: none;
-  font: inherit;
+  gap: var(--space-sm);
+  padding: 10px 20px;
+  background-color: var(--color-accent);
+  color: var(--color-bg-primary);
+  font-weight: 600;
   font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  border-radius: var(--radius-pill);
+  border: none;
   cursor: pointer;
-  user-select: none;
-  box-shadow: var(--nv-shadow-inset), var(--nv-shadow-soft);
-  transition:
-    transform 160ms ease,
-    box-shadow 160ms ease,
-    border-color 160ms ease,
-    background 160ms ease,
-    color 160ms ease;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  white-space: nowrap;
 }
 
-.nv-btn:hover {
-  transform: translateY(-1px);
-  border-color: var(--nv-border-strong);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.54));
+.btn-primary:hover {
+  background-color: var(--color-accent-hover);
+  transform: scale(1.02);
 }
 
-.nv-btn:active {
-  transform: translateY(0);
+.btn-primary:active {
+  transform: scale(0.98);
 }
 
-.nv-btn:focus-visible,
-.nv-input:focus,
-.nv-select:focus,
-summary:focus-visible {
-  outline: none;
-  border-color: rgba(22, 106, 93, 0.44);
-  box-shadow: 0 0 0 4px var(--nv-focus), var(--nv-shadow-soft);
-}
-
-.nv-btn[disabled] {
-  opacity: 0.62;
-  cursor: default;
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
   transform: none;
 }
 
-.nv-btn--primary {
-  border-color: transparent;
-  background: linear-gradient(135deg, var(--nv-primary), var(--nv-secondary));
-  color: #f8f2ea;
-  box-shadow: 0 22px 42px rgba(17, 120, 160, 0.24);
-}
-
-.nv-btn--primary:hover {
-  background: linear-gradient(135deg, #1a89b4, #ff8d6f);
-  box-shadow: 0 26px 48px rgba(17, 120, 160, 0.28);
-}
-
-.nv-btn--ghost {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.nv-input,
-.nv-select {
-  width: 100%;
-  min-height: 48px;
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.56);
-  color: var(--nv-fg);
-  font: inherit;
-  font-size: 14px;
-  box-shadow: var(--nv-shadow-inset);
-  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-}
-
-.nv-input::placeholder {
-  color: color-mix(in srgb, var(--nv-muted) 74%, transparent);
-}
-
-@supports not (color: color-mix(in srgb, black 50%, white 50%)) {
-  .nv-input::placeholder {
-    color: var(--nv-muted);
-  }
-}
-
-.nv-label {
-  display: block;
-  margin: 0 0 8px;
-  color: var(--nv-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.nv-kbd {
+/* -----------------------------------------------------------
+   Component: Button — Secondary
+   ----------------------------------------------------------- */
+.btn-secondary {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--nv-border);
-  background: rgba(255, 255, 255, 0.36);
-  color: var(--nv-fg);
-  font-family: var(--nv-mono);
-  font-size: 12px;
-  box-shadow: var(--nv-shadow-inset);
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: 10px 20px;
+  background-color: transparent;
+  color: var(--color-text-primary);
+  font-weight: 500;
+  font-size: 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  white-space: nowrap;
 }
 
-.nv-link {
-  color: inherit;
-  text-decoration: none;
+.btn-secondary:hover {
+  background-color: var(--color-bg-tertiary);
+  border-color: rgba(94, 234, 212, 0.5);
 }
 
-.nv-link:hover {
-  color: var(--nv-primary);
+.btn-secondary:active {
+  transform: scale(0.98);
 }
 
-.nv-sr-only {
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* -----------------------------------------------------------
+   Component: Button — Icon
+   ----------------------------------------------------------- */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), transform var(--transition-fast), border-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.btn-icon:hover {
+  background-color: var(--color-bg-tertiary);
+  transform: scale(1.05);
+  border-color: var(--color-accent);
+}
+
+.btn-icon:active {
+  transform: scale(0.95);
+}
+
+.btn-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* -----------------------------------------------------------
+   Component: Mic Button
+   ----------------------------------------------------------- */
+.mic-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background-color: var(--color-bg-secondary);
+  border: 2px solid var(--color-mic-idle);
+  border-radius: 50%;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: border-color var(--transition-base), background-color var(--transition-base), box-shadow var(--transition-base);
+  animation: micPulse 2.5s infinite ease-in-out;
+}
+
+.mic-button:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.mic-button.active {
+  border-color: var(--color-mic-active);
+  background-color: rgba(239, 68, 68, 0.1);
+  box-shadow: var(--shadow-glow-mic);
+  animation: micPulseActive 1s infinite ease-in-out;
+}
+
+.mic-button svg {
+  width: 28px;
+  height: 28px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Large variant for new tab */
+.mic-button--large {
+  width: 80px;
+  height: 80px;
+}
+
+.mic-button--large svg {
+  width: 32px;
+  height: 32px;
+}
+
+/* -----------------------------------------------------------
+   Component: Input Field
+   ----------------------------------------------------------- */
+.input-field {
+  width: 100%;
+  padding: 12px 16px;
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.input-field::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-glow-accent);
+}
+
+/* -----------------------------------------------------------
+   Component: Select Dropdown
+   ----------------------------------------------------------- */
+.select-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 10px 36px 10px 14px;
+  background-color: var(--color-bg-input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  min-width: 160px;
+}
+
+.select-field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-glow-accent);
+}
+
+.select-field option {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+/* -----------------------------------------------------------
+   Component: Toggle Switch
+   ----------------------------------------------------------- */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  gap: var(--space-sm);
+}
+
+.toggle-switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch__track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.toggle-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: var(--color-text-primary);
+  border-radius: 50%;
+  transition: transform var(--transition-fast);
+}
+
+.toggle-switch__input:checked + .toggle-switch__track {
+  background-color: var(--color-accent);
+}
+
+.toggle-switch__input:checked + .toggle-switch__track .toggle-switch__thumb {
+  transform: translateX(20px);
+  background-color: var(--color-bg-primary);
+}
+
+.toggle-switch__input:focus-visible + .toggle-switch__track {
+  box-shadow: var(--shadow-glow-accent);
+}
+
+/* -----------------------------------------------------------
+   Component: Status Badge
+   ----------------------------------------------------------- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.status-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-badge__dot--idle {
+  background-color: var(--color-mic-idle);
+}
+
+.status-badge__dot--active {
+  background-color: var(--color-mic-active);
+}
+
+.status-badge__dot--success {
+  background-color: var(--color-success);
+}
+
+.status-badge__dot--warning {
+  background-color: var(--color-warning);
+  animation: statusPulse 1.5s infinite ease-in-out;
+}
+
+.status-badge__dot--error {
+  background-color: var(--color-error);
+}
+
+/* -----------------------------------------------------------
+   Component: Card / Panel
+   ----------------------------------------------------------- */
+.card {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  box-shadow: var(--shadow-md);
+}
+
+/* -----------------------------------------------------------
+   Utility Classes
+   ----------------------------------------------------------- */
+.sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -445,35 +491,13 @@ summary:focus-visible {
   border: 0;
 }
 
-@keyframes nv-rise {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nv-card,
-  .nv-btn {
-    animation: none;
-    transition: none;
-  }
-}
-
-@media (max-width: 720px) {
-  .nv-container {
-    width: min(100%, calc(100% - 24px));
-  }
-
-  .nv-card-inner {
-    padding: 20px;
-  }
-
-  .nv-display {
-    font-size: clamp(1.8rem, 10vw, 2.8rem);
-  }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }

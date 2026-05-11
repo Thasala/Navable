@@ -1,209 +1,183 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Navable</title>
-    <link rel="stylesheet" href="../common/ui.css" />
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body class="nv-ui nv-popup">
-    <main class="nv-card nv-popup-panel">
-      <div class="nv-card-inner nv-popup-inner">
-        <header class="nv-popup-header">
-          <div class="nv-popup-brand">
-            <img
-              class="nv-popup-logo"
-              src="../../assets/navable-logo.svg"
-              width="38"
-              height="38"
-              alt=""
-              aria-hidden="true"
-            />
-            <div>
-              <p class="nv-eyebrow">Voice Navigation</p>
-              <h1 class="nv-popup-wordmark">Navable</h1>
-            </div>
-          </div>
-
-          <div class="nv-popup-header-actions">
-            <span class="nv-badge">Live tools</span>
-            <a class="nv-btn nv-btn--ghost nv-popup-link" href="../options/index.html" target="_blank" rel="noreferrer">Settings</a>
-          </div>
-        </header>
-
-        <section class="nv-popup-topbar" aria-label="Voice and feedback">
-          <div class="nv-popup-voice">
-            <div>
-              <p class="nv-section-kicker">Voice</p>
-              <h2 class="nv-section-heading">Start listening</h2>
-            </div>
-            <button id="btnMicToggle" class="nv-btn nv-btn--primary nv-mic-btn">Checking voice support…</button>
-            <div id="micStatus" class="nv-status-copy mic-status" role="status" aria-live="polite">Not listening.</div>
-          </div>
-
-          <div class="nv-popup-status-card">
-            <div class="nv-popup-status-head">
-              <p class="nv-section-kicker">Latest feedback</p>
-              <div id="status" class="status ok" role="status" aria-live="polite"></div>
-            </div>
-            <div id="description" class="hint" role="status" aria-live="polite"></div>
-          </div>
-        </section>
-
-        <section class="nv-popup-actions" aria-label="Quick actions">
-          <div class="nv-popup-section-head">
-            <div>
-              <p class="nv-section-kicker">Quick actions</p>
-              <h2 class="nv-section-heading">Useful tools</h2>
-            </div>
-            <button id="btnHelp" class="nv-btn nv-btn--ghost" type="button">Show examples</button>
-          </div>
-
-          <div class="nv-popup-actions-grid">
-            <button id="btnSummarize" class="nv-btn nv-popup-action">
-              <span class="nv-popup-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M7 6h10M7 10h10M7 14h6M6 20h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H8L6 6v12a2 2 0 0 0 2 2Z"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
-              <span class="nv-popup-action-copy">
-                <strong>Summarize</strong>
-                <small>Get the page shape at a glance</small>
-              </span>
-            </button>
-
-            <button id="btnListHeadings" class="nv-btn nv-popup-action">
-              <span class="nv-popup-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M6 7h12M6 12h8M6 17h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-                  <path d="M4.5 7h.01M4.5 12h.01M4.5 17h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
-                </svg>
-              </span>
-              <span class="nv-popup-action-copy">
-                <strong>Headings</strong>
-                <small>Scan the current structure</small>
-              </span>
-            </button>
-
-            <button id="btnListLinks" class="nv-btn nv-popup-action">
-              <span class="nv-popup-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M10 13a5 5 0 0 1 0-7l.7-.7a5 5 0 0 1 7 7l-.7.7"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                  <path
-                    d="M14 11a5 5 0 0 1 0 7l-.7.7a5 5 0 0 1-7-7l.7-.7"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
-              <span class="nv-popup-action-copy">
-                <strong>Links</strong>
-                <small>List what you can open next</small>
-              </span>
-            </button>
-
-            <button id="btnReadFocused" class="nv-btn nv-popup-action">
-              <span class="nv-popup-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M12 5c4.6 0 8.6 2.8 10 7-1.4 4.2-5.4 7-10 7S3.4 16.2 2 12c1.4-4.2 5.4-7 10-7Z"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                  <path
-                    d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
-              <span class="nv-popup-action-copy">
-                <strong>Focused</strong>
-                <small>Read the current target back</small>
-              </span>
-            </button>
-          </div>
-
-          <div id="helpPanel" class="help-box" aria-hidden="true">
-            <div class="nv-popup-help-group">
-              <h3>Move around</h3>
-              <ul>
-                <li>“Scroll down”</li>
-                <li>“Next heading”</li>
-                <li>“Read title”</li>
-              </ul>
-            </div>
-            <div class="nv-popup-help-group">
-              <h3>Take action</h3>
-              <ul>
-                <li>“Click login”</li>
-                <li>“Open first link”</li>
-                <li>“Read focused”</li>
-              </ul>
-            </div>
-            <div class="nv-popup-help-group">
-              <h3>Ask freely</h3>
-              <ul>
-                <li>“Summarize this page”</li>
-                <li>“Open example dot com”</li>
-                <li>“What is photosynthesis?”</li>
-              </ul>
-            </div>
-          </div>
-
-          <form id="typedCommandForm" class="nv-popup-typed" aria-label="Typed test command">
-            <div class="nv-popup-section-head">
-              <div>
-                <p class="nv-section-kicker">Typed testing</p>
-                <h2 class="nv-section-heading">Send a command without voice</h2>
-              </div>
-              <button id="btnTypedSend" class="nv-btn nv-btn--primary" type="submit">Run typed</button>
-            </div>
-            <label class="nv-sr-only" for="typedCommandInput">Type a command, question, or page request</label>
-            <textarea
-              id="typedCommandInput"
-              class="nv-input nv-popup-typed-input"
-              rows="3"
-              spellcheck="false"
-              placeholder="Type a command, page question, or context request for testing"
-            ></textarea>
-            <p id="typedCommandHint" class="nv-popup-help-note nv-popup-typed-note">
-              Uses the same parser and assistant path as voice. Press Ctrl+Enter or Cmd+Enter to send.
-            </p>
-          </form>
-        </section>
-
-        <section class="nv-popup-help-strip" aria-label="Help">
-          <div class="nv-popup-help-row">
-            <div>
-              <p class="nv-section-kicker">Keyboard</p>
-              <h2 class="nv-section-heading">Chrome shortcuts</h2>
-            </div>
-            <p class="nv-popup-help-note">Keyboard shortcuts are configured in Chrome → Extensions → Keyboard shortcuts.</p>
-          </div>
-        </section>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navable</title>
+  <link rel="stylesheet" href="../common/ui.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <img src="../../assets/navable-logo.svg" alt="Navable" class="popup-header__logo" height="24">
+      <div class="popup-header__actions">
+        <a class="btn-icon" href="../options/index.html" target="_blank" rel="noreferrer" aria-label="Open settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.35.17.7.37 1 .6.32.25.7.4 1.1.4H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/>
+          </svg>
+        </a>
+        <button type="button" id="btnHelp" class="btn-icon" aria-label="Show voice commands help">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </button>
       </div>
-    </main>
+    </header>
 
-    <script src="popup.js"></script>
-  </body>
+    <!-- Mic Control Section -->
+    <section class="popup-mic" aria-label="Microphone control">
+      <button type="button" id="btnMicToggle" class="mic-button" aria-label="Toggle microphone" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+
+      <div id="micStatus" class="status-badge" aria-live="polite">
+        <span class="status-badge__dot status-badge__dot--idle" aria-hidden="true"></span>
+        <span class="status-badge__text">Ready</span>
+      </div>
+
+      <p id="status" class="popup-mic__status" aria-live="polite"></p>
+      <p id="description" class="popup-mic__description"></p>
+    </section>
+
+    <!-- Quick Actions -->
+    <section class="popup-actions" aria-label="Quick actions">
+      <button type="button" id="btnSummarize" class="btn-secondary popup-actions__btn" aria-label="Summarize current page">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <span>Summarize</span>
+      </button>
+
+      <button type="button" id="btnListHeadings" class="btn-secondary popup-actions__btn" aria-label="List all headings on page">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <span>Headings</span>
+      </button>
+
+      <button type="button" id="btnListLinks" class="btn-secondary popup-actions__btn" aria-label="List all links on page">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        <span>Links</span>
+      </button>
+
+      <button type="button" id="btnReadFocused" class="btn-secondary popup-actions__btn" aria-label="Read currently focused element">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span>Read Focused</span>
+      </button>
+    </section>
+
+    <!-- Typed Command -->
+    <section class="popup-command" aria-label="Type a command">
+      <form id="typedCommandForm" class="popup-command__form">
+        <input
+          type="text"
+          id="typedCommandInput"
+          class="input-field"
+          placeholder="Type a command..."
+          aria-label="Type voice command"
+          autocomplete="off"
+        >
+        <button type="submit" id="btnTypedSend" class="btn-icon" aria-label="Send command">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </form>
+      <p id="typedCommandHint" class="popup-command__hint">Try: "scroll down", "click search", "go back"</p>
+    </section>
+
+    <!-- Help Panel -->
+    <aside id="helpPanel" class="help-panel" aria-hidden="true" aria-label="Voice commands help">
+      <div class="help-panel__header">
+        <h2 class="help-panel__title">Voice Commands</h2>
+        <button type="button" id="btnHelpClose" class="btn-icon" aria-label="Close help panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="help-panel__content">
+        <ul class="help-panel__list" role="list">
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Scroll down"</span>
+            <span class="help-panel__desc">Scroll page down</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Scroll up"</span>
+            <span class="help-panel__desc">Scroll page up</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Click [text]"</span>
+            <span class="help-panel__desc">Click element with text</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Go back"</span>
+            <span class="help-panel__desc">Browser back</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Go forward"</span>
+            <span class="help-panel__desc">Browser forward</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Refresh"</span>
+            <span class="help-panel__desc">Reload page</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Search [query]"</span>
+            <span class="help-panel__desc">Search on current site</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Summarize"</span>
+            <span class="help-panel__desc">Summarize page content</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Headings"</span>
+            <span class="help-panel__desc">List all headings</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Links"</span>
+            <span class="help-panel__desc">List all links</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Read this"</span>
+            <span class="help-panel__desc">Read focused element</span>
+          </li>
+          <li class="help-panel__item">
+            <span class="help-panel__phrase">"Stop"</span>
+            <span class="help-panel__desc">Stop speaking</span>
+          </li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
 </html>

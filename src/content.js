@@ -315,8 +315,34 @@
   );
 
   // Runtime messaging (guarded for non-extension test runs)
+  function isNavableExtensionPageContext() {
+    try {
+      if (window.location.protocol !== 'chrome-extension:') return false;
+      if (!chrome || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') return true;
+      return window.location.origin === new URL(chrome.runtime.getURL('')).origin;
+    } catch (_err) {
+      return window.location.protocol === 'chrome-extension:';
+    }
+  }
+
+  function shouldHandleRuntimeMessage(msg) {
+    if (!msg || !msg.target) return true;
+    var target = String(msg.target || '');
+    if (target === 'navable:content') return true;
+    if (target !== 'navable:extension-page') return false;
+    if (!isNavableExtensionPageContext()) return false;
+    var pagePath = String(msg.pagePath || '').trim();
+    if (!pagePath) return true;
+    try {
+      return window.location.pathname === new URL(pagePath, window.location.origin).pathname;
+    } catch (_err) {
+      return window.location.pathname === pagePath;
+    }
+  }
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (!shouldHandleRuntimeMessage(msg)) return false;
       if (msg && msg.type === 'announce') {
         announce(msg.text || translate('generic_announcement'), {
           mode: msg.mode || 'polite',
@@ -328,12 +354,18 @@
       if (msg && msg.type === 'navable:announce') {
         if (msg.lang) outputLanguage = normalizeOutputLanguage(msg.lang);
         ensureOutputLanguageReady(outputLanguage).finally(function () {
-          announce(msg.text || translate('generic_announcement'), {
+          var announcedText = msg.text || translate('generic_announcement');
+          rememberCommandFeedback({
+            status: msg.status || 'success',
+            message: announcedText,
+            details: msg.details || null
+          });
+          announce(announcedText, {
             mode: msg.mode || 'polite',
             priority: !!msg.priority,
             lang: msg.lang || outputLocale(currentOutputLanguage())
           });
-          sendResponse && sendResponse({ ok: true });
+          sendResponse && sendResponse({ ok: true, feedback: getLatestCommandFeedback() });
         });
         return true;
       }
@@ -347,8 +379,13 @@
         return true;
       }
       if (msg && msg.type === 'navable:runTypedCommand') {
-        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (handled) {
-          sendResponse && sendResponse({ ok: !!handled, speech: lastSpoken || '' });
+        handleTranscript(msg.text || '', msg.detectedLanguage || '', 'typed').then(function (feedback) {
+          var normalized = feedbackForResponse(feedback, 'success');
+          sendResponse && sendResponse({
+            ok: !!feedback,
+            speech: normalized.message || '',
+            feedback: normalized
+          });
         }).catch(function (err) {
           sendResponse && sendResponse({ ok: false, error: String(err || 'typed command failed') });
         });
@@ -613,7 +650,8 @@
       if (t) return t;
     }
     // inputs: associated <label>
-    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+    var elementTag = String((el && el.tagName) || '').toUpperCase();
+    if (elementTag === 'INPUT' || elementTag === 'SELECT' || elementTag === 'TEXTAREA') {
       // by for=
       var id = el.id && el.id.trim();
       if (id) {
@@ -623,7 +661,7 @@
       // wrapped label
       var p = el.parentElement;
       while (p && p !== el.ownerDocument.body) {
-        if (p.tagName === 'LABEL' && p.textContent) return p.textContent.trim();
+        if (String((p && p.tagName) || '').toUpperCase() === 'LABEL' && p.textContent) return p.textContent.trim();
         p = p.parentElement;
       }
       // placeholder or value/title
@@ -652,7 +690,7 @@
       if (t) return t;
     }
     // button-like input values
-    if (el.tagName === 'INPUT') {
+    if (elementTag === 'INPUT') {
       var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'button' || inputType === 'submit' || inputType === 'reset') {
         var buttonValue = el.getAttribute('value');
@@ -669,7 +707,7 @@
       t = humanizeIdentifier(elementId);
       if (t) return t;
     }
-    if (el.tagName === 'A' && el.getAttribute) {
+    if (elementTag === 'A' && el.getAttribute) {
       t = humanizeUrlFragment(el.getAttribute('href') || '');
       if (t) return t;
     }
@@ -734,7 +772,7 @@
       return 'unlabeled button';
     }
     if (type === 'input') {
-      var inputType = String((el.getAttribute && el.getAttribute('type')) || (el.tagName || '')).toLowerCase();
+      var inputType = String((el.getAttribute && el.getAttribute('type')) || ((el && el.tagName) || '')).toLowerCase();
       if (inputType) return humanizeIdentifier(inputType) || 'input';
       return 'input';
     }
@@ -761,11 +799,29 @@
     image: true
   };
   var FIELD_LIKE_TOKENS = ['password', 'email', 'username', 'search', 'phone', 'code', 'otp', 'pin', 'field', 'input', 'box'];
-  var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send'];
+  var BUTTON_LIKE_TOKENS = ['button', 'submit', 'continue', 'confirm', 'save', 'send', 'next', 'go', 'search', 'apply', 'proceed'];
   var LINK_LIKE_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin', 'sign in', 'sign-in', 'learn more', 'read more'];
   var HEADING_LIKE_TOKENS = ['heading', 'section', 'title', 'part'];
   var EMAIL_FIELD_TOKENS = ['email', 'e mail', 'mail'];
   var LONG_TEXT_FIELD_TOKENS = ['description', 'message', 'comment', 'comments', 'bio', 'about', 'notes', 'details', 'summary', 'experience', 'objective', 'cover letter'];
+  var FORM_PRIMARY_ACTION_WORDS = [
+    'submit', 'send', 'continue', 'next', 'go', 'search', 'save', 'finish', 'done', 'apply', 'proceed',
+    'confirm', 'create', 'create account', 'sign in', 'signin', 'log in', 'login', 'register', 'join',
+    'verify', 'book', 'checkout', 'place order', 'start', 'get started', 'pay', 'complete'
+  ];
+  var FORM_DANGEROUS_ACTION_WORDS = ['cancel', 'clear', 'reset', 'delete', 'remove', 'discard', 'close', 'back', 'previous'];
+  var FORM_ACTION_HINT_WORDS = {
+    search: ['search', 'go', 'find'],
+    go: ['go', 'open', 'visit', 'continue'],
+    next: ['next', 'continue', 'proceed'],
+    send: ['send', 'submit'],
+    done: ['done', 'finish', 'submit', 'save'],
+    enter: ['submit', 'continue', 'go']
+  };
+  var FORM_ACTION_COMMAND_WORDS = FORM_PRIMARY_ACTION_WORDS.reduce(function (memo, word) {
+    memo[word] = true;
+    return memo;
+  }, {});
   var GENERIC_FORM_LABEL_TEXT = {
     input: true,
     'unnamed input': true,
@@ -794,6 +850,144 @@
     slash: '/',
     backslash: '\\',
     space: ' '
+  };
+  var ARABIC_SPELLED_VALUE_TOKEN_MAP = {
+    'ا': 'ا',
+    'أ': 'أ',
+    'إ': 'إ',
+    الف: 'ا',
+    ألف: 'ا',
+    alif: 'ا',
+    alef: 'ا',
+    aleph: 'ا',
+    'ب': 'ب',
+    باء: 'ب',
+    ba: 'ب',
+    baa: 'ب',
+    'ت': 'ت',
+    تاء: 'ت',
+    ta: 'ت',
+    taa: 'ت',
+    'ث': 'ث',
+    ثاء: 'ث',
+    tha: 'ث',
+    thaa: 'ث',
+    'ج': 'ج',
+    جيم: 'ج',
+    jeem: 'ج',
+    jim: 'ج',
+    'ح': 'ح',
+    حاء: 'ح',
+    haa: 'ح',
+    'خ': 'خ',
+    خاء: 'خ',
+    kha: 'خ',
+    khaa: 'خ',
+    'د': 'د',
+    دال: 'د',
+    dal: 'د',
+    'ذ': 'ذ',
+    ذال: 'ذ',
+    dhal: 'ذ',
+    thal: 'ذ',
+    'ر': 'ر',
+    راء: 'ر',
+    ra: 'ر',
+    raa: 'ر',
+    'ز': 'ز',
+    زاي: 'ز',
+    زين: 'ز',
+    zay: 'ز',
+    zain: 'ز',
+    'س': 'س',
+    سين: 'س',
+    seen: 'س',
+    sin: 'س',
+    'ش': 'ش',
+    شين: 'ش',
+    sheen: 'ش',
+    shin: 'ش',
+    'ص': 'ص',
+    صاد: 'ص',
+    sad: 'ص',
+    saad: 'ص',
+    'ض': 'ض',
+    ضاد: 'ض',
+    dad: 'ض',
+    daad: 'ض',
+    'ط': 'ط',
+    طاء: 'ط',
+    tah: 'ط',
+    taa2: 'ط',
+    'ظ': 'ظ',
+    ظاء: 'ظ',
+    zah: 'ظ',
+    zaa2: 'ظ',
+    'ع': 'ع',
+    عين: 'ع',
+    ayn: 'ع',
+    ain: 'ع',
+    'غ': 'غ',
+    غين: 'غ',
+    ghayn: 'غ',
+    ghain: 'غ',
+    'ف': 'ف',
+    فاء: 'ف',
+    fa: 'ف',
+    faa: 'ف',
+    'ق': 'ق',
+    قاف: 'ق',
+    qaf: 'ق',
+    qaaf: 'ق',
+    'ك': 'ك',
+    كاف: 'ك',
+    kaf: 'ك',
+    kaaf: 'ك',
+    'ل': 'ل',
+    لام: 'ل',
+    lam: 'ل',
+    laam: 'ل',
+    'م': 'م',
+    ميم: 'م',
+    meem: 'م',
+    mim: 'م',
+    'ن': 'ن',
+    نون: 'ن',
+    noon: 'ن',
+    nun: 'ن',
+    'ه': 'ه',
+    هاء: 'ه',
+    ha: 'ه',
+    ha2: 'ه',
+    haa2: 'ه',
+    'و': 'و',
+    واو: 'و',
+    waw: 'و',
+    wow: 'و',
+    'ي': 'ي',
+    ياء: 'ي',
+    ya: 'ي',
+    yaa: 'ي',
+    'ى': 'ى',
+    مقصورة: 'ى',
+    'ة': 'ة',
+    مربوطة: 'ة',
+    hamza: 'ء',
+    همزة: 'ء',
+    نقطة: '.',
+    نقطه: '.',
+    دوت: '.',
+    شرطة: '-',
+    شرطه: '-',
+    ناقص: '-',
+    underscore: '_',
+    مسافة: ' ',
+    مسافه: ' ',
+    فراغ: ' ',
+    سلاش: '/',
+    slash: '/',
+    ات: '@',
+    at: '@'
   };
   var SUPPORTED_COMMAND_VERBS = ['click', 'focus', 'open', 'press', 'activate', 'read', 'scroll', 'fill', 'type', 'enter', 'select', 'choose', 'pick', 'check', 'submit'];
   var COMMAND_VERB_ALIASES = {
@@ -1060,7 +1254,7 @@
 
   function isSemanticallyDiscoverableActionable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'button' || tag === 'summary') return true;
     if (tag === 'label' && el.getAttribute && el.getAttribute('for')) {
@@ -1077,7 +1271,7 @@
 
   function isNativelyFocusable(el) {
     if (!el || el.nodeType !== 1) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     if (/^(input|select|textarea|button|summary)$/.test(tag)) return true;
     if (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) return true;
     return getTabIndexValue(el) != null;
@@ -1106,7 +1300,7 @@
   }
 
   function getType(el) {
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var role = normalizedRole(el);
     if (tag === 'a' || role === 'link') return 'link';
     if (/^h[1-6]$/.test(tag)) return 'heading';
@@ -1208,7 +1402,7 @@
     if (!el.dataset.navableId) el.dataset.navableId = nextId();
     el.dataset.navableLabel = label;
     el.dataset.navableType = type;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var item = {
       id: el.dataset.navableId,
       label: label,
@@ -1242,7 +1436,7 @@
     pushAlias(el.getAttribute('value'));
     pushAlias(humanizeIdentifier(el.getAttribute('name')));
     pushAlias(humanizeIdentifier(el.id || ''));
-    if ((el.tagName || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
+    if (((el && el.tagName) || '').toLowerCase() === 'a') pushAlias(humanizeUrlFragment(el.getAttribute('href')));
     return aliases;
   }
 
@@ -1327,7 +1521,7 @@
         if (seen.has(el) || isHidden(el) || isNavableUiElement(el)) return;
         seen.add(el);
         var role = el.getAttribute && el.getAttribute('role');
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var label = textOf(el);
         if (!label) {
           var h = el.querySelector && el.querySelector('h1,h2,h3,h4,h5,h6');
@@ -1360,7 +1554,7 @@
         if (parts.length >= 24) break;
         var el = nodes[i];
         if (isHidden(el) || isNavableUiElement(el)) continue;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         if (tag === 'label') {
           var control = null;
           var forId = el.getAttribute && el.getAttribute('for');
@@ -1429,7 +1623,7 @@
             return;
           }
           if (sensitiveInput) sensitiveInputCount += 1;
-          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (el.tagName || '').toLowerCase();
+          entry.inputType = (el.getAttribute && el.getAttribute('type')) || (((el && el.tagName) || '')).toLowerCase();
           entry.name = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('name')) || '');
           entry.required = !!(el.hasAttribute && el.hasAttribute('required'));
           entry.placeholder = sensitiveInput ? '' : ((el.getAttribute && el.getAttribute('placeholder')) || '');
@@ -1562,7 +1756,7 @@
     collectSearchRoots(document).forEach(function (root) {
       var nodes = [];
       try {
-        nodes = Array.prototype.slice.call(root.querySelectorAll('input,select,textarea'));
+        nodes = Array.prototype.slice.call(root.querySelectorAll('input,select,textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]'));
       } catch (_err) {
         nodes = [];
       }
@@ -1570,9 +1764,10 @@
         if (!el || seen.has(el)) return;
         seen.add(el);
         if (isHidden(el) || isNavableUiElement(el)) return;
-        var tag = (el.tagName || '').toLowerCase();
+        var tag = ((el && el.tagName) || '').toLowerCase();
         var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
         if (tag === 'input' && /^(hidden|button|submit|reset|image|file)$/.test(inputType)) return;
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea' && !el.isContentEditable && normalizedRole(el) !== 'textbox') return;
         controls.push(el);
       });
     });
@@ -1891,10 +2086,46 @@
     };
   }
 
+  function getInheritedFormAttribute(el, attr) {
+    var current = el;
+    while (current && current !== document.body) {
+      if (current.getAttribute) {
+        var value = current.getAttribute(attr);
+        if (value) return String(value).trim();
+      }
+      current = current.parentElement;
+    }
+    return '';
+  }
+
+  function getFormControlMetadata(el, inputType) {
+    if (!el || !el.getAttribute) {
+      return {
+        inputType: inputType || '',
+        autocomplete: '',
+        inputMode: '',
+        enterKeyHint: '',
+        ariaAutocomplete: '',
+        lang: '',
+        dir: ''
+      };
+    }
+    return {
+      inputType: inputType || String(el.getAttribute('type') || '').toLowerCase(),
+      autocomplete: String(el.getAttribute('autocomplete') || '').trim().toLowerCase(),
+      inputMode: String(el.getAttribute('inputmode') || '').trim().toLowerCase(),
+      enterKeyHint: String(el.getAttribute('enterkeyhint') || el.enterKeyHint || '').trim().toLowerCase(),
+      ariaAutocomplete: String(el.getAttribute('aria-autocomplete') || '').trim().toLowerCase(),
+      lang: getInheritedFormAttribute(el, 'lang'),
+      dir: getInheritedFormAttribute(el, 'dir')
+    };
+  }
+
   function buildFormFieldDescriptor(el) {
     if (!el) return null;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var inputType = String((el.getAttribute && el.getAttribute('type')) || tag).toLowerCase();
+    var metadata = getFormControlMetadata(el, inputType);
     if (inputType === 'radio') return null;
     if (inputType === 'checkbox') {
       return {
@@ -1902,6 +2133,13 @@
         label: getFormControlLabel(el),
         required: !!(el.hasAttribute && el.hasAttribute('required')),
         options: [],
+        inputType: metadata.inputType,
+        autocomplete: metadata.autocomplete,
+        inputMode: metadata.inputMode,
+        enterKeyHint: metadata.enterKeyHint,
+        ariaAutocomplete: metadata.ariaAutocomplete,
+        lang: metadata.lang,
+        dir: metadata.dir,
         elements: [el],
         history: [],
         focusElement: function () { return focusElementForNavigation(el); }
@@ -1920,6 +2158,13 @@
         label: getFormControlLabel(el),
         required: !!(el.hasAttribute && el.hasAttribute('required')),
         options: selectOptions,
+        inputType: metadata.inputType,
+        autocomplete: metadata.autocomplete,
+        inputMode: metadata.inputMode,
+        enterKeyHint: metadata.enterKeyHint,
+        ariaAutocomplete: metadata.ariaAutocomplete,
+        lang: metadata.lang,
+        dir: metadata.dir,
         elements: [el],
         history: [],
         focusElement: function () { return focusElementForNavigation(el); }
@@ -1930,7 +2175,13 @@
       label: getFormControlLabel(el),
       required: !!(el.hasAttribute && el.hasAttribute('required')),
       options: [],
-      inputType: inputType,
+      inputType: metadata.inputType,
+      autocomplete: metadata.autocomplete,
+      inputMode: metadata.inputMode,
+      enterKeyHint: metadata.enterKeyHint,
+      ariaAutocomplete: metadata.ariaAutocomplete,
+      lang: metadata.lang,
+      dir: metadata.dir,
       elements: [el],
       history: [],
       focusElement: function () { return focusElementForNavigation(el); }
@@ -1943,7 +2194,7 @@
     var container = group.container;
     if (container && (container.tagName || '').toLowerCase() === 'form') score += 12;
     group.controls.forEach(function (control) {
-      var tag = (control.tagName || '').toLowerCase();
+      var tag = ((control && control.tagName) || '').toLowerCase();
       var inputType = String((control.getAttribute && control.getAttribute('type')) || '').toLowerCase();
       if (inputType === 'password') score += 40;
       if (inputType === 'email') score += 24;
@@ -2001,7 +2252,7 @@
         if (seenRadioGroups.has(radioKey)) return;
         seenRadioGroups.add(radioKey);
         var radios = group.controls.filter(function (candidate) {
-          return candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
+          return candidate && candidate.tagName === 'INPUT' && String((candidate.getAttribute && candidate.getAttribute('type')) || '').toLowerCase() === 'radio' &&
             String(candidate.name || candidate.getAttribute('name') || '') === String(control.name || control.getAttribute('name') || '');
         });
         if (!radios.length) radios = [control];
@@ -2108,7 +2359,7 @@
     if (!field || field.kind !== 'text') return false;
     var element = field.elements && field.elements[0];
     if (!element) return false;
-    var tag = String(element.tagName || '').toLowerCase();
+    var tag = String((element && element.tagName) || '').toLowerCase();
     if (tag === 'textarea' || !!element.isContentEditable) return true;
     var rows = Number((element.getAttribute && element.getAttribute('rows')) || 0);
     if (rows >= 3) return true;
@@ -2189,12 +2440,39 @@
     return value;
   }
 
+  function buildEmailTailValue(parts) {
+    var emailParts = cloneEmailParts(parts);
+    if (!emailParts.domain) return '';
+    return emailParts.domain + (emailParts.suffix ? '.' + emailParts.suffix : '');
+  }
+
   function buildEmailFieldValueUpToSegment(parts, segment) {
     var emailParts = cloneEmailParts(parts);
     if (!emailParts.local) return '';
     if (segment === 'local') return emailParts.local;
     if (segment === 'domain') return buildEmailFieldValue({ local: emailParts.local, domain: emailParts.domain });
+    if (segment === 'tail') return buildEmailFieldValue(emailParts);
     return buildEmailFieldValue(emailParts);
+  }
+
+  function parseEmailTailParts(text) {
+    var normalized = normalizeEmailSpeechText(text);
+    if (!normalized) return null;
+    var tail = normalized;
+    var atIndex = tail.indexOf('@');
+    if (atIndex >= 0) tail = tail.slice(atIndex + 1);
+    tail = tail.replace(/^@+/g, '').trim();
+    if (!tail) return null;
+    var firstDot = tail.indexOf('.');
+    var domain = firstDot >= 0
+      ? sanitizeEmailDomainLabelText(tail.slice(0, firstDot))
+      : sanitizeEmailDomainLabelText(tail);
+    var suffix = firstDot >= 0 ? sanitizeEmailSuffixText(tail.slice(firstDot + 1)) : '';
+    if (!domain) return null;
+    return {
+      domain: domain,
+      suffix: suffix
+    };
   }
 
   function parseEmailParts(text) {
@@ -2205,15 +2483,11 @@
     var local = sanitizeEmailLocalPartText(normalized.slice(0, atIndex));
     if (!local) return null;
     var afterAt = normalized.slice(atIndex + 1);
-    var lastDot = afterAt.lastIndexOf('.');
-    var domain = lastDot >= 0
-      ? sanitizeEmailDomainLabelText(afterAt.slice(0, lastDot))
-      : sanitizeEmailDomainLabelText(afterAt);
-    var suffix = lastDot >= 0 ? sanitizeEmailSuffixText(afterAt.slice(lastDot + 1)) : '';
+    var tailParts = parseEmailTailParts(afterAt);
     return {
       local: local,
-      domain: domain,
-      suffix: suffix
+      domain: tailParts && tailParts.domain ? tailParts.domain : '',
+      suffix: tailParts && tailParts.suffix ? tailParts.suffix : ''
     };
   }
 
@@ -2230,12 +2504,14 @@
   function nextEmailSegment(segment) {
     if (segment === 'local') return 'domain';
     if (segment === 'domain') return 'suffix';
+    if (segment === 'tail') return '';
     return '';
   }
 
   function emailSegmentTranslationKey(segment) {
     if (segment === 'local') return 'form_email_segment_local';
     if (segment === 'domain') return 'form_email_segment_domain';
+    if (segment === 'tail') return 'form_email_segment_tail';
     return 'form_email_segment_suffix';
   }
 
@@ -2522,6 +2798,30 @@
     return /^(no|nope|nah|wrong|incorrect|change|change it|edit|not right|that s wrong|thats wrong|try again|redo|non|لا|غلط|مو صح)$/.test(normalized);
   }
 
+  function normalizeSpelledToken(token) {
+    return normalizeMatchText(token).replace(/[\u064B-\u065F\u0670\u0640]/g, '').trim();
+  }
+
+  function mapSpelledValueToken(token) {
+    var normalized = normalizeSpelledToken(token);
+    if (!normalized) return '';
+    if (Object.prototype.hasOwnProperty.call(SPELLED_VALUE_TOKEN_MAP, normalized)) {
+      return SPELLED_VALUE_TOKEN_MAP[normalized];
+    }
+    if (Object.prototype.hasOwnProperty.call(ARABIC_SPELLED_VALUE_TOKEN_MAP, normalized)) {
+      return ARABIC_SPELLED_VALUE_TOKEN_MAP[normalized];
+    }
+    if (/^[\u0600-\u06FF]$/.test(normalized)) return normalized;
+    return '';
+  }
+
+  function applySpelledCase(value, caseMode, capitalizeNext) {
+    var text = String(value || '');
+    if (!/^[a-z]+$/i.test(text)) return text;
+    if (capitalizeNext || caseMode === 'upper') return text.toUpperCase();
+    return text.toLowerCase();
+  }
+
   function parseSpelledFieldValue(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return '';
@@ -2535,20 +2835,57 @@
     if (!normalized) return '';
     var tokens = normalized.split(/\s+/).filter(Boolean);
     if (!tokens.length) return '';
-    if (tokens.length === 1) return tokens[0];
+    if (tokens.length === 1) return mapSpelledValueToken(tokens[0]) || tokens[0];
     var parts = [];
+    var caseMode = '';
+    var capitalizeNext = false;
     for (var i = 0; i < tokens.length; i += 1) {
       var token = tokens[i];
-      if (Object.prototype.hasOwnProperty.call(SPELLED_VALUE_TOKEN_MAP, token)) {
-        parts.push(SPELLED_VALUE_TOKEN_MAP[token]);
+      var nextToken = tokens[i + 1] || '';
+      if ((token === 'all' && /^(caps|capitals|capital|uppercase|upper)$/.test(nextToken)) ||
+          (token === 'uppercase' && nextToken === 'all')) {
+        caseMode = 'upper';
+        i += 1;
         continue;
       }
-      if (/^[a-z0-9]$/i.test(token) || /^[\u0600-\u06FF]$/.test(token)) {
-        parts.push(token);
+      if (/^(lowercase|lower|small)$/.test(token) && nextToken === 'all') {
+        caseMode = 'lower';
+        i += 1;
+        continue;
+      }
+      if (/^(capital|uppercase|upper|caps)$/.test(token)) {
+        capitalizeNext = true;
+        continue;
+      }
+      if (/^(lowercase|lower|small)$/.test(token)) {
+        caseMode = 'lower';
+        capitalizeNext = false;
+        continue;
+      }
+      if (/^(letter|letters)$/.test(token)) {
+        continue;
+      }
+      var mapped = mapSpelledValueToken(token);
+      var nextMapped = mapSpelledValueToken(nextToken);
+      if (mapped === 'ل' && nextMapped === 'ا') {
+        parts.push('لا');
+        i += 1;
+        capitalizeNext = false;
+        continue;
+      }
+      if (mapped) {
+        parts.push(applySpelledCase(mapped, caseMode, capitalizeNext));
+        capitalizeNext = false;
+        continue;
+      }
+      if (/^[a-z0-9]$/i.test(token)) {
+        parts.push(applySpelledCase(token, caseMode, capitalizeNext));
+        capitalizeNext = false;
         continue;
       }
       if (/^[a-z0-9]+$/i.test(token)) {
-        parts.push(token);
+        parts.push(applySpelledCase(token, caseMode, capitalizeNext));
+        capitalizeNext = false;
         continue;
       }
       return normalized;
@@ -2601,6 +2938,9 @@
         });
       }
       if (pending.mode === 'await_email_segment') {
+        if (pending.emailSegment === 'tail') {
+          return translate('form_email_prompt_tail', { label: label });
+        }
         return translate('form_email_prompt_segment', {
           label: label,
           segment: translateEmailSegment(pending.emailSegment)
@@ -2687,20 +3027,58 @@
   function applyEmailSegmentValue(session, field, segment, rawSegmentValue, details) {
     if (!session || !field || !segment) return false;
     var emailParts = cloneEmailParts(details && details.emailParts || null);
-    var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
-    if (!normalizedSegment) {
-      speak(translate('form_fill_missing_value'));
-      return false;
+    var pendingSegment = segment;
+    var speechValue = '';
+    var nextValue = '';
+    if (segment === 'tail') {
+      var tailParts = parseEmailTailParts(rawSegmentValue);
+      if (!tailParts || !tailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = tailParts.domain;
+      emailParts.suffix = tailParts.suffix || '';
+      if (emailParts.suffix) {
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        pendingSegment = 'domain';
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else if (segment === 'domain') {
+      var domainTailParts = parseEmailTailParts(rawSegmentValue);
+      if (!domainTailParts || !domainTailParts.domain) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts.domain = domainTailParts.domain;
+      emailParts.suffix = domainTailParts.suffix || '';
+      if (emailParts.suffix) {
+        pendingSegment = 'tail';
+        speechValue = buildEmailTailValue(emailParts);
+        nextValue = buildEmailFieldValue(emailParts);
+      } else {
+        speechValue = emailParts.domain;
+        nextValue = buildEmailFieldValueUpToSegment(emailParts, 'domain');
+      }
+    } else {
+      var normalizedSegment = extractEmailSegmentValue(rawSegmentValue, segment);
+      if (!normalizedSegment) {
+        speak(translate('form_fill_missing_value'));
+        return false;
+      }
+      emailParts[segment] = normalizedSegment;
+      speechValue = normalizedSegment;
+      nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     }
-    emailParts[segment] = normalizedSegment;
     var previousState = details && details.previousState ? details.previousState : getFormFieldCurrentState(field);
-    var nextValue = buildEmailFieldValueUpToSegment(emailParts, segment);
     var el = field.elements && field.elements[0];
     if (!el || !applyTextValueToElement(el, nextValue)) {
       speak(translate('not_found_generic', { target: translate('target_input') }));
       return false;
     }
-    return setPendingEmailSegment(session, field, segment, normalizedSegment, {
+    return setPendingEmailSegment(session, field, pendingSegment, speechValue, {
       fieldIndex: Number(details && details.fieldIndex != null ? details.fieldIndex : session.currentIndex || 0),
       correctionCount: Math.max(0, Number(details && details.correctionCount || 0)),
       previousState: previousState,
@@ -2746,6 +3124,26 @@
         label: field.label || translate('target_input'),
         segment: translateEmailSegment(currentSegment)
       });
+      if (currentSegment === 'local') {
+        speak(savedSegment);
+        if (emailParts.domain && emailParts.suffix) {
+          return applyEmailSegmentValue(session, field, 'tail', buildEmailTailValue(emailParts), {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        if (emailParts.domain) {
+          return applyEmailSegmentValue(session, field, 'domain', emailParts.domain, {
+            fieldIndex: previousIndex,
+            correctionCount: 0,
+            previousState: getFormFieldCurrentState(field),
+            emailParts: emailParts
+          });
+        }
+        return promptForNextEmailSegment(session, field, 'tail', emailParts);
+      }
       if (emailParts[nextSegment]) {
         speak(savedSegment);
         return applyEmailSegmentValue(session, field, nextSegment, emailParts[nextSegment], {
@@ -2904,11 +3302,12 @@
 
   function applyTextValueToElement(el, value) {
     if (!el) return false;
-    var tag = (el.tagName || '').toLowerCase();
+    var tag = ((el && el.tagName) || '').toLowerCase();
     var isInput = tag === 'input' || tag === 'textarea';
     var isSelect = tag === 'select';
     var isContentEditable = !!el.isContentEditable;
-    if (!isInput && !isSelect && !isContentEditable) return false;
+    var isRoleTextbox = normalizedRole(el) === 'textbox';
+    if (!isInput && !isSelect && !isContentEditable && !isRoleTextbox) return false;
     if (isInput || isSelect) el.value = value;
     else el.textContent = value;
     try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { }
@@ -3092,30 +3491,164 @@
     return true;
   }
 
-  function findSubmitControlInSession(session) {
-    if (!session || !session.container) return null;
+  function getSessionFormElement(session) {
+    if (!session) return null;
+    var field = currentFormField(session);
+    var el = field && field.elements && field.elements[0];
+    if (el && el.form) return el.form;
     var container = session.container;
-    var selectors = 'button,input[type="submit"],input[type="button"],[role="button"],summary,[onclick],[tabindex]:not([tabindex="-1"])';
-    var candidates = [];
-    try {
-      candidates = Array.prototype.slice.call(container.querySelectorAll(selectors));
-    } catch (_err) {
-      candidates = [];
+    if (container && ((container.tagName || '').toLowerCase() === 'form')) return container;
+    return null;
+  }
+
+  function getSessionActionHint(session, explicitHint) {
+    var normalizedHint = normalizeMatchText(explicitHint || '');
+    if (normalizedHint) return normalizedHint;
+    var field = currentFormField(session);
+    if (!field) return '';
+    if (field.enterKeyHint) return normalizeMatchText(field.enterKeyHint);
+    if (field.inputType === 'search' || field.inputMode === 'search') return 'search';
+    return '';
+  }
+
+  function containsNormalizedPhrase(text, phrase) {
+    var haystack = normalizeMatchText(text);
+    var needle = normalizeMatchText(phrase);
+    if (!haystack || !needle) return false;
+    if (haystack === needle) return true;
+    return (' ' + haystack + ' ').indexOf(' ' + needle + ' ') >= 0;
+  }
+
+  function isDisabledActionControl(el) {
+    if (!el) return true;
+    if (el.disabled) return true;
+    return el.getAttribute && el.getAttribute('aria-disabled') === 'true';
+  }
+
+  function getFormActionControlText(el) {
+    if (!el) return '';
+    var parts = [];
+    function add(value) {
+      var text = String(value || '').replace(/\s+/g, ' ').trim();
+      if (text && parts.indexOf(text) < 0) parts.push(text);
     }
-    var submitWords = ['submit', 'continue', 'sign in', 'log in', 'login', 'send', 'save', 'finish', 'done'];
-    var ranked = candidates.map(function (el, index) {
-      if (!el || isHidden(el) || isNavableUiElement(el)) return null;
-      var label = textOf(el) || String((el.getAttribute && el.getAttribute('value')) || '').trim();
-      var normalized = normalizeMatchText(label);
-      if (!normalized) return null;
-      var score = 0;
-      if ((el.tagName || '').toLowerCase() === 'input' && String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase() === 'submit') score += 100;
-      submitWords.forEach(function (word) {
+    add(textOf(el));
+    if (el.getAttribute) {
+      add(el.getAttribute('aria-label'));
+      add(el.getAttribute('title'));
+      add(el.getAttribute('alt'));
+      add(el.getAttribute('value'));
+      add(humanizeIdentifier(el.getAttribute('name') || ''));
+      add(humanizeIdentifier(el.getAttribute('id') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-testid') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-test') || ''));
+      add(humanizeIdentifier(el.getAttribute('data-action') || ''));
+    }
+    return parts.join(' ');
+  }
+
+  function collectFormActionCandidates(session) {
+    var selectors = 'button,input[type="submit"],input[type="button"],input[type="image"],[role="button"],summary,[onclick],[tabindex]:not([tabindex="-1"])';
+    var candidates = [];
+    var seen = new Set();
+    function add(el) {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      candidates.push(el);
+    }
+    function collect(root) {
+      if (!root || !root.querySelectorAll) return;
+      try {
+        if (root.matches && root.matches(selectors)) add(root);
+      } catch (_err) { }
+      try {
+        Array.prototype.slice.call(root.querySelectorAll(selectors)).forEach(add);
+      } catch (_err2) { }
+    }
+    collect(session && session.container);
+    var formEl = getSessionFormElement(session);
+    if (formEl && formEl.id) {
+      var formSelector = 'button[form="' + escapeAttributeValue(formEl.id) + '"],input[form="' + escapeAttributeValue(formEl.id) + '"]';
+      try {
+        Array.prototype.slice.call(document.querySelectorAll(formSelector)).forEach(add);
+      } catch (_err3) { }
+    }
+    return candidates;
+  }
+
+  function getActionControlTypeScore(el, formEl) {
+    var tag = ((el && el.tagName) || '').toLowerCase();
+    var inputType = String((el && el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    var score = 0;
+    if (tag === 'input' && inputType === 'submit') score += 110;
+    if (tag === 'input' && inputType === 'image') score += 90;
+    if (tag === 'button') {
+      if (inputType === 'submit') score += 105;
+      else if (!inputType && formEl && (el.form === formEl || formEl.contains(el))) score += 88;
+      else if (inputType === 'button') score += 20;
+    }
+    if (normalizedRole(el) === 'button') score += 18;
+    if (el && el.getAttribute && el.getAttribute('onclick')) score += 8;
+    return score;
+  }
+
+  function scoreFormActionControl(el, session, options) {
+    if (!el || isHidden(el) || isNavableUiElement(el) || isDisabledActionControl(el)) return null;
+    var tag = ((el && el.tagName) || '').toLowerCase();
+    var inputType = String((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+    if (tag === 'input' && inputType === 'reset') return null;
+    var formEl = getSessionFormElement(session);
+    var actionHint = getSessionActionHint(session, options && options.actionHint);
+    var preferredWords = (FORM_ACTION_HINT_WORDS[actionHint] || (actionHint ? [actionHint] : [])).slice();
+    var label = getFormActionControlText(el);
+    var normalized = normalizeMatchText(label);
+    var hasDangerousLabel = normalized && FORM_DANGEROUS_ACTION_WORDS.some(function (word) {
+      return containsNormalizedPhrase(normalized, word);
+    });
+    if (hasDangerousLabel && (!actionHint || !containsNormalizedPhrase(normalized, actionHint))) return null;
+
+    var score = getActionControlTypeScore(el, formEl);
+    if (formEl && (el.form === formEl || formEl.contains(el))) score += 18;
+    if (session && session.container && session.container.contains && session.container.contains(el)) score += 8;
+
+    if (normalized) {
+      preferredWords.forEach(function (word) {
         var normalizedWord = normalizeMatchText(word);
-        if (normalized === normalizedWord) score += 60;
-        else if (normalized.indexOf(normalizedWord) >= 0) score += 30;
+        if (!normalizedWord) return;
+        if (normalized === normalizedWord) score += 150;
+        else if (containsNormalizedPhrase(normalized, normalizedWord)) score += 100;
       });
-      return score > 0 ? { element: el, score: score, index: index } : null;
+      FORM_PRIMARY_ACTION_WORDS.forEach(function (word) {
+        var normalizedWord = normalizeMatchText(word);
+        if (!normalizedWord) return;
+        if (normalized === normalizedWord) score += 90;
+        else if (containsNormalizedPhrase(normalized, normalizedWord)) score += 50;
+      });
+    }
+
+    var field = currentFormField(session);
+    if (field && (field.inputType === 'search' || field.inputMode === 'search')) {
+      if (containsNormalizedPhrase(normalized, 'search')) score += 80;
+      if (containsNormalizedPhrase(normalized, 'go')) score += 55;
+    }
+    if (field && field.enterKeyHint) {
+      var hintWords = FORM_ACTION_HINT_WORDS[normalizeMatchText(field.enterKeyHint)] || [field.enterKeyHint];
+      hintWords.forEach(function (word) {
+        if (containsNormalizedPhrase(normalized, word)) score += 55;
+      });
+    }
+
+    if (hasDangerousLabel) score -= 160;
+    return score > 0 ? { element: el, score: score } : null;
+  }
+
+  function findSubmitControlInSession(session, options) {
+    if (!session || !session.container) return null;
+    var ranked = collectFormActionCandidates(session).map(function (el, index) {
+      var scored = scoreFormActionControl(el, session, options || {});
+      if (!scored) return null;
+      scored.index = index;
+      return scored;
     }).filter(Boolean).sort(function (a, b) {
       if (b.score !== a.score) return b.score - a.score;
       return a.index - b.index;
@@ -3123,7 +3656,41 @@
     return ranked.length ? ranked[0].element : null;
   }
 
-  function submitActiveForm() {
+  function clickFormActionControl(control) {
+    if (!control) return false;
+    try { control.focus(); } catch (_err) { }
+    try {
+      control.click();
+      return true;
+    } catch (_err2) {
+      return false;
+    }
+  }
+
+  function dispatchEnterOnCurrentFormField(session) {
+    var field = currentFormField(session);
+    var el = field && field.elements && field.elements[0];
+    if (!el) return false;
+    try { el.focus(); } catch (_err) { }
+    var dispatched = false;
+    ['keydown', 'keypress', 'keyup'].forEach(function (eventType) {
+      try {
+        var event = new window.KeyboardEvent(eventType, {
+          bubbles: true,
+          cancelable: true,
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13
+        });
+        el.dispatchEvent(event);
+        dispatched = true;
+      } catch (_err2) { }
+    });
+    return dispatched;
+  }
+
+  function submitActiveForm(actionHint) {
     var session = ensureFormSession({ announce: false, speakFailure: true });
     if (!session) {
       return false;
@@ -3133,6 +3700,12 @@
       return false;
     }
     var currentField = currentFormField(session);
+    var submitControl = findSubmitControlInSession(session, { actionHint: actionHint });
+    if (submitControl && clickFormActionControl(submitControl)) {
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
+    }
     var formEl = currentField && currentField.elements && currentField.elements[0] && currentField.elements[0].form;
     if (formEl && typeof formEl.requestSubmit === 'function') {
       formEl.requestSubmit();
@@ -3140,16 +3713,13 @@
       speak(translate('form_submit_done'));
       return true;
     }
-    var submitControl = findSubmitControlInSession(session);
-    if (!submitControl) {
-      speak(translate('form_submit_missing'));
-      return false;
+    if (dispatchEnterOnCurrentFormField(session)) {
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
     }
-    try { submitControl.focus(); } catch (_err2) { }
-    submitControl.click();
-    clearFormSession();
-    speak(translate('form_submit_done'));
-    return true;
+    speak(translate('form_submit_missing'));
+    return false;
   }
 
   function tryHandleActiveFormUtterance(text) {
@@ -3264,6 +3834,15 @@
       await execCommand({ type: 'scroll', dir: step.direction || step.dir || 'down' });
       return { ok: true, message: 'Scrolled ' + (step.direction || step.dir || 'down') };
     }
+    if (action === 'browser_history') {
+      var historyDir = step.direction || step.dir || 'back';
+      await execCommand({ type: 'browser_history', dir: historyDir === 'forward' ? 'forward' : 'back' });
+      return { ok: true, message: historyDir === 'forward' ? 'Went forward' : 'Went back' };
+    }
+    if (action === 'open_shortcuts') {
+      await execCommand({ type: 'open_shortcuts' });
+      return { ok: true, message: 'Opened keyboard shortcuts' };
+    }
     if (action === 'announce') {
       speak(step.message || '');
       return { ok: true, message: 'Announced' };
@@ -3315,7 +3894,7 @@
         return { ok: false, message: resolutionFailureMessage(step.targetType || step.target || 'input', fillResolution, step.label, step) };
       }
       var elin = fillResolution.element;
-      var isInput = elin.tagName === 'INPUT' || elin.tagName === 'TEXTAREA';
+      var isInput = String((elin && elin.tagName) || '').toUpperCase() === 'INPUT' || String((elin && elin.tagName) || '').toUpperCase() === 'TEXTAREA';
       var isContentEditable = elin.isContentEditable;
       if (!isInput && !isContentEditable) return { ok: false, message: 'Target not fillable' };
       if (isSensitiveInput(elin)) return { ok: false, message: 'Refused to fill sensitive field' };
@@ -3390,6 +3969,7 @@
   var manualListening = null; // null = follow autostart; true = force on; false = force off
   var settingsLoaded = false;
   var lastSpoken = '';
+  var lastCommandFeedback = null;
   var lastUnknownCmdAt = 0;
   var lastMicBusyAt = 0;
   var recogLang = 'en-US';
@@ -3407,6 +3987,109 @@
   var ttsPlaybackInFlight = false;
   var ttsPlaybackToken = 0;
   var ttsPlaybackResumeTimer = null;
+
+  function normalizeFeedbackStatus(status) {
+    var raw = String(status || '').trim().toLowerCase();
+    if (raw === 'success' || raw === 'failure' || raw === 'loading' || raw === 'clarification_needed' || raw === 'blocked') {
+      return raw;
+    }
+    return 'success';
+  }
+
+  function cloneFeedbackDetails(details) {
+    if (!details || typeof details !== 'object') return null;
+    if (Array.isArray(details)) return details.slice();
+    return Object.keys(details).reduce(function (acc, key) {
+      var value = details[key];
+      acc[key] = Array.isArray(value) ? value.slice() : value;
+      return acc;
+    }, {});
+  }
+
+  function createCommandFeedback(status, message, details) {
+    return {
+      status: normalizeFeedbackStatus(status),
+      message: String(message || '').trim(),
+      details: cloneFeedbackDetails(details)
+    };
+  }
+
+  function rememberCommandFeedback(feedback) {
+    var normalized = createCommandFeedback(
+      feedback && feedback.status,
+      feedback && feedback.message,
+      feedback && feedback.details
+    );
+    if (!normalized.message && lastCommandFeedback && lastCommandFeedback.message) {
+      normalized.message = lastCommandFeedback.message;
+      if (!normalized.details && lastCommandFeedback.details) normalized.details = cloneFeedbackDetails(lastCommandFeedback.details);
+    }
+    lastCommandFeedback = normalized;
+    if (normalized.message) lastSpoken = normalized.message;
+    return normalized;
+  }
+
+  function getLatestCommandFeedback() {
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return createCommandFeedback(lastCommandFeedback.status, lastCommandFeedback.message, lastCommandFeedback.details);
+    }
+    if (lastSpoken) return createCommandFeedback('success', lastSpoken);
+    return createCommandFeedback('success', '');
+  }
+
+  function feedbackForResponse(feedback, fallbackStatus, fallbackMessage, details) {
+    if (feedback && typeof feedback === 'object' && typeof feedback.status === 'string') {
+      return rememberCommandFeedback(feedback);
+    }
+    if (feedback && typeof feedback === 'object' && feedback.feedback && typeof feedback.feedback.status === 'string') {
+      return rememberCommandFeedback(feedback.feedback);
+    }
+    var message = String(fallbackMessage || '').trim();
+    if (message) {
+      return rememberCommandFeedback({
+        status: fallbackStatus || 'success',
+        message: message,
+        details: details || null
+      });
+    }
+    if (lastCommandFeedback && lastCommandFeedback.message) {
+      return getLatestCommandFeedback();
+    }
+    return rememberCommandFeedback({
+      status: fallbackStatus || 'success',
+      message: lastSpoken || '',
+      details: details || null
+    });
+  }
+
+  function speakFeedback(feedback, opts) {
+    var normalized = feedbackForResponse(feedback, 'success');
+    if (normalized.message) speak(normalized.message, opts || {});
+    return normalized;
+  }
+
+  function resolutionFeedbackStatus(resolution) {
+    return resolution && resolution.reason === 'ambiguous' ? 'clarification_needed' : 'failure';
+  }
+
+  function buildResolutionFeedbackDetails(type, resolution, label) {
+    var pending = getPendingDisambiguation();
+    return {
+      targetType: type || 'element',
+      reason: resolution && resolution.reason ? resolution.reason : 'not_found',
+      label: String(label || '').trim(),
+      options: pending && Array.isArray(pending.options)
+        ? pending.options.map(function (option) {
+          return {
+            index: option.index,
+            summary: option.summary || '',
+            label: option.label || '',
+            type: option.type || ''
+          };
+        })
+        : []
+    };
+  }
 
   function clearTransientRestoreTimer() {
     if (!transientRestoreTimer) return;
@@ -3511,8 +4194,191 @@
     speak(text, { transient: true, restoreMs: restoreMs });
   }
 
+  function createVoiceEmitter() {
+    var listeners = {
+      result: [],
+      error: [],
+      start: [],
+      end: []
+    };
+
+    function emit(type, payload) {
+      var list = listeners[type];
+      if (!list || !list.length) return;
+      list.forEach(function (handler) {
+        try {
+          handler(payload || {});
+        } catch (_err) {
+          // ignore handler failures
+        }
+      });
+    }
+
+    function on(type, handler) {
+      if (!listeners[type] || typeof handler !== 'function') return api;
+      listeners[type].push(handler);
+      return api;
+    }
+
+    var api = {
+      emit: emit,
+      on: on
+    };
+    return api;
+  }
+
+  function supportsExtensionVoiceRecognizer() {
+    try {
+      return !!(
+        !isNavableExtensionPageContext() &&
+        chrome &&
+        chrome.runtime &&
+        chrome.runtime.id &&
+        typeof chrome.runtime.getURL === 'function' &&
+        typeof chrome.runtime.sendMessage === 'function' &&
+        chrome.runtime.onMessage &&
+        typeof chrome.runtime.onMessage.addListener === 'function'
+      );
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function buildVoiceSessionId() {
+    try {
+      if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch (_err) {
+      // ignore
+    }
+    return 'voice-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
+  function sendVoiceBridgeMessage(payload) {
+    return new Promise(function (resolve) {
+      if (!(chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function')) {
+        resolve({ ok: false, error: 'Runtime messaging unavailable' });
+        return;
+      }
+
+      var settled = false;
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        resolve(value || { ok: false });
+      }
+
+      try {
+        var maybePromise = chrome.runtime.sendMessage(payload, function (response) {
+          var lastError = chrome.runtime && chrome.runtime.lastError && chrome.runtime.lastError.message
+            ? String(chrome.runtime.lastError.message)
+            : '';
+          if (lastError) {
+            finish({ ok: false, error: lastError });
+            return;
+          }
+          finish(response || { ok: true });
+        });
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then(function (response) {
+            finish(response || { ok: true });
+          }).catch(function (err) {
+            finish({ ok: false, error: String(err || 'Runtime messaging failed') });
+          });
+        }
+      } catch (err2) {
+        finish({ ok: false, error: String(err2 || 'Runtime messaging failed') });
+      }
+    });
+  }
+
+  function createExtensionVoiceRecognizer(options) {
+    options = options || {};
+    var emitter = createVoiceEmitter();
+    var sessionId = buildVoiceSessionId();
+    var listenerAttached = false;
+    var started = false;
+    var starting = false;
+
+    function handleVoiceEvent(msg) {
+      if (!msg || msg.type !== 'navable:voiceEvent') return false;
+      if (String(msg.sessionId || '') !== sessionId) return false;
+
+      var event = String(msg.event || '');
+      var payload = msg.payload || {};
+      if (event === 'start') {
+        starting = false;
+        started = true;
+      } else if (event === 'end') {
+        starting = false;
+        started = false;
+      } else if (event === 'error') {
+        starting = false;
+      }
+      emitter.emit(event, payload);
+      return false;
+    }
+
+    function attachListener() {
+      if (listenerAttached) return;
+      chrome.runtime.onMessage.addListener(handleVoiceEvent);
+      listenerAttached = true;
+    }
+
+    function detachListener() {
+      if (!listenerAttached) return;
+      try {
+        if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.removeListener === 'function') {
+          chrome.runtime.onMessage.removeListener(handleVoiceEvent);
+        }
+      } catch (_err) {
+        // ignore
+      }
+      listenerAttached = false;
+    }
+
+    return {
+      start: function () {
+        if (started || starting) return;
+        attachListener();
+        starting = true;
+        sendVoiceBridgeMessage({
+          type: 'navable:voiceStart',
+          sessionId: sessionId,
+          lang: options.lang || recogLang || 'en-US'
+        }).then(function (response) {
+          if (response && response.ok === true) return;
+          starting = false;
+          emitter.emit('error', {
+            error: 'start-failed',
+            message: response && response.error ? String(response.error) : 'Voice capture unavailable',
+            provider: 'extension'
+          });
+        });
+      },
+      stop: function (opts) {
+        opts = opts || {};
+        starting = false;
+        started = false;
+        sendVoiceBridgeMessage({
+          type: 'navable:voiceStop',
+          sessionId: sessionId,
+          silent: !!opts.silent
+        }).finally(function () {
+          detachListener();
+        });
+      },
+      on: emitter.on
+    };
+  }
+
+  function createContentVoiceRecognizer(options) {
+    if (supportsExtensionVoiceRecognizer()) return createExtensionVoiceRecognizer(options);
+    if (speech && typeof speech.createRecognizer === 'function') return speech.createRecognizer(options);
+    throw new Error('Speech recognition not supported');
+  }
+
   function isVoiceSupported() {
-    return !!(speech && speech.supportsRecognition && speech.supportsRecognition());
+    return supportsExtensionVoiceRecognizer() || !!(speech && speech.supportsRecognition && speech.supportsRecognition());
   }
 
   function isPageActiveForVoice() {
@@ -3608,7 +4474,7 @@
 
   function ensureRecognizer() {
     if (recognizer || !isVoiceSupported()) return recognizer;
-    recognizer = speech.createRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
+    recognizer = createContentVoiceRecognizer({ lang: recogLang || 'en-US', interimResults: false, continuous: true, autoRestart: true });
     recognizer.on('result', function (ev) {
       if (!ev || !ev.transcript) return;
       if (voiceTurnInFlight) return;
@@ -4045,28 +4911,47 @@
 
   async function tryPendingDisambiguationFollowUp(text) {
     var pending = getPendingDisambiguation();
-    if (!pending) return false;
+    if (!pending) return null;
     var selection = resolvePendingDisambiguationChoice(text, pending);
-    if (!selection) return false;
+    if (!selection) return null;
     if (!selection.matched) {
       if (selection.ambiguous || isOrdinalFollowUpText(text)) {
-        speak(pending.message || translate('ambiguous_target', {
-          count: pending.options.length,
-          target: targetPlural(pending.targetType || 'element'),
-          value: pending.label || ''
-        }));
-        return true;
+        return speakFeedback({
+          status: 'clarification_needed',
+          message: pending.message || translate('ambiguous_target', {
+            count: pending.options.length,
+            target: targetPlural(pending.targetType || 'element'),
+            value: pending.label || ''
+          }),
+          details: {
+            targetType: pending.targetType || 'element',
+            label: pending.label || '',
+            options: Array.isArray(pending.options) ? pending.options.map(function (option) {
+              return {
+                index: option.index,
+                summary: option.summary || '',
+                label: option.label || '',
+                type: option.type || ''
+              };
+            }) : []
+          }
+        });
       }
-      return false;
+      return null;
     }
     var nextCommand = buildCommandFromPendingOption(pending, selection.option);
     if (!nextCommand) {
-      speak(pending.message || translate('unknown_command'));
-      return true;
+      return speakFeedback({
+        status: 'failure',
+        message: pending.message || translate('unknown_command'),
+        details: {
+          targetType: pending.targetType || 'element',
+          label: pending.label || ''
+        }
+      });
     }
     clearPendingDisambiguation();
-    await execCommand(nextCommand);
-    return true;
+    return execCommand(nextCommand);
   }
 
   function rememberLocalAssistantTurn(info) {
@@ -4129,6 +5014,236 @@
     return '';
   }
 
+  function parseBrowserHistoryCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    t = t
+      .replace(/\b(?:please|pls)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    var politePrefixes = [
+      /^(?:hey navable|navable)\s+/,
+      /^(?:can you|could you|would you|will you)\s+/,
+      /^(?:i want to|i need to|i would like to|i d like to|let me|please help me)\s+/,
+      /^(?:help me|show me how to)\s+/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < politePrefixes.length; i++) {
+        var next = t.replace(politePrefixes[i], '').trim();
+        if (next !== t) {
+          t = next;
+          changed = true;
+        }
+      }
+    }
+    if (/^(go back|back|take me back|navigate back|browser back|previous page|previous|last page|return to previous page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go|take me|return|navigate|move)\s+(?:me\s+)?(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:previous|last)\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(?:go|take me|return|navigate|move)\s+back\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(go forward|forward|take me forward|navigate forward|browser forward|next page|next|go next|go next page|go to next page)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(go|take me|navigate|move)\s+(?:me\s+)?(?:forward\s+)?(?:to\s+)?(?:the\s+)?next\s+(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(?:go|take me|navigate|move)\s+forward\s+(?:a\s+)?(?:page|screen|tab)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(retour|retour en arriere|page precedente|precedent)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(avance|page suivante|suivant)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    if (/^(ارجع|رجوع|ارجع للخلف|الصفحة السابقة|السابق)$/.test(t)) {
+      return { type: 'browser_history', dir: 'back' };
+    }
+    if (/^(تقدم|للأمام|للامام|الصفحة التالية|التالي)$/.test(t)) {
+      return { type: 'browser_history', dir: 'forward' };
+    }
+    return null;
+  }
+
+  function parseShortcutSettingsCommand(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return null;
+    if (/^(open|go to|click|configure|change|edit|show)\s+(?:keyboard\s+)?shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(open|go to|show)\s+(?:chrome\s+)?extensions?\s+shortcuts?$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    if (/^(keyboard shortcuts|extension shortcuts|chrome shortcuts|configure shortcuts|change shortcuts|edit shortcuts)$/.test(t)) {
+      return { type: 'open_shortcuts' };
+    }
+    return null;
+  }
+
+  function isNavableSettingsPageContext() {
+    return !!(
+      document.getElementById('outputMode') &&
+      document.getElementById('languageMode') &&
+      document.getElementById('continuous') &&
+      document.getElementById('aiEnabled') &&
+      document.getElementById('noSensitiveSites') &&
+      document.getElementById('noFormFields')
+    );
+  }
+
+  function normalizeSettingsIntentText(text) {
+    var t = normalizeMatchText(text);
+    if (!t) return '';
+    t = t.replace(/\b(?:please|pls)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    var prefixes = [
+      /^(?:hey navable|navable)\s+/,
+      /^(?:can you|could you|would you|will you)\s+/,
+      /^(?:i want to|i need to|i would like to|i d like to|let me)\s+/,
+      /^(?:help me|show me how to)\s+/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < prefixes.length; i++) {
+        var next = t.replace(prefixes[i], '').trim();
+        if (next !== t) {
+          t = next;
+          changed = true;
+        }
+      }
+    }
+    return t;
+  }
+
+  function hasSettingsAlias(text, aliases) {
+    for (var i = 0; i < aliases.length; i++) {
+      var alias = normalizeMatchText(aliases[i]);
+      if (alias && (text === alias || text.indexOf(alias) >= 0)) return true;
+    }
+    return false;
+  }
+
+  function isSettingsSetIntent(text) {
+    return /^(?:set|change|switch|select|choose|pick|use|make|turn)\b/.test(text);
+  }
+
+  function settingsOnOffValue(text) {
+    if (/\b(?:on|enable|enabled|activate|activated|check|checked)\b/.test(text) || /^(?:enable|activate|check)\b/.test(text)) return true;
+    if (/\b(?:off|disable|disabled|deactivate|deactivated|uncheck|unchecked)\b/.test(text) || /^(?:disable|deactivate|uncheck)\b/.test(text)) return false;
+    return null;
+  }
+
+  var NAVABLE_SELECT_SETTINGS = [
+    {
+      id: 'outputMode',
+      label: 'Output mode',
+      aliases: ['output mode', 'voice output', 'speech output', 'output'],
+      options: [
+        { value: 'screen_reader', label: 'Screen reader', aliases: ['screen reader', 'screenreader'] },
+        { value: 'chrome_tts', label: 'Chrome TTS', aliases: ['chrome tts', 'tts', 'chrome text to speech', 'text to speech'] }
+      ]
+    },
+    {
+      id: 'languageMode',
+      label: 'Language',
+      aliases: ['language', 'voice language', 'speech language'],
+      options: [
+        { value: 'auto', label: 'Auto-detect', aliases: ['auto', 'automatic', 'auto detect', 'auto detect language', 'automatic language'] },
+        { value: 'en', label: 'English', aliases: ['english', 'en'] },
+        { value: 'ar', label: 'Arabic', aliases: ['arabic', 'ar'] }
+      ]
+    }
+  ];
+
+  var NAVABLE_CHECKBOX_SETTINGS = [
+    { id: 'continuous', label: 'Continuous listening', aliases: ['continuous listening', 'keep microphone active', 'microphone active'] },
+    { id: 'aiEnabled', label: 'AI', aliases: ['ai', 'enable ai', 'ai features', 'smart navigation'] },
+    { id: 'noSensitiveSites', label: 'Skip sensitive sites', aliases: ['skip sensitive sites', 'sensitive sites', 'banking and login pages'] }
+  ];
+
+  function resolveSettingsOption(setting, text) {
+    var best = null;
+    for (var i = 0; i < setting.options.length; i++) {
+      var option = setting.options[i];
+      for (var j = 0; j < option.aliases.length; j++) {
+        var alias = normalizeMatchText(option.aliases[j]);
+        if (!alias || (text !== alias && text.indexOf(alias) < 0)) continue;
+        if (!best || alias.length > best.aliasLength) {
+          best = { option: option, aliasLength: alias.length };
+        }
+      }
+    }
+    return best ? best.option : null;
+  }
+
+  function parseNavableSettingsCommand(text) {
+    if (!isNavableSettingsPageContext()) return null;
+    var t = normalizeSettingsIntentText(text);
+    if (!t) return null;
+
+    if (hasSettingsAlias(t, ['form field protection', 'form protection', 'password protection', 'credit card protection'])) {
+      if (isSettingsSetIntent(t) || settingsOnOffValue(t) !== null) {
+        return {
+          type: 'navable_setting',
+          control: 'locked',
+          id: 'noFormFields',
+          label: 'Form field protection'
+        };
+      }
+    }
+
+    for (var i = 0; i < NAVABLE_SELECT_SETTINGS.length; i++) {
+      var setting = NAVABLE_SELECT_SETTINGS[i];
+      var hasSetting = hasSettingsAlias(t, setting.aliases);
+      var option = resolveSettingsOption(setting, t);
+      if (hasSetting && option && isSettingsSetIntent(t)) {
+        return {
+          type: 'navable_setting',
+          control: 'select',
+          id: setting.id,
+          label: setting.label,
+          value: option.value,
+          valueLabel: option.label
+        };
+      }
+    }
+
+    if (/^(?:use|switch to|change to)\s+(?:chrome tts|tts|chrome text to speech)$/.test(t)) {
+      return { type: 'navable_setting', control: 'select', id: 'outputMode', label: 'Output mode', value: 'chrome_tts', valueLabel: 'Chrome TTS' };
+    }
+    if (/^(?:use|switch to|change to)\s+(?:screen reader|screenreader)$/.test(t)) {
+      return { type: 'navable_setting', control: 'select', id: 'outputMode', label: 'Output mode', value: 'screen_reader', valueLabel: 'Screen reader' };
+    }
+    if (/^(?:use|switch to|change to)\s+(?:english|arabic|auto|auto detect)$/.test(t)) {
+      var languageOption = resolveSettingsOption(NAVABLE_SELECT_SETTINGS[1], t);
+      if (languageOption) {
+        return { type: 'navable_setting', control: 'select', id: 'languageMode', label: 'Language', value: languageOption.value, valueLabel: languageOption.label };
+      }
+    }
+
+    for (var j = 0; j < NAVABLE_CHECKBOX_SETTINGS.length; j++) {
+      var checkbox = NAVABLE_CHECKBOX_SETTINGS[j];
+      var checked = settingsOnOffValue(t);
+      if (checked !== null && hasSettingsAlias(t, checkbox.aliases)) {
+        return {
+          type: 'navable_setting',
+          control: 'checkbox',
+          id: checkbox.id,
+          label: checkbox.label,
+          checked: checked
+        };
+      }
+    }
+
+    return null;
+  }
+
   function isFormModeStartText(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return false;
@@ -4152,7 +5267,13 @@
     if (/^(exit|leave|stop|cancel|close) form( mode)?$/.test(t)) {
       return { type: 'form_mode', action: 'stop' };
     }
-    if (/^(next field|next input|next form field|next question)$/.test(t) || (formModeActive && /^(next|continue|skip)$/.test(t))) return { type: 'form_move', dir: 'next' };
+    if (/^(next field|next input|next form field|next question)$/.test(t)) return { type: 'form_move', dir: 'next' };
+    if (formModeActive && /^(next|continue|skip)$/.test(t)) {
+      var activeSession = getCurrentFormSession();
+      var isLastField = activeSession && Number(activeSession.currentIndex || 0) >= activeSession.fields.length - 1;
+      if (isLastField && /^(next|continue)$/.test(t)) return { type: 'form_submit', actionHint: t };
+      return { type: 'form_move', dir: 'next' };
+    }
     if (/^(previous field|prev field|previous input|prev input|back field)$/.test(t) || (formModeActive && /^(previous|prev|back|go back)$/.test(t))) return { type: 'form_move', dir: 'prev' };
     if (/^(current field|repeat field|what field am i on|where am i in this form|read current field|where am i)$/.test(t)) return { type: 'form_current' };
 
@@ -4176,7 +5297,10 @@
     if (/^(uncheck|untick|disable)$/.test(t)) return { type: 'form_check', checked: false };
 
     if (/^(review( form)?|finish( form)?|done with form|what did you fill|what did you enter|review what you filled)$/.test(t) || (formModeActive && /^(review|finish|done)$/.test(t))) return { type: 'form_review' };
-    if (/^(submit( form)?|send( form)?)$/.test(t) || (formModeActive && /^(submit|send)$/.test(t))) return { type: 'form_submit' };
+    var actionCommand = t.replace(/^(please\s+)?/, '').replace(/\s+(?:this|the)?\s*form$/, '').trim();
+    if (/^(submit|send)$/.test(actionCommand) || (formModeActive && FORM_ACTION_COMMAND_WORDS[actionCommand])) {
+      return { type: 'form_submit', actionHint: actionCommand };
+    }
     return null;
   }
 
@@ -4196,6 +5320,9 @@
       return { type: 'help' };
     }
 
+    var settingsCmd = parseNavableSettingsCommand(original);
+    if (settingsCmd) return settingsCmd;
+
     // Summary/orientation triggers in English, French, and Arabic.
     if (isSummaryCommandText(t)) {
       return { type: 'summarize', command: original || 'Summarize this page' };
@@ -4203,6 +5330,12 @@
 
     var formCmd = parseFormCommand(original);
     if (formCmd) return formCmd;
+
+    var browserHistoryCmd = parseBrowserHistoryCommand(original);
+    if (browserHistoryCmd) return browserHistoryCmd;
+
+    var shortcutsCmd = parseShortcutSettingsCommand(original);
+    if (shortcutsCmd) return shortcutsCmd;
 
     var searchQuery = extractSearchSiteQuery(t);
     if (searchQuery) return { type: 'open_site', query: searchQuery, newTab: true };
@@ -4838,6 +5971,81 @@
 
   var lastIndexByType = {};
 
+  function currentSpeechFeedback(status, details, fallbackMessage) {
+    return feedbackForResponse(null, status, fallbackMessage || lastSpoken || '', details || null);
+  }
+
+  function currentFormFeedback(ok, details) {
+    var session = getCurrentFormSession();
+    var pending = session ? getPendingFormConfirmation(session) : null;
+    return currentSpeechFeedback(pending ? 'clarification_needed' : (ok ? 'success' : 'failure'), details);
+  }
+
+  function dispatchSettingsChange(el) {
+    if (!el) return;
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_err) { /* ignore */ }
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_err2) { /* ignore */ }
+  }
+
+  function applyNavableSettingCommand(cmd) {
+    var label = cmd && cmd.label ? String(cmd.label) : 'Setting';
+    var el = cmd && cmd.id ? document.getElementById(cmd.id) : null;
+    if (!el) {
+      return speakFeedback({
+        status: 'failure',
+        message: label + ' was not found.',
+        details: { command: 'navable_setting', id: cmd && cmd.id ? cmd.id : '' }
+      });
+    }
+
+    if (cmd.control === 'locked' || el.disabled) {
+      return speakFeedback({
+        status: 'blocked',
+        message: label + ' is always on by design.',
+        details: { command: 'navable_setting', id: cmd.id, locked: true }
+      });
+    }
+
+    if (cmd.control === 'select') {
+      el.value = cmd.value || '';
+      dispatchSettingsChange(el);
+      try { el.focus(); } catch (_err2) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: label + ' set to ' + (cmd.valueLabel || cmd.value || 'selected') + '.',
+        details: {
+          command: 'navable_setting',
+          id: cmd.id,
+          value: cmd.value || ''
+        }
+      });
+    }
+
+    if (cmd.control === 'checkbox') {
+      if (!!el.checked !== !!cmd.checked) {
+        try { el.click(); } catch (_err3) { el.checked = !!cmd.checked; dispatchSettingsChange(el); }
+      } else {
+        dispatchSettingsChange(el);
+      }
+      try { el.focus(); } catch (_err4) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: label + ' turned ' + (cmd.checked ? 'on' : 'off') + '.',
+        details: {
+          command: 'navable_setting',
+          id: cmd.id,
+          checked: !!cmd.checked
+        }
+      });
+    }
+
+    return speakFeedback({
+      status: 'failure',
+      message: 'I could not change that setting.',
+      details: { command: 'navable_setting', id: cmd.id || '' }
+    });
+  }
+
   function moveBy(type, dir) {
     rescan();
     var items = index.items.filter(function (it) { return it.type === type; });
@@ -4862,126 +6070,248 @@
   async function execCommand(cmd) {
     if (!cmd) {
       var now = Date.now();
-      if (now - lastUnknownCmdAt < 5000) return;
+      if (now - lastUnknownCmdAt < 5000) return currentSpeechFeedback('failure', { command: 'unknown' });
       lastUnknownCmdAt = now;
+      rememberCommandFeedback({
+        status: 'failure',
+        message: translate('unknown_command'),
+        details: { command: 'unknown' }
+      });
       speakTransient(translate('unknown_command'), 3200);
-      return;
+      return currentSpeechFeedback('failure', { command: 'unknown' });
     }
-    if (cmd.type === 'help') { speakHelp(); return; }
+    if (cmd.type === 'help') {
+      return speakFeedback({
+        status: 'success',
+        message: translate('help_examples'),
+        details: { command: 'help' }
+      });
+    }
     if (cmd.type === 'open_site') {
-      await openSiteRequest(cmd.query, cmd.newTab !== false);
-      return;
+      return openSiteRequest(cmd.query, cmd.newTab !== false);
+    }
+    if (cmd.type === 'open_shortcuts') {
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var shortcutsRes = await chrome.runtime.sendMessage({ type: 'navable:openShortcuts' });
+          if (shortcutsRes && shortcutsRes.ok) {
+            return speakFeedback(shortcutsRes.feedback || {
+              status: 'success',
+              message: 'Opening keyboard shortcuts.',
+              details: { command: 'open_shortcuts' }
+            });
+          }
+          return speakFeedback({
+            status: 'failure',
+            message: shortcutsRes && shortcutsRes.error ? String(shortcutsRes.error) : 'Could not open keyboard shortcuts.',
+            details: { command: 'open_shortcuts' }
+          });
+        }
+      } catch (_err) {
+        // fall through to local best effort
+      }
+      try {
+        window.open('chrome://extensions/shortcuts', '_blank', 'noopener,noreferrer');
+      } catch (_err2) {
+        // ignore
+      }
+      return speakFeedback({
+        status: 'success',
+        message: 'Opening keyboard shortcuts.',
+        details: { command: 'open_shortcuts' }
+      });
+    }
+    if (cmd.type === 'browser_history') {
+      var historyDir = cmd.dir === 'forward' ? 'forward' : 'back';
+      try {
+        if (chrome && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+          var historyRes = await chrome.runtime.sendMessage({
+            type: 'navable:browserHistory',
+            direction: historyDir
+          });
+          if (historyRes && historyRes.ok) {
+            return speakFeedback(historyRes.feedback || {
+              status: 'success',
+              message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+              details: { command: 'browser_history', direction: historyDir }
+            });
+          }
+          return speakFeedback(historyRes && historyRes.feedback ? historyRes.feedback : {
+            status: 'failure',
+            message: historyRes && historyRes.error ? String(historyRes.error) : translate('unknown_command'),
+            details: { command: 'browser_history', direction: historyDir }
+          });
+        }
+      } catch (_err) {
+        // fall through to page-level fallback in non-extension test contexts
+      }
+      try {
+        if (historyDir === 'forward') window.history.forward();
+        else window.history.back();
+      } catch (_err2) { /* ignore */ }
+      return speakFeedback({
+        status: 'success',
+        message: historyDir === 'forward' ? translate('browser_forward') : translate('browser_back'),
+        details: { command: 'browser_history', direction: historyDir }
+      });
     }
     if (cmd.type === 'scroll') {
       var amount = Math.floor(window.innerHeight * 0.8);
       if (cmd.dir === 'down') {
         window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: 'down' } });
       } else if (cmd.dir === 'up') {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
-        speak(translate('scrolled_up'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_up'), details: { command: 'scroll', direction: 'up' } });
       } else if (cmd.dir === 'top') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        speak(translate('scrolled_top'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_top'), details: { command: 'scroll', direction: 'top' } });
       } else if (cmd.dir === 'bottom') {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-        speak(translate('scrolled_bottom'));
-      } else {
-        window.scrollBy({ top: amount, behavior: 'smooth' });
-        speak(translate('scrolled_down'));
+        return speakFeedback({ status: 'success', message: translate('scrolled_bottom'), details: { command: 'scroll', direction: 'bottom' } });
       }
-      console.log('[Navable] Action: scroll', cmd.dir);
-      return;
+      window.scrollBy({ top: amount, behavior: 'smooth' });
+      return speakFeedback({ status: 'success', message: translate('scrolled_down'), details: { command: 'scroll', direction: cmd.dir || 'down' } });
     }
     if (cmd.type === 'list') {
       var listStructure = buildPageStructure();
-      speak(listTargetText(cmd.target || 'link', listStructure));
-      console.log('[Navable] Action: list', cmd.target);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: listTargetText(cmd.target || 'link', listStructure),
+        details: { command: 'list', target: cmd.target || 'link' }
+      });
     }
     if (cmd.type === 'form_mode') {
-      if (cmd.action === 'stop') stopFormMode();
-      else startFormMode();
-      console.log('[Navable] Action: form mode', cmd.action || 'start');
-      return;
+      var formModeOk = cmd.action === 'stop' ? stopFormMode() : startFormMode();
+      return currentFormFeedback(formModeOk, {
+        command: 'form_mode',
+        action: cmd.action || 'start'
+      });
+    }
+    if (cmd.type === 'navable_setting') {
+      return applyNavableSettingCommand(cmd);
     }
     if (cmd.type === 'form_move') {
-      moveFormField(cmd.dir === 'prev' ? 'prev' : 'next');
-      console.log('[Navable] Action: form move', cmd.dir);
-      return;
+      return currentFormFeedback(moveFormField(cmd.dir === 'prev' ? 'prev' : 'next'), {
+        command: 'form_move',
+        direction: cmd.dir === 'prev' ? 'prev' : 'next'
+      });
     }
     if (cmd.type === 'form_current') {
-      readCurrentFormField();
-      console.log('[Navable] Action: form current');
-      return;
+      return currentFormFeedback(readCurrentFormField(), {
+        command: 'form_current'
+      });
     }
     if (cmd.type === 'form_fill') {
-      applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form fill');
-      return;
+      return currentFormFeedback(
+        applyCurrentFormValue(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_fill',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_select') {
-      selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form select');
-      return;
+      return currentFormFeedback(
+        selectCurrentFormOption(cmd.value || '', cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_select',
+          fieldLabel: cmd.fieldLabel || ''
+        }
+      );
     }
     if (cmd.type === 'form_check') {
-      setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) });
-      console.log('[Navable] Action: form checkbox', !!cmd.checked);
-      return;
+      return currentFormFeedback(
+        setCurrentCheckboxState(!!cmd.checked, cmd.fieldLabel || '', { correctionCount: Number(cmd.correctionCount || 0) }),
+        {
+          command: 'form_check',
+          fieldLabel: cmd.fieldLabel || '',
+          checked: !!cmd.checked
+        }
+      );
     }
     if (cmd.type === 'form_review') {
       reviewActiveForm();
-      console.log('[Navable] Action: form review');
-      return;
+      return currentFormFeedback(true, { command: 'form_review' });
     }
     if (cmd.type === 'form_submit') {
-      submitActiveForm();
-      console.log('[Navable] Action: form submit');
-      return;
+      return currentFormFeedback(submitActiveForm(cmd.actionHint || ''), { command: 'form_submit', actionHint: cmd.actionHint || '' });
     }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
       var title = (h1 && h1.innerText) || document.title || '';
-      speak(translate('title_value', { value: title || translate('value_not_found') }));
-      console.log('[Navable] Action: read title');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('title_value', { value: title || translate('value_not_found') }),
+        details: { command: 'read', what: 'title' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'selection') {
       var sel = '';
       try { sel = String(window.getSelection && window.getSelection().toString() || '').trim(); } catch (_err) { /* selection failed */ }
-      if (sel) { speak(translate('selection_value', { value: sel })); } else { speak(translate('no_selection')); }
-      console.log('[Navable] Action: read selection');
-      return;
+      if (sel) {
+        return speakFeedback({
+          status: 'success',
+          message: translate('selection_value', { value: sel }),
+          details: { command: 'read', what: 'selection' }
+        });
+      }
+      return speakFeedback({
+        status: 'failure',
+        message: translate('no_selection'),
+        details: { command: 'read', what: 'selection' }
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'focused') {
       var fe = getDeepActiveElement(document);
       if (fe) {
         var fl = (fe.dataset && fe.dataset.navableLabel) || fe.getAttribute && fe.getAttribute('aria-label') || fe.innerText || fe.textContent || '';
         fl = String(fl || '').trim();
-        speak(fl || translate('no_focused_text'));
+        return speakFeedback({
+          status: fl ? 'success' : 'failure',
+          message: fl || translate('no_focused_text'),
+          details: { command: 'read', what: 'focused' }
+        });
       } else {
-        speak(translate('no_focused_element'));
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'read', what: 'focused' }
+        });
       }
-      console.log('[Navable] Action: read focused');
-      return;
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && cmd.label) {
       var headingResolution = await resolveCommandElement(cmd, 'heading', 'read');
-      if (!headingResolution.ok || !headingResolution.element) { speak(resolutionFailureMessage('heading', headingResolution, cmd.label, cmd)); return; }
+      if (!headingResolution.ok || !headingResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(headingResolution),
+          message: resolutionFailureMessage('heading', headingResolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('heading', headingResolution, cmd.label)
+        });
+      }
       var elhL = headingResolution.element;
       var lblhL = elhL.dataset.navableLabel || elhL.innerText || elhL.textContent || '';
-      speak(translate('heading_value', { value: lblhL.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblhL.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'read' && cmd.target === 'heading' && !cmd.label) {
       var elh = pickNth('heading', cmd.n || 1);
-      if (!elh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+        });
+      }
       var lblh = elh.dataset.navableLabel || elh.innerText || elh.textContent || '';
-      speak(translate('heading_value', { value: lblh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: read heading', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblh.trim() || translate('unnamed') }),
+        details: { command: 'read', target: 'heading', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && cmd.label) {
       var openResult = await performElementActionWithRetry('link', cmd.label, cmd.n, {
@@ -4991,12 +6321,20 @@
         el.click();
         return true;
       });
-      if (!openResult.ok || !openResult.element) { speak(resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd)); return; }
+      if (!openResult.ok || !openResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(openResult.resolution),
+          message: resolutionFailureMessage('link', openResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('link', openResult.resolution, cmd.label)
+        });
+      }
       var ellL = openResult.element;
       var lbllL = ellL.dataset.navableLabel || ellL.innerText || ellL.textContent || '';
-      speak(translate('opening_value', { value: lbllL.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open link by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbllL.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'auto' && cmd.label) {
       var autoOpenResult = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5007,24 +6345,37 @@
         return true;
       });
       if (!autoOpenResult.ok || !autoOpenResult.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoOpenResult.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoOpenResult.resolution, cmd.label)
+        });
       }
       var autoOpen = autoOpenResult.element;
       var autoOpenLabel = autoOpen.dataset.navableLabel || autoOpen.innerText || autoOpen.textContent || '';
-      speak(translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }));
-      console.log('[Navable] Action: open auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: autoOpenLabel.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'open' && cmd.target === 'link' && !cmd.label) {
       var ell = pickNth('link', cmd.n || 1);
-      if (!ell) { speak(translate('not_found_generic', { target: localizeTarget('link') })); return; }
+      if (!ell) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('link') }),
+          details: { command: 'open', target: 'link', index: cmd.n || 1 }
+        });
+      }
       var lbll = ell.dataset.navableLabel || ell.innerText || ell.textContent || '';
-      speak(translate('opening_value', { value: lbll.trim() || translate('target_link') }));
       // Prefer click to follow anchors and SPA handlers
       ell.click();
-      console.log('[Navable] Action: open link', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('opening_value', { value: lbll.trim() || translate('target_link') }),
+        details: { command: 'open', target: 'link', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && cmd.label) {
       var focusButtonResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5033,12 +6384,20 @@
         if (!el.isConnected) return false;
         return focusElementForNavigation(el);
       });
-      if (!focusButtonResult.ok || !focusButtonResult.element) { speak(resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd)); return; }
+      if (!focusButtonResult.ok || !focusButtonResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusButtonResult.resolution),
+          message: resolutionFailureMessage('button', focusButtonResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', focusButtonResult.resolution, cmd.label)
+        });
+      }
       var elbL = focusButtonResult.element;
       var lblbL = elbL.dataset.navableLabel || elbL.innerText || elbL.textContent || '';
-      speak(translate('focused_value', { value: lblbL.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblbL.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.label && (cmd.target === 'input' || cmd.target === 'auto')) {
       var focusResolution = await performElementActionWithRetry(cmd.target === 'input' ? 'input' : 'auto', cmd.label, cmd.n, {
@@ -5048,31 +6407,55 @@
         return focusElementForNavigation(el);
       });
       var focusType = commandTargetType(cmd, 'input');
-      if (!focusResolution.ok || !focusResolution.element) { speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd)); return; }
+      if (!focusResolution.ok || !focusResolution.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(focusResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, focusType), focusResolution.resolution, cmd.label)
+        });
+      }
       var focusElement = focusResolution.element;
       var focusLabel = focusElement.dataset.navableLabel || focusElement.innerText || focusElement.textContent || '';
-      speak(translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }));
-      console.log('[Navable] Action: focus target by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: focusLabel.trim() || localizeTarget(focusType) }),
+        details: { command: 'focus', target: focusType, label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'focus' && cmd.target === 'button' && !cmd.label) {
       var elb = pickNth('button', cmd.n || 1);
-      if (!elb) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!elb) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+        });
+      }
       try { focusElementForNavigation(elb); } catch (_err) { /* focus failed */ }
       var lblb = elb.dataset.navableLabel || elb.innerText || elb.textContent || '';
-      speak(translate('focused_value', { value: lblb.trim() || translate('target_button') }));
-      console.log('[Navable] Action: focus button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblb.trim() || translate('target_button') }),
+        details: { command: 'focus', target: 'button', index: cmd.n || 1 }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'focused') {
       var aef = getDeepActiveElement(document);
-      if (!aef) { speak(translate('no_focused_element')); return; }
+      if (!aef) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('no_focused_element'),
+          details: { command: 'activate', target: 'focused' }
+        });
+      }
       var labf = (aef.dataset && aef.dataset.navableLabel) || aef.getAttribute && aef.getAttribute('aria-label') || aef.innerText || aef.textContent || '';
       labf = String(labf || '').trim();
       try { aef.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: labf || translate('target_element') }));
-      console.log('[Navable] Action: activate focused');
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: labf || translate('target_element') }),
+        details: { command: 'activate', target: 'focused' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.label) {
       var activateResult = await performElementActionWithRetry('button', cmd.label, cmd.n, {
@@ -5083,12 +6466,20 @@
         el.click();
         return true;
       });
-      if (!activateResult.ok || !activateResult.element) { speak(resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd)); return; }
+      if (!activateResult.ok || !activateResult.element) {
+        return speakFeedback({
+          status: resolutionFeedbackStatus(activateResult.resolution),
+          message: resolutionFailureMessage('button', activateResult.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails('button', activateResult.resolution, cmd.label)
+        });
+      }
       var ab = activateResult.element;
       var labb = ab.dataset.navableLabel || ab.innerText || ab.textContent || '';
-      speak(translate('activated_value', { value: String(labb || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button by label', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labb || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'auto' && cmd.label) {
       var autoActivateResolution = await performElementActionWithRetry('auto', cmd.label, cmd.n, {
@@ -5100,66 +6491,123 @@
         return true;
       });
       if (!autoActivateResolution.ok || !autoActivateResolution.element) {
-        speak(resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd));
-        return;
+        return speakFeedback({
+          status: resolutionFeedbackStatus(autoActivateResolution.resolution),
+          message: resolutionFailureMessage(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label, cmd),
+          details: buildResolutionFeedbackDetails(failureTargetTypeForCommand(cmd, 'element'), autoActivateResolution.resolution, cmd.label)
+        });
       }
       var autoActivate = autoActivateResolution.element;
       var autoActivateLabel = autoActivate.dataset.navableLabel || autoActivate.innerText || autoActivate.textContent || '';
-      speak(translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }));
-      console.log('[Navable] Action: activate auto target', cmd.label);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(autoActivateLabel || translate('target_element')).trim() }),
+        details: { command: 'activate', target: 'auto', label: cmd.label || '' }
+      });
     }
     if (cmd.type === 'activate' && cmd.target === 'button' && cmd.n != null) {
       var abin = pickNth('button', cmd.n);
-      if (!abin) { speak(translate('not_found_generic', { target: localizeTarget('button') })); return; }
+      if (!abin) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('button') }),
+          details: { command: 'activate', target: 'button', index: cmd.n }
+        });
+      }
       var labbn = abin.dataset.navableLabel || abin.innerText || abin.textContent || '';
       try { abin.focus(); } catch (_err) { /* focus failed */ }
       try { abin.click(); } catch (_err) { /* click failed */ }
-      speak(translate('activated_value', { value: String(labbn || translate('target_button')).trim() }));
-      console.log('[Navable] Action: activate button', cmd.n);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('activated_value', { value: String(labbn || translate('target_button')).trim() }),
+        details: { command: 'activate', target: 'button', index: cmd.n }
+      });
     }
     if (cmd.type === 'move' && (cmd.target === 'link' || cmd.target === 'button')) {
       var elmv = moveBy(cmd.target, cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmv) { speak(translate('not_found_generic', { target: localizeTarget(cmd.target) })); return; }
+      if (!elmv) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget(cmd.target) }),
+          details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       try { elmv.focus(); } catch (_err) { /* focus failed */ }
       var lblmv = elmv.dataset.navableLabel || elmv.innerText || elmv.textContent || '';
-      speak(translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }));
-      console.log('[Navable] Action: move ' + cmd.target, cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('focused_value', { value: lblmv.trim() || localizeTarget(cmd.target) }),
+        details: { command: 'move', target: cmd.target, direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
     if (cmd.type === 'move' && cmd.target === 'heading') {
       var elmh = moveBy('heading', cmd.dir === 'prev' ? 'prev' : 'next');
-      if (!elmh) { speak(translate('not_found_generic', { target: localizeTarget('heading') })); return; }
+      if (!elmh) {
+        return speakFeedback({
+          status: 'failure',
+          message: translate('not_found_generic', { target: localizeTarget('heading') }),
+          details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+        });
+      }
       var lblmh = elmh.dataset.navableLabel || elmh.innerText || elmh.textContent || '';
       if (!elmh.hasAttribute('tabindex')) {
         try { elmh.setAttribute('tabindex', '-1'); } catch (_err) { /* ignore */ }
       }
       try { elmh.focus(); } catch (_err) { /* focus failed */ }
-      speak(translate('heading_value', { value: lblmh.trim() || translate('unnamed') }));
-      console.log('[Navable] Action: move heading', cmd.dir);
-      return;
+      return speakFeedback({
+        status: 'success',
+        message: translate('heading_value', { value: lblmh.trim() || translate('unnamed') }),
+        details: { command: 'move', target: 'heading', direction: cmd.dir === 'prev' ? 'prev' : 'next' }
+      });
     }
-    if (cmd.type === 'repeat') { if (lastSpoken) speak(lastSpoken); return; }
+    if (cmd.type === 'repeat') {
+      if (lastSpoken) {
+        return speakFeedback({
+          status: 'success',
+          message: lastSpoken,
+          details: { command: 'repeat' }
+        });
+      }
+      return currentSpeechFeedback('failure', { command: 'repeat' }, translate('unknown_command'));
+    }
     if (cmd.type === 'stop') {
       requestChromeTtsStop();
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_err) { /* cancel failed */ }
-      return;
+      return rememberCommandFeedback({
+        status: 'success',
+        message: '',
+        details: { command: 'stop' }
+      });
     }
+    return currentSpeechFeedback('failure', { command: cmd.type || 'unknown' }, translate('unknown_command'));
   }
 
   async function runSummaryRequest(commandText, pageStructure) {
     var cmdText = normalizeCurrentContextIntentText((commandText && String(commandText).trim()) || 'Summarize this page');
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('summarizing_wait'),
+      details: {
+        command: 'summarize',
+        input: cmdText
+      }
+    });
     announce(translate('summarizing_wait'), {
       mode: 'assertive',
       lang: outputLocale(currentOutputLanguage())
     });
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      announce(translate('summarize_unavailable_page'), {
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('summarize_unavailable_page'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
-      return;
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5169,15 +6617,32 @@
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
       if (!res || res.ok !== true) {
-        announce((res && res.error) ? String(res.error) : translate('summarize_failed'), {
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('summarize_failed'),
+          details: {
+            command: 'summarize',
+            input: cmdText
+          }
+        }, {
           mode: 'assertive',
           lang: outputLocale(currentOutputLanguage())
         });
       }
-      // On success, the background will announce the summary via the live region.
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'summarize',
+        input: cmdText
+      });
     } catch (err) {
       console.warn('[Navable] summarize via planner failed', err);
-      announce(translate('summarize_request_failed'), {
+      return speakFeedback({
+        status: 'failure',
+        message: translate('summarize_request_failed'),
+        details: {
+          command: 'summarize',
+          input: cmdText
+        }
+      }, {
         mode: 'assertive',
         lang: outputLocale(currentOutputLanguage())
       });
@@ -5187,12 +6652,25 @@
   async function openSiteRequest(query, newTab) {
     var q = String(query || '').trim();
     if (!q) {
-      speak(translate('tell_website_to_open'));
-      return;
+      return speakFeedback({
+        status: 'clarification_needed',
+        message: translate('tell_website_to_open'),
+        details: {
+          command: 'open_site',
+          newTab: newTab !== false
+        }
+      });
     }
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      speak(translate('open_site_unavailable'));
-      return;
+      return speakFeedback({
+        status: 'blocked',
+        message: translate('open_site_unavailable'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
     try {
       var res = await chrome.runtime.sendMessage({
@@ -5202,24 +6680,57 @@
         outputLanguage: currentOutputLanguage()
       });
       if (!res || res.ok !== true) {
-        speak((res && res.error) ? String(res.error) : translate('open_site_failed'));
+        return speakFeedback({
+          status: 'failure',
+          message: (res && res.error) ? String(res.error) : translate('open_site_failed'),
+          details: {
+            command: 'open_site',
+            query: q,
+            newTab: newTab !== false
+          }
+        });
       }
+      return feedbackForResponse(res && res.feedback, 'loading', res && res.speech ? String(res.speech) : '', {
+        command: 'open_site',
+        query: q,
+        newTab: newTab !== false,
+        url: res && res.url ? res.url : ''
+      });
     } catch (err) {
       console.warn('[Navable] open site via background failed', err);
-      speak(translate('open_site_failed'));
+      return speakFeedback({
+        status: 'failure',
+        message: translate('open_site_failed'),
+        details: {
+          command: 'open_site',
+          query: q,
+          newTab: newTab !== false
+        }
+      });
     }
   }
 
   async function assistantRequest(questionText, pageStructure, turnContext) {
     var q = normalizeCurrentContextIntentText(questionText).trim();
-    if (!q) return false;
+    if (!q) return null;
     var context = turnContext || {};
     var sessionContext = buildLocalAssistantSessionContext();
     var purpose = assistantPurposeForText(q, sessionContext);
     var wantsPageContext = purpose === 'summary' || purpose === 'page';
     var structure = wantsPageContext ? (pageStructure || buildPageContextSnapshot()) : null;
+    var backgroundRequestError = '';
+    var backgroundRequestFailure = null;
+    var directRequestFailure = null;
 
     await ensureOutputLanguageReady();
+    rememberCommandFeedback({
+      status: 'loading',
+      message: translate('answering_question'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    });
     speakTransient(translate('answering_question'), 2500);
 
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
@@ -5249,19 +6760,29 @@
             detectedLanguage: context.detectedLanguage || '',
             recognitionProvider: context.recognitionProvider || ''
           });
-          speak(String(res.speech), { mode: 'assertive' });
-          return true;
+          return speakFeedback({
+            status: 'success',
+            message: String(res.speech),
+            details: {
+              command: 'assistant',
+              purpose: rememberedPurpose,
+              mode: res.mode || '',
+              source: 'background'
+            }
+          }, { mode: 'assertive' });
         }
         if (res && res.error) {
-          console.warn('[Navable] assistant background request returned error', res.error);
+          backgroundRequestError = String(res.error || '').trim();
         }
       } catch (err) {
-        console.warn('[Navable] assistant message request failed', err);
+        backgroundRequestFailure = err;
       }
     }
 
     try {
-      var directResponse = await window.fetch('http://localhost:3000/api/assistant', {
+      var directResponse = await window.fetch(window.NavableConfig
+        ? window.NavableConfig.buildApiUrl('/api/assistant')
+        : 'http://localhost:3000/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -5280,8 +6801,7 @@
         directData.action.type === 'open_site' &&
         directData.action.query
       ) {
-        await openSiteRequest(directData.action.query, directData.action.newTab !== false);
-        return true;
+        return openSiteRequest(directData.action.query, directData.action.newTab !== false);
       }
       if (directResponse.ok && directData && directData.speech) {
         if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
@@ -5299,23 +6819,52 @@
           detectedLanguage: context.detectedLanguage || '',
           recognitionProvider: context.recognitionProvider || ''
         });
-        speak(String(directData.speech), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'success',
+          message: String(directData.speech),
+          details: {
+            command: 'assistant',
+            purpose: directRememberedPurpose,
+            mode: directData.mode || '',
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
       if (directData && directData.error) {
-        speak(String(directData.error), { mode: 'assertive' });
-        return true;
+        return speakFeedback({
+          status: 'failure',
+          message: String(directData.error),
+          details: {
+            command: 'assistant',
+            purpose: purpose,
+            source: 'direct'
+          }
+        }, { mode: 'assertive' });
       }
     } catch (err2) {
-      console.warn('[Navable] assistant direct request failed', err2);
+      directRequestFailure = err2;
     }
 
-    speak(translate('answer_failed'), { mode: 'assertive' });
-    return true;
+    if (backgroundRequestError) {
+      console.warn('[Navable] assistant background request returned error', backgroundRequestError);
+    } else if (backgroundRequestFailure) {
+      console.warn('[Navable] assistant message request failed', backgroundRequestFailure);
+    }
+    if (directRequestFailure) {
+      console.warn('[Navable] assistant direct request failed', directRequestFailure);
+    }
+    return speakFeedback({
+      status: 'failure',
+      message: translate('answer_failed'),
+      details: {
+        command: 'assistant',
+        purpose: purpose
+      }
+    }, { mode: 'assertive' });
   }
 
   async function tryIntentFallback(commandText, pageStructure) {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return false;
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return null;
     try {
       var res = await chrome.runtime.sendMessage({
         type: 'planner:run',
@@ -5324,21 +6873,26 @@
         preferIntentFallback: true,
         pageStructure: pageStructure || buildPageContextSnapshot()
       });
-      return !!(res && res.ok === true && (
+      if (!(res && res.ok === true && (
         (res.plan && res.plan.steps && res.plan.steps.length) ||
         res.description ||
         res.summary
-      ));
+      ))) return null;
+      return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
+        command: 'intent_fallback',
+        input: commandText
+      });
     } catch (err) {
       console.warn('[Navable] intent fallback failed', err);
-      return false;
+      return null;
     }
   }
 
   async function handleTranscript(text, detectedLanguage, provider) {
-    if (!beginVoiceTurn()) return false;
+    if (!beginVoiceTurn()) return null;
     console.log('[Navable] Recognized:', text);
     try {
+      lastCommandFeedback = null;
       lastRecognitionResultAt = Date.now();
       maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
       setOutputLanguageFromTranscript(text, detectedLanguage);
@@ -5361,44 +6915,69 @@
           await languageReady;
           if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
           else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-          return true;
+          return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+            command: 'summarize',
+            formMode: true
+          });
         }
         if (cmd && isFormContextCommand(cmd)) {
           clearPendingDisambiguation();
-          await execCommand(cmd);
-          return true;
+          return execCommand(cmd);
         }
-        if (await tryHandleActiveFormUtterance(text)) return true;
+        if (await tryHandleActiveFormUtterance(text)) {
+          var activePending = getPendingFormConfirmation(formSession);
+          return feedbackForResponse(null, activePending ? 'clarification_needed' : 'success', lastSpoken, {
+            command: 'form_utterance'
+          });
+        }
         await languageReady;
         if (pendingFormConfirmation) promptPendingFormConfirmation(formSession);
         else speak(translate('form_mode_locked') + ' ' + describeFormField(formSession, currentFormField(formSession)));
-        return true;
+        return feedbackForResponse(null, pendingFormConfirmation ? 'clarification_needed' : 'blocked', lastSpoken, {
+          command: 'form_utterance'
+        });
       }
       if (cmd && cmd.type === 'summarize') {
         clearPendingDisambiguation();
-        await runSummaryRequest(cmd.command, pageStructure);
-        return true;
+        return runSummaryRequest(cmd.command, pageStructure);
       }
       if (cmd) {
         clearPendingDisambiguation();
-        await execCommand(cmd);
-        return true;
+        return execCommand(cmd);
       }
-      if (await tryPendingDisambiguationFollowUp(text)) return true;
-      if (await tryIntentFallback(text, pageStructure)) return true;
-      if (await assistantRequest(text, pageStructure, {
+      var disambiguationFeedback = await tryPendingDisambiguationFollowUp(text);
+      if (disambiguationFeedback) return disambiguationFeedback;
+      var intentFeedback = await tryIntentFallback(text, pageStructure);
+      if (intentFeedback) return intentFeedback;
+      var assistantFeedback = await assistantRequest(text, pageStructure, {
         detectedLanguage: detectedLanguage || '',
         recognitionProvider: provider || ''
-      })) return true;
+      });
+      if (assistantFeedback) return assistantFeedback;
       await languageReady;
-      await execCommand(null);
-      return true;
+      return execCommand(null);
     } finally {
       finishVoiceTurn({ delayMs: 900 });
     }
   }
 
   window.NavableTools.handleTranscript = handleTranscript;
+  window.NavableTools.toggleListening = toggleListening;
+  window.NavableTools.startListening = function (opts) {
+    manualListening = true;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.stopListening = function (opts) {
+    manualListening = false;
+    syncListening(opts || { announce: true });
+  };
+  window.NavableTools.getSpeechStatus = function () {
+    return {
+      ok: true,
+      supports: isVoiceSupported(),
+      listening: !!listening
+    };
+  };
 
   // Hotkey to toggle listening: Alt+Shift+M (prototype)
   document.addEventListener('keydown', function (e) {
@@ -5408,11 +6987,13 @@
 	  // Allow popup/background to toggle listening
 	  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
 	    chrome.runtime.onMessage.addListener((msg) => {
+	      if (!shouldHandleRuntimeMessage(msg)) return false;
 	      if (msg && msg.type === 'speech') {
 	        if (msg.action === 'toggle') toggleListening();
 	        if (msg.action === 'start') { manualListening = true; syncListening({ announce: true }); }
 	        if (msg.action === 'stop') { manualListening = false; syncListening({ announce: true }); }
 	      }
+	      return false;
 	    });
 	  }
 

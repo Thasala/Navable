@@ -26,6 +26,7 @@ const baseSpec = {
     { name: 'Health', description: 'Service status endpoints' },
     { name: 'Settings', description: 'Runtime backend settings' },
     { name: 'Assistant', description: 'Unified AI assistant endpoint' },
+    { name: 'Resolution', description: 'AI URL and destination resolution endpoints' },
     { name: 'Speech', description: 'Voice transcription endpoints' }
   ],
   paths: {
@@ -100,6 +101,48 @@ const baseSpec = {
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/Settings' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/resolve-site': {
+      post: {
+        tags: ['Resolution'],
+        summary: 'Resolve a spoken website name to an official URL',
+        description:
+          'Uses AI to map a spoken organization, service, or website name to the best-known official public homepage URL.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ResolveSiteRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Resolved destination',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ResolveSiteResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          500: {
+            description: 'Server error',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
               }
             }
           }
@@ -339,6 +382,39 @@ const baseSpec = {
             nullable: true,
             allOf: [{ $ref: '#/components/schemas/AssistantAction' }]
           }
+        }
+      },
+      ResolveSiteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['query'],
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Spoken or typed website, organization, or service name.'
+          },
+          outputLanguage: {
+            type: 'string',
+            description: 'Preferred language for any model-side interpretation.'
+          }
+        }
+      },
+      ResolveSiteResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['url', 'name', 'confidence', 'source'],
+        properties: {
+          url: {
+            type: 'string',
+            description: 'Official public homepage URL, or empty when not confidently resolved.'
+          },
+          name: { type: 'string' },
+          confidence: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1
+          },
+          source: { type: 'string', enum: ['ai', ''] }
         }
       },
       TranscribeRequest: {

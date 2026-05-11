@@ -85,7 +85,6 @@ test('summary output stays visible without stopping an active recognizer', async
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: true
         }
@@ -614,7 +613,6 @@ test('native recognizer rebuilds when speech switches languages', async ({ page 
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: true
         }
@@ -752,7 +750,6 @@ test('native fallback rotates to Arabic after recent English recognition gets no
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           autostart: true
         }
@@ -895,7 +892,6 @@ test('locked English mode keeps recognizer and output language in English', asyn
       cb({
         navable_settings: {
           aiEnabled: true,
-          aiMode: 'summary',
           language: 'en-US',
           languageMode: 'en',
           autostart: true
