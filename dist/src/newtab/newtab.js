@@ -642,10 +642,27 @@ function parseShortcutSettingsCommand(transcript) {
   return null;
 }
 
+function isNewtabPageGuidanceRequest(transcript) {
+  const s = String(transcript || '').trim().toLowerCase().replace(/[?!.,]+$/g, '');
+  if (!s) return false;
+  return (
+    /\b(summarize|summarise|summary|describe|explain)\s+(this|the|current)?\s*(page|screen|start page|new tab|navable)\b/.test(s) ||
+    /\bwhat(?:'s| is)\s+(this|the current)?\s*(page|screen|start page|new tab)\b/.test(s) ||
+    /\bwhat can i do\s+(here|on this page|on the start page|on navable)\b/.test(s) ||
+    /\b(help me here|guide me here|what should i do next|suggest next actions)\b/.test(s) ||
+    /\b(o[uù] suis[- ]?je|que puis[- ]je faire ici|aide[- ]?moi ici)\b/.test(s) ||
+    /(ماذا يمكنني أن أفعل هنا|ماذا يمكنني ان افعل هنا|شو بقدر اعمل هون|ايش بقدر اعمل هون|صف هذه الصفحة|لخص هذه الصفحة)/.test(s)
+  );
+}
+
 function parseVoiceCommand(transcript) {
   const t = String(transcript || '').trim();
   const low = t.toLowerCase();
   if (!low) return null;
+
+  if (isNewtabPageGuidanceRequest(t)) {
+    return { type: 'describe_start_page' };
+  }
 
   if (
     /^(help|commands|show commands|what can i say\??|what can you do\??|aide|montre les commandes|que puis-je dire\??)$/.test(low) ||
@@ -771,6 +788,7 @@ let newtabPausedForVisibility = false;
 let newtabTtsPlaybackInFlight = false;
 let newtabTtsPlaybackToken = 0;
 let newtabTtsPlaybackResumeTimer = null;
+let lastNewtabFeedbackMessage = '';
 
 function clearNewtabRecognizerRefreshTimer() {
   if (!newtabRecognizerRefreshTimer) return;
@@ -920,9 +938,49 @@ function refreshNewtabMicUi() {
 
 function setNewtabMicMessage(text, mode = 'polite') {
   const msg = String(text || '').trim();
+  if (msg) lastNewtabFeedbackMessage = msg;
   const { status } = getVoiceStatusEls();
   if (status) status.textContent = msg || (newtabWantsListening ? 'Listening…' : 'Not listening.');
   announce(msg, mode);
+}
+
+function buildNewtabActionSuggestions() {
+  return [
+    translate('newtab_suggestion_open_site'),
+    translate('newtab_suggestion_search'),
+    translate('newtab_suggestion_settings'),
+    translate('newtab_suggestion_shortcuts')
+  ].filter(Boolean);
+}
+
+function buildNewtabPageGuidanceMessage() {
+  const summary = translate('newtab_page_summary');
+  const suggestions = buildNewtabActionSuggestions();
+  return `${summary} ${translate('newtab_suggestions_intro')} ${suggestions.join(' ')}`.trim();
+}
+
+function respondWithNewtabPageGuidance(sendResponse, details = {}) {
+  const summary = translate('newtab_page_summary');
+  const suggestions = buildNewtabActionSuggestions();
+  const message = `${summary} ${translate('newtab_suggestions_intro')} ${suggestions.join(' ')}`.trim();
+  setNewtabMicMessage(message, 'assertive');
+  if (typeof sendResponse === 'function') {
+    sendResponse({
+      ok: true,
+      speech: message,
+      summary,
+      suggestions,
+      feedback: {
+        status: 'success',
+        message,
+        details: {
+          command: details.command || 'newtab_guidance',
+          source: 'newtab'
+        }
+      }
+    });
+  }
+  return message;
 }
 
 async function loadNewtabVoiceSettings() {
@@ -1334,6 +1392,19 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   return true;
 }
 
+async function describeNewtabPage() {
+  await ensureOutputLanguageReady();
+  const message = buildNewtabPageGuidanceMessage();
+  rememberNewtabAssistantTurn({
+    input: 'describe navable start page',
+    purpose: 'page',
+    speech: message,
+    outputLanguage: currentOutputLanguage()
+  });
+  setNewtabMicMessage(message, 'assertive');
+  return true;
+}
+
 async function handleNewtabTranscript(transcript, detectedLanguage, provider) {
   if (!beginNewtabVoiceTurn()) return false;
   try {
@@ -1355,6 +1426,11 @@ async function handleNewtabTranscript(transcript, detectedLanguage, provider) {
     if (cmd.type === 'help') {
       await languageReady;
       setNewtabMicMessage(translate('newtab_help_examples'), 'assertive');
+      return true;
+    }
+
+    if (cmd.type === 'describe_start_page') {
+      await describeNewtabPage();
       return true;
     }
 
@@ -1546,12 +1622,13 @@ function wireNewtabRuntimeMessages() {
       }
       handleNewtabTranscript(text, msg.detectedLanguage || '', 'typed')
         .then(() => {
+          const message = lastNewtabFeedbackMessage || 'The new tab handled the typed command.';
           sendResponse({
             ok: true,
-            speech: 'The new tab handled the typed command.',
+            speech: message,
             feedback: {
               status: 'success',
-              message: 'The new tab handled the typed command.'
+              message
             }
           });
         })
@@ -1561,7 +1638,17 @@ function wireNewtabRuntimeMessages() {
       return true;
     }
 
-    sendResponse({ ok: false, error: 'This command is not available on the Navable start page.' });
+    if (
+      msg.type === 'planner:run' ||
+      msg.type === 'navable:listHeadings' ||
+      msg.type === 'navable:listLinks' ||
+      msg.type === 'navable:readFocused'
+    ) {
+      respondWithNewtabPageGuidance(sendResponse, { command: msg.type });
+      return false;
+    }
+
+    respondWithNewtabPageGuidance(sendResponse, { command: 'unsupported_newtab_message' });
     return false;
   });
 }
@@ -1654,5 +1741,6 @@ document.addEventListener('DOMContentLoaded', wireNewtab);
 
 window.NavableNewtabTools = {
   handleTranscript: handleNewtabTranscript,
-  assistantQuestionFromVoice
+  assistantQuestionFromVoice,
+  buildPageGuidanceMessage: buildNewtabPageGuidanceMessage
 };

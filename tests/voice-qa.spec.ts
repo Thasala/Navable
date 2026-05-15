@@ -845,6 +845,99 @@ test('new tab spoken question retries directly without logging a background warn
   expect(warns.some((msg: string) => msg.includes('[Navable] newtab assistant background request returned error'))).toBe(false);
 });
 
+test('new tab describes itself with doable next actions instead of blocking page commands', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="btnMicToggle" type="button">Start listening</button>
+      <div id="micStatus">Not listening.</div>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    window.fetch = async () => {
+      throw new Error('start page guidance should stay local');
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/newtab/newtab.js' });
+
+  await page.waitForFunction(() => (window as any).NavableNewtabTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableNewtabTools.handleTranscript('summarize this page', 'en');
+  });
+
+  await expect(page.locator('#micStatus')).toContainText('Navable start page');
+  await expect(page.locator('#micStatus')).toContainText('Available next actions');
+  await expect(page.locator('#micStatus')).toContainText('Open YouTube');
+  await expect(page.locator('#micStatus')).toContainText('Open settings');
+  await expect(page.locator('#micStatus')).toContainText('Open keyboard shortcuts');
+  await expect(page.locator('#micStatus')).not.toContainText('not available on the Navable start page');
+});
+
+test('new tab runtime fallback returns guidance for unsupported page-tool messages', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="btnMicToggle" type="button">Start listening</button>
+      <div id="micStatus">Not listening.</div>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const listeners: any[] = [];
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        onMessage: {
+          addListener(fn: any) {
+            listeners.push(fn);
+          }
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({
+              navable_settings: {
+                language: 'en-US',
+                languageMode: 'auto',
+                outputMode: 'screen_reader'
+              }
+            });
+          }
+        },
+        onChanged: { addListener() {} }
+      }
+    };
+    // @ts-ignore
+    window.__newtabListeners = listeners;
+  });
+
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/newtab/newtab.js' });
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+  });
+  await page.waitForFunction(() => (window as any).__newtabListeners?.length > 0);
+
+  const response = await page.evaluate(async () => {
+    // @ts-ignore
+    const listener = window.__newtabListeners[0];
+    return await new Promise((resolve) => {
+      listener({ target: 'navable:newtab', type: 'navable:listHeadings' }, {}, resolve);
+    });
+  });
+
+  expect(response).toMatchObject({ ok: true });
+  expect(String((response as any).speech)).toContain('Navable start page');
+  expect(String((response as any).speech)).toContain('Open settings');
+  expect(String((response as any).speech)).not.toContain('not available on the Navable start page');
+});
+
 test('new tab spoken browser forward command is handled before assistant fallback', async ({ page }) => {
   await page.setContent(`
     <main>
