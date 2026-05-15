@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   isClarifyingAnswerText,
+  isFollowUpIntentText,
   resolveAnswerQuestionWithSessionContext
 } from '../backend/src/assistant-session.js';
 
@@ -32,4 +33,10 @@ test('pronoun questions reuse the prior entity', async () => {
 test('clarifying follow-up answers are detected for retry', async () => {
   expect(isClarifyingAnswerText('Could you please specify the topic you want to know more about?')).toBe(true);
   expect(isClarifyingAnswerText('The moon affects tides on Earth.')).toBe(false);
+});
+
+test('affirmative page continuations are treated as follow-ups', async () => {
+  expect(isFollowUpIntentText('ok go ahead and read them')).toBe(true);
+  expect(isFollowUpIntentText("ok let's create a post")).toBe(true);
+  expect(isFollowUpIntentText('yes click that')).toBe(true);
 });

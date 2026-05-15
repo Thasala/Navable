@@ -42,6 +42,58 @@ test('runPlanner executes steps on the sender tab when provided', async ({ page 
   expect(result.calls[0].payload.type).toBe('navable:executePlan');
 });
 
+test('runPlanner resolves page-local follow-up actions from visible controls', async ({ page }) => {
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  const result = await page.evaluate(async () => {
+    const calls: Array<{ tabId: number; payload: any }> = [];
+
+    // @ts-ignore
+    window.chrome.tabs.query = async () => [{ id: 7 }];
+    // @ts-ignore
+    window.chrome.tabs.sendMessage = async (tabId: number, payload: any) => {
+      calls.push({ tabId, payload });
+      return { ok: true };
+    };
+
+    const pageStructure = {
+      title: 'Facebook',
+      url: 'https://www.facebook.com/',
+      counts: { headings: 1, links: 0, buttons: 2, inputs: 0 },
+      headings: [{ label: 'Facebook' }],
+      links: [],
+      buttons: [
+        { label: 'Notifications', tag: 'button' },
+        { label: "What's on your mind, Sam?", tag: 'button' }
+      ],
+      inputs: [],
+      excerpt: 'Notifications. What is on your mind, Sam?'
+    };
+
+    const readResponse = await (window as any).runPlanner('read notifications', 'en', true, {
+      sourceTabId: 42,
+      pageStructure
+    });
+    const postResponse = await (window as any).runPlanner('create a post', 'en', true, {
+      sourceTabId: 42,
+      pageStructure
+    });
+
+    return { readResponse, postResponse, calls };
+  });
+
+  expect(result.readResponse.ok).toBe(true);
+  expect(result.readResponse.plan.steps).toEqual([
+    { action: 'focus_element', target: 'button', label: 'Notifications' },
+    { action: 'read_focused' }
+  ]);
+  expect(result.postResponse.ok).toBe(true);
+  expect(result.postResponse.plan.steps).toEqual([
+    { action: 'click_element', target: 'button', label: "What's on your mind, Sam?" }
+  ]);
+  expect(result.calls).toHaveLength(2);
+});
+
 test('page-context assistant runtime requests execute plans on the sender tab without re-querying the active tab', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 
@@ -495,4 +547,107 @@ test('content assistant treats current-page answer requests as page context', as
   expect(captured[1].pageContext).toBe(true);
   expect(captured[1].pageStructure.title).toBe('Quiz');
   expect(String(captured[1].pageStructure.excerpt || '')).toContain("Development of James Watt's steam engine in 1763.");
+});
+
+test('content resolves affirmative page follow-ups against current page context', async ({ page }) => {
+  await page.setContent(`
+    <html>
+      <head>
+        <title>Facebook</title>
+      </head>
+      <body>
+        <main>
+          <h1>Facebook</h1>
+          <button>Notifications</button>
+          <button>What's on your mind, Sam?</button>
+        </main>
+      </body>
+    </html>
+  `);
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+
+  await page.evaluate(() => {
+    const messages: any[] = [];
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: async (payload: any) => {
+          messages.push(payload);
+          if (payload.type === 'planner:run') {
+            return { ok: false, unhandled: true };
+          }
+          if (payload.type === 'navable:assistant' && payload.input === 'help me here') {
+            return {
+              ok: true,
+              mode: 'page',
+              speech: 'This Facebook page includes notifications. I can read your notifications.',
+              summary: 'This Facebook page includes notifications.',
+              answer: '',
+              suggestions: [],
+              plan: { steps: [] }
+            };
+          }
+          if (payload.type === 'navable:assistant' && payload.input === 'read notifications') {
+            return {
+              ok: true,
+              mode: 'page',
+              speech: 'Notifications is the visible notification control.',
+              summary: 'Notifications is the visible notification control.',
+              answer: '',
+              suggestions: [],
+              plan: { steps: [] }
+            };
+          }
+          throw new Error(`Unexpected message: ${JSON.stringify(payload)}`);
+        },
+        onMessage: {
+          addListener() {}
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US', autostart: false, overlay: false } });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+    // @ts-ignore
+    window.__capturedMessages = messages;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: () => ({
+        start() {},
+        stop() {},
+        on() { return this; }
+      })
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/content.js' });
+  await page.waitForFunction(() => (window as any).NavableTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('help me here', 'en', 'native');
+    // @ts-ignore
+    await (window as any).NavableTools.handleTranscript('ok go ahead and read them', 'en', 'native');
+  });
+
+  const captured = await page.evaluate(() => {
+    // @ts-ignore
+    return window.__capturedMessages;
+  });
+
+  expect(captured[0]).toMatchObject({ type: 'planner:run', command: 'help me here' });
+  expect(captured[1]).toMatchObject({ type: 'navable:assistant', input: 'help me here', purpose: 'page', pageContext: true });
+  expect(captured[2]).toMatchObject({ type: 'planner:run', command: 'read notifications' });
+  expect(captured[3]).toMatchObject({ type: 'navable:assistant', input: 'read notifications', purpose: 'page', pageContext: true });
+  expect(captured[3].pageStructure.title).toBe('Facebook');
 });

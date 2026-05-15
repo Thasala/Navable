@@ -702,8 +702,9 @@ async function tryExecutePlan(plan) {
 
 const INTENT_STOPWORDS = new Set([
   'a', 'an', 'the', 'me', 'to', 'for', 'please', 'can', 'could', 'would', 'you',
+  'ok', 'okay', 'yes', 'yeah', 'yep', 'sure', 'alright', 'let', 'lets', 's',
   'show', 'take', 'bring', 'go', 'move', 'open', 'visit', 'launch', 'scroll', 'read',
-  'tell', 'what', 'is', 'my', 'current', 'this', 'that', 'of', 'on', 'in', 'at',
+  'tell', 'what', 'is', 'my', 'current', 'this', 'that', 'those', 'it', 'them', 'of', 'on', 'in', 'at',
   'page', 'section', 'heading', 'link', 'button', 'item', 'tab', 'website', 'site',
   'le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'moi', 'mon', 'ma', 'mes', 'sur',
   'ici', 'cette', 'ce', 'cet', 'dans', 'pour', 'que', 'quoi', 'ou', 'où', 'vas', 'va',
@@ -732,11 +733,33 @@ const BUTTON_LIKE_INTENT_TOKENS = ['button', 'submit', 'continue', 'confirm', 's
 const LINK_LIKE_INTENT_TOKENS = ['link', 'pricing', 'docs', 'documentation', 'login', 'signin'];
 const HEADING_LIKE_INTENT_TOKENS = ['heading', 'section', 'title', 'part'];
 
+function pushUniqueIntentToken(tokens, token) {
+  const value = String(token || '').trim().toLowerCase();
+  if (value && tokens.indexOf(value) < 0) tokens.push(value);
+}
+
+function expandIntentTokensForPageAction(normalized, tokens) {
+  const expanded = tokens.slice();
+  if (/\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(normalized)) {
+    ['post', 'status', 'composer', 'mind', 'share'].forEach((token) => pushUniqueIntentToken(expanded, token));
+  }
+  if (/\bnotifications?\b|\balerts?\b|\bbell\b/.test(normalized)) {
+    ['notifications', 'notification', 'alerts', 'bell'].forEach((token) => pushUniqueIntentToken(expanded, token));
+  }
+  return expanded;
+}
+
 function hasAnyIntentToken(tokens, candidates) {
   return tokens.some((token) => candidates.includes(token));
 }
 
 function inferIntentTargetTypes(normalized, tokens) {
+  if (/\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(normalized)) {
+    return ['button', 'input', 'link', 'heading'];
+  }
+  if (/\bnotifications?\b|\balerts?\b|\bbell\b/.test(normalized)) {
+    return ['button', 'link', 'heading', 'input'];
+  }
   if (hasAnyIntentToken(tokens, FIELD_LIKE_INTENT_TOKENS) || /\b(field|input|box|search|champ)\b|حقل|بحث|ابحث|دو[ّو]?ر/.test(normalized)) {
     return ['input', 'button', 'link', 'heading'];
   }
@@ -810,7 +833,7 @@ function collectIntentCandidates(structure, targetTypes) {
 
 function chooseIntentTarget(text, structure) {
   const normalized = String(text || '').toLowerCase();
-  const tokens = tokenizeIntentText(normalized);
+  const tokens = expandIntentTokensForPageAction(normalized, tokenizeIntentText(normalized));
   if (!tokens.length || !structure) return null;
 
   const targetTypes = inferIntentTargetTypes(normalized, tokens);
@@ -829,6 +852,7 @@ function isTargetSelectionIntent(text) {
   if (!normalized) return false;
   return hasIntent(normalized, [
     /\bopen\b/, /\bgo to\b/, /\btake me to\b/, /\bbring me to\b/, /\bshow me\b/,
+    /\bread\b/, /\bcreate\b/, /\bcompose\b/, /\bwrite\b/, /\bstart\b/, /\bmake\b/,
     /\bfocus\b/, /\bclick\b/, /\bpress\b/, /\bactivate\b/, /\bvisit\b/, /\blaunch\b/,
     /\bouvre\b/, /\bva(?:s)?\s+à\b/, /\bva(?:s)?\s+a\b/, /\bmontre(?:-moi)?\b/,
     /\bclique\b/, /\bactive\b/, /\bvisite\b/, /\blance\b/,
@@ -936,7 +960,16 @@ function stubPlanner(command, structure, outputLanguage, preferIntentFallback) {
     const target = isTargetSelectionIntent(text) ? chooseIntentTarget(text, structure) : null;
     if (target) {
       matched = true;
-      if (target.target === 'heading') {
+      if (/\bread\b|\bshow\b|\btell\b/.test(text)) {
+        steps.push({ action: 'focus_element', target: target.target, label: target.label });
+        steps.push({ action: 'read_focused' });
+      } else if (/\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(text)) {
+        if (target.target === 'input') {
+          steps.push({ action: 'focus_element', target: 'input', label: target.label });
+        } else {
+          steps.push({ action: 'click_element', target: target.target, label: target.label });
+        }
+      } else if (target.target === 'heading') {
         steps.push({ action: 'focus_element', target: 'heading', label: target.label });
       } else if (/\bfocus\b/.test(text)) {
         steps.push({ action: 'focus_element', target: target.target, label: target.label });
@@ -1011,14 +1044,70 @@ function isPageAssistantRequestText(text) {
   );
 }
 
+function isPageLocalActionRequestText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(t) ||
+    /\b(read|show|open|click|press|activate)\b.*\b(notifications?|alerts?|messages?|inbox)\b/.test(t)
+  );
+}
+
 function isSessionFollowUpText(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return false;
   return (
     /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+    /^(ok|okay|yes|yeah|yep|sure|alright|please)?\s*(go ahead|proceed|do it|do that|read it|read them|read those|open it|open that|click it|click that|show it|show them|show that)\b/.test(t) ||
+    /^(ok|okay|yes|yeah|yep|sure|alright)\s+(read|open|click|show|start|create|compose|write)\b/.test(t) ||
+    /^(?:(?:ok|okay|yes|yeah|yep|sure|alright)\s+)?(let'?s|lets)\s+(do it|do that|start|create|compose|write|read|open|click)\b/.test(t) ||
     /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+    /^(oui|ok|d accord|vas[- ]?y|allez|continue)\s+(lis|ouvre|clique|montre|commence|cree|crée|compose|ecris|écris)?\b/.test(t) ||
     /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
   );
+}
+
+function sessionContinuityHaystack(session) {
+  if (!session) return '';
+  return [
+    session.lastInput,
+    session.lastAssistantSpeech,
+    session.lastAnswer,
+    session.lastSummary,
+    session.lastAction,
+    session.lastPage && session.lastPage.summary,
+    session.lastPage && session.lastPage.title,
+    session.lastPage && session.lastPage.topHeading
+  ].map((value) => String(value || '')).join(' ').toLowerCase();
+}
+
+function inferPageFollowUpSubject(text, session) {
+  const combined = `${String(text || '')} ${sessionContinuityHaystack(session)}`.toLowerCase();
+  if (/\bnotifications?\b|\balerts?\b|\bbell\b/.test(combined)) return 'notifications';
+  if (/\bpost\b|\bstatus\b|\bcomposer\b|what'?s on your mind|\bshare\b/.test(combined)) return 'post';
+  if (/\bmessages?\b|\bchats?\b|\binbox\b/.test(combined)) return 'messages';
+  if (/\blinks?\b/.test(combined)) return 'links';
+  if (/\bheadings?\b|\bsections?\b/.test(combined)) return 'headings';
+  return '';
+}
+
+function resolvePageContinuationInput(text, session) {
+  const raw = String(text || '').trim();
+  if (!raw || !isSessionFollowUpText(raw)) return raw;
+  const t = raw.toLowerCase();
+  const subject = inferPageFollowUpSubject(t, session);
+  const haystack = sessionContinuityHaystack(session);
+  const wantsCreatePost =
+    /\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(t) ||
+    (subject === 'post' && /\b(go ahead|proceed|do it|do that|start|create|compose|write)\b/.test(t));
+  if (wantsCreatePost) return 'create post';
+  if (/\b(read|show|tell)\b/.test(t) || (/\b(go ahead|proceed|do it|do that)\b/.test(t) && /\bread\b/.test(haystack))) {
+    if (subject === 'links') return 'list links';
+    if (subject === 'headings') return 'list headings';
+    if (subject) return `read ${subject}`;
+  }
+  if (/\b(open|click|press|activate)\b/.test(t) && subject) return `open ${subject}`;
+  return raw;
 }
 
 function trimSessionText(text, maxLen = 240) {
@@ -1381,6 +1470,7 @@ function assistantPurposeForText(text, includePageContext, explicitPurpose, sess
   if (rawPurpose === 'answer' && !isPageAssistantRequestText(text)) return rawPurpose;
   if (isSummaryCommandText(text)) return 'summary';
   if (isPageAssistantRequestText(text)) return 'page';
+  if (isPageLocalActionRequestText(text)) return 'page';
   if (isSessionFollowUpText(text)) {
     const priorPurpose = session && session.lastPurpose ? String(session.lastPurpose).trim().toLowerCase() : '';
     if (priorPurpose === 'summary' || priorPurpose === 'page') return 'page';
@@ -1624,7 +1714,12 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     await clearAssistantSession(sourceTabId);
     previousSession = null;
   }
-  const purpose = assistantPurposeForText(text, !!options.includePageContext, options.purpose, previousSession);
+  const assistantInput = resolvePageContinuationInput(text, previousSession);
+  const priorPurpose = previousSession && previousSession.lastPurpose ? String(previousSession.lastPurpose).trim().toLowerCase() : '';
+  const continuationFromPage = isSessionFollowUpText(text) && (priorPurpose === 'page' || priorPurpose === 'summary');
+  const purpose = continuationFromPage
+    ? 'page'
+    : assistantPurposeForText(assistantInput, !!options.includePageContext, options.purpose, previousSession);
   const shouldIncludePageContext = purpose === 'summary' || purpose === 'page';
   const sessionContext = await buildSessionContext(sourceTabId);
 
@@ -1633,7 +1728,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     return { ok: false, error: outputMessage('answer_unavailable', outputLanguage) };
   }
 
-  const directHistoryDirection = parseAssistantBrowserHistoryCommand(text);
+  const directHistoryDirection = parseAssistantBrowserHistoryCommand(assistantInput);
   if (directHistoryDirection) {
     const historyResult = await navigateBrowserHistory(directHistoryDirection, { sourceTabId });
     if (!historyResult.ok) {
@@ -1641,7 +1736,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     }
 
     await rememberAssistantTurn(sourceTabId, {
-      input: text,
+      input: assistantInput,
       purpose: 'answer',
       outputLanguage,
       speech: historyResult.speech || '',
@@ -1664,13 +1759,13 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     };
   }
 
-  if (parseAssistantShortcutsCommand(text)) {
+  if (parseAssistantShortcutsCommand(assistantInput)) {
     const shortcutsResult = await openChromeShortcutsPage(outputLanguage);
     if (!shortcutsResult.ok) {
       return { ok: false, error: shortcutsResult.error || 'Could not open keyboard shortcuts.', feedback: shortcutsResult.feedback };
     }
     await rememberAssistantTurn(sourceTabId, {
-      input: text,
+      input: assistantInput,
       purpose: 'answer',
       outputLanguage,
       speech: shortcutsResult.speech || '',
@@ -1692,7 +1787,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     };
   }
 
-  const directOpenQuery = extractAssistantOpenSiteQuery(text);
+  const directOpenQuery = purpose === 'page' ? null : extractAssistantOpenSiteQuery(assistantInput);
   if (directOpenQuery) {
     const action = { type: 'open_site', query: directOpenQuery, newTab: true };
     const openResult = await openSiteInBrowser(directOpenQuery, true, outputLanguage, {
@@ -1705,7 +1800,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     }
 
     await rememberAssistantTurn(sourceTabId, {
-      input: text,
+      input: assistantInput,
       purpose: 'answer',
       outputLanguage,
       speech: openResult.speech || '',
@@ -1744,7 +1839,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        input: text,
+        input: assistantInput,
         outputLanguage,
         pageStructure: structure,
         purpose,
@@ -1767,7 +1862,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
 
         const actionSpeech = openResult.speech || normalized.speech || '';
         await rememberAssistantTurn(sourceTabId, {
-          input: text,
+          input: assistantInput,
           purpose: 'answer',
           outputLanguage,
           speech: actionSpeech,
@@ -1792,7 +1887,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
       }
 
       await rememberAssistantTurn(sourceTabId, {
-        input: text,
+        input: assistantInput,
         purpose,
         outputLanguage,
         structure,

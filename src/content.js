@@ -4773,14 +4773,69 @@
     );
   }
 
+  function isPageLocalActionRequestText(text) {
+    var t = String(text || '').trim().toLowerCase();
+    if (!t) return false;
+    return (
+      /\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(t) ||
+      /\b(read|show|open|click|press|activate)\b.*\b(notifications?|alerts?|messages?|inbox)\b/.test(t)
+    );
+  }
+
   function isSessionFollowUpText(text) {
     var t = String(text || '').trim().toLowerCase();
     if (!t) return false;
     return (
       /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+      /^(ok|okay|yes|yeah|yep|sure|alright|please)?\s*(go ahead|proceed|do it|do that|read it|read them|read those|open it|open that|click it|click that|show it|show them|show that)\b/.test(t) ||
+      /^(ok|okay|yes|yeah|yep|sure|alright)\s+(read|open|click|show|start|create|compose|write)\b/.test(t) ||
+      /^(?:(?:ok|okay|yes|yeah|yep|sure|alright)\s+)?(let'?s|lets)\s+(do it|do that|start|create|compose|write|read|open|click)\b/.test(t) ||
       /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+      /^(oui|ok|d accord|vas[- ]?y|allez|continue)\s+(lis|ouvre|clique|montre|commence|cree|crée|compose|ecris|écris)?\b/.test(t) ||
       /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
     );
+  }
+
+  function sessionContinuityHaystack(session) {
+    if (!session) return '';
+    return [
+      session.lastUserUtterance,
+      session.lastAssistantReply,
+      session.lastAnswer,
+      session.lastAction,
+      session.lastPage && session.lastPage.summary,
+      session.lastPage && session.lastPage.title,
+      session.lastPage && session.lastPage.topHeading
+    ].map(function (value) { return String(value || ''); }).join(' ').toLowerCase();
+  }
+
+  function inferPageFollowUpSubject(text, session) {
+    var combined = (String(text || '') + ' ' + sessionContinuityHaystack(session)).toLowerCase();
+    if (/\bnotifications?\b|\balerts?\b|\bbell\b/.test(combined)) return 'notifications';
+    if (/\bpost\b|\bstatus\b|\bcomposer\b|what'?s on your mind|\bshare\b/.test(combined)) return 'post';
+    if (/\bmessages?\b|\bchats?\b|\binbox\b/.test(combined)) return 'messages';
+    if (/\blinks?\b/.test(combined)) return 'links';
+    if (/\bheadings?\b|\bsections?\b/.test(combined)) return 'headings';
+    return '';
+  }
+
+  function resolvePageContinuationInput(text, session) {
+    var raw = String(text || '').trim();
+    if (!raw || !isSessionFollowUpText(raw)) return raw;
+    var t = raw.toLowerCase();
+    var subject = inferPageFollowUpSubject(t, session);
+    var haystack = sessionContinuityHaystack(session);
+    var wantsCreatePost =
+      /\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(t) ||
+      (subject === 'post' && /\b(go ahead|proceed|do it|do that|start|create|compose|write)\b/.test(t));
+    if (wantsCreatePost) return 'create post';
+    if (/\b(read|show|tell)\b/.test(t) || (/\b(go ahead|proceed|do it|do that)\b/.test(t) && /\bread\b/.test(haystack))) {
+      if (subject === 'links') return 'list links';
+      if (subject === 'headings') return 'list headings';
+      if (subject) return 'read ' + subject;
+    }
+    if (/\b(open|click|press|activate)\b/.test(t) && subject) return 'open ' + subject;
+    return raw;
   }
 
   var localAssistantSession = null;
@@ -4992,6 +5047,7 @@
   function assistantPurposeForText(text, sessionContext) {
     if (isSummaryCommandText(text)) return 'summary';
     if (isPageAssistantQuestionText(text)) return 'page';
+    if (isPageLocalActionRequestText(text)) return 'page';
     if (isSessionFollowUpText(text)) {
       var priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
       if (priorPurpose === 'summary' || priorPurpose === 'page') return 'page';
@@ -6729,7 +6785,10 @@
     if (!q) return null;
     var context = turnContext || {};
     var sessionContext = buildLocalAssistantSessionContext();
-    var purpose = assistantPurposeForText(q, sessionContext);
+    var assistantInput = resolvePageContinuationInput(q, sessionContext);
+    var priorPurpose = sessionContext && sessionContext.lastPurpose ? String(sessionContext.lastPurpose).trim().toLowerCase() : '';
+    var continuationFromPage = isSessionFollowUpText(q) && (priorPurpose === 'page' || priorPurpose === 'summary');
+    var purpose = continuationFromPage ? 'page' : assistantPurposeForText(assistantInput, sessionContext);
     var wantsPageContext = purpose === 'summary' || purpose === 'page';
     var structure = wantsPageContext ? (pageStructure || buildPageContextSnapshot()) : null;
     var backgroundRequestError = '';
@@ -6751,7 +6810,7 @@
       try {
         var res = await chrome.runtime.sendMessage({
           type: 'navable:assistant',
-          input: q,
+          input: assistantInput,
           outputLanguage: currentOutputLanguage(),
           purpose: purpose,
           pageContext: wantsPageContext,
@@ -6764,7 +6823,7 @@
         if (res && res.ok === true && res.speech) {
           var rememberedPurpose = purpose === 'auto' ? (res.mode === 'page' ? 'page' : 'answer') : purpose;
           rememberLocalAssistantTurn({
-            input: q,
+            input: assistantInput,
             purpose: rememberedPurpose,
             structure: structure,
             speech: res.speech,
@@ -6800,7 +6859,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          input: q,
+          input: assistantInput,
           outputLanguage: currentOutputLanguage(),
           pageStructure: structure,
           purpose: purpose,
@@ -6823,7 +6882,7 @@
         }
         var directRememberedPurpose = purpose === 'auto' ? (directData.mode === 'page' ? 'page' : 'answer') : purpose;
         rememberLocalAssistantTurn({
-          input: q,
+          input: assistantInput,
           purpose: directRememberedPurpose,
           structure: structure,
           speech: directData.speech,
@@ -6880,9 +6939,11 @@
   async function tryIntentFallback(commandText, pageStructure) {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return null;
     try {
+      var sessionContext = buildLocalAssistantSessionContext();
+      var fallbackCommand = resolvePageContinuationInput(commandText, sessionContext);
       var res = await chrome.runtime.sendMessage({
         type: 'planner:run',
-        command: commandText,
+        command: fallbackCommand,
         outputLanguage: currentOutputLanguage(),
         preferIntentFallback: true,
         pageStructure: pageStructure || buildPageContextSnapshot()
@@ -6894,7 +6955,7 @@
       ))) return null;
       return feedbackForResponse(res && res.feedback, 'success', (res && (res.description || res.summary || res.speech)) || '', {
         command: 'intent_fallback',
-        input: commandText
+        input: fallbackCommand
       });
     } catch (err) {
       console.warn('[Navable] intent fallback failed', err);
