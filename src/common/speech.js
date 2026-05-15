@@ -663,7 +663,8 @@
   function createRecognizer(options) {
     options = options || {};
     var emitter = createEmitter();
-    var nativeRecognizer = supportsNativeRecognition() ? createNativeRecognizer(options) : null;
+    var allowNativeFallback = options.nativeFallback !== false;
+    var nativeRecognizer = allowNativeFallback && supportsNativeRecognition() ? createNativeRecognizer(options) : null;
     var backendRecognizer = supportsBackendRecognition() && options.preferBackend !== false
       ? createBackendRecognizer(options)
       : null;

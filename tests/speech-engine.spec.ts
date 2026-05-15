@@ -267,6 +267,94 @@ test('speech engine falls back to native recognition when backend is unavailable
   expect(result).toEqual({ transcript: 'open youtube', provider: 'native' });
 });
 
+test('speech engine can disable native fallback for extension offscreen capture', async ({ page }) => {
+  await page.setContent('<main>Offscreen speech fallback test</main>');
+
+  await page.evaluate(() => {
+    class FakeAudioContext {
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createAnalyser() {
+        return {
+          fftSize: 2048,
+          smoothingTimeConstant: 0.1,
+          connect() {},
+          disconnect() {},
+          getByteTimeDomainData() {}
+        };
+      }
+      resume() {
+        return Promise.resolve();
+      }
+      close() {
+        return Promise.resolve();
+      }
+    }
+
+    class FakeMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      start() {}
+      stop() {}
+    }
+
+    class FakeRecognition {
+      start() {
+        // @ts-ignore
+        window.__nativeStarts = ((window.__nativeStarts as number | undefined) || 0) + 1;
+      }
+      stop() {}
+    }
+
+    // @ts-ignore
+    window.__nativeStarts = 0;
+    // @ts-ignore
+    window.__NavableSpeechEnv = {
+      fetch: async () =>
+        new Response(JSON.stringify({ error: 'offline' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        }),
+      mediaDevices: {
+        getUserMedia() {
+          return Promise.resolve({
+            getTracks() {
+              return [{ stop() {} }];
+            }
+          });
+        }
+      },
+      AudioContext: FakeAudioContext,
+      MediaRecorder: FakeMediaRecorder,
+      SpeechRecognition: FakeRecognition
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+
+  const result = await page.evaluate(async () => {
+    // @ts-ignore
+    const recognizer = window.NavableSpeech.createRecognizer({
+      checkIntervalMs: 10,
+      nativeFallback: false
+    });
+    const outcome = await new Promise((resolve) => {
+      recognizer.on('result', (ev: any) => resolve({ transcript: ev.transcript, provider: ev.provider }));
+      recognizer.on('error', (ev: any) => resolve({ error: ev.error, provider: ev.provider }));
+      recognizer.start();
+    });
+    // @ts-ignore
+    return { outcome, nativeStarts: window.__nativeStarts };
+  });
+
+  expect(result).toEqual({
+    outcome: { error: 'backend-unavailable', provider: 'backend' },
+    nativeStarts: 0
+  });
+});
+
 test('speech engine falls back to native recognition when backend returns no speech', async ({ page }) => {
   await page.setContent('<main>Speech fallback test</main>');
 

@@ -5,6 +5,7 @@ test('background creates a USER_MEDIA offscreen document and relays speech event
 
   const result = await page.evaluate(async () => {
     const createdDocuments: any[] = [];
+    const createdTabs: any[] = [];
     const offscreenMessages: any[] = [];
     const relayedMessages: any[] = [];
 
@@ -24,6 +25,11 @@ test('background creates a USER_MEDIA offscreen document and relays speech event
     window.chrome.tabs.sendMessage = async (tabId: number, payload: any) => {
       relayedMessages.push({ tabId, payload });
       return { ok: true };
+    };
+    // @ts-ignore
+    window.chrome.tabs.create = async (payload: any) => {
+      createdTabs.push(payload);
+      return { id: 99 };
     };
     // @ts-ignore
     window.chrome.runtime._listeners.push((msg: any, _sender: any, sendResponse: (res: any) => void) => {
@@ -65,7 +71,19 @@ test('background creates a USER_MEDIA offscreen document and relays speech event
       }
     });
 
-    return { createdDocuments, offscreenMessages, relayedMessages, startResponse, relayResponse };
+    const micSetupResponse = await new Promise((resolve, reject) => {
+      try {
+        backgroundListener(
+          { type: 'navable:openMicrophoneSetup', reason: 'not-allowed' },
+          { tab: { id: 42 } },
+          resolve
+        );
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    return { createdDocuments, createdTabs, offscreenMessages, relayedMessages, startResponse, relayResponse, micSetupResponse };
   });
 
   expect(result.startResponse).toMatchObject({ ok: true });
@@ -80,6 +98,9 @@ test('background creates a USER_MEDIA offscreen document and relays speech event
     lang: 'en-US'
   });
   expect(result.relayResponse).toMatchObject({ ok: true });
+  expect(result.micSetupResponse).toMatchObject({ ok: true });
+  expect(result.createdTabs[0].url).toContain('/src/permissions/microphone.html');
+  expect(result.createdTabs[0].url).toContain('reason=not-allowed');
   expect(result.relayedMessages).toEqual([
     {
       tabId: 42,
@@ -164,6 +185,92 @@ test('content pages start extension-origin voice capture instead of page getUser
   expect(messages.find((msg: any) => msg.type === 'navable:voiceStart')).toMatchObject({
     type: 'navable:voiceStart',
     lang: 'en-US'
+  });
+});
+
+test('content opens microphone setup when extension mic permission is blocked', async ({ page }) => {
+  await page.evaluate(() => {
+    const listeners: any[] = [];
+    const messages: any[] = [];
+
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        id: 'test-extension',
+        getURL(path: string) {
+          return `chrome-extension://test-extension/${path || ''}`;
+        },
+        sendMessage(payload: any, cb?: (res: any) => void) {
+          messages.push(payload);
+          const response = payload?.type === 'navable:voiceStart' ||
+            payload?.type === 'navable:voiceStop' ||
+            payload?.type === 'navable:openMicrophoneSetup'
+            ? { ok: true }
+            : { ok: false };
+          if (typeof cb === 'function') cb(response);
+          return undefined;
+        },
+        onMessage: {
+          addListener(fn: any) {
+            listeners.push(fn);
+          },
+          removeListener(fn: any) {
+            const index = listeners.indexOf(fn);
+            if (index >= 0) listeners.splice(index, 1);
+          }
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US', autostart: false, overlay: false } });
+          }
+        },
+        onChanged: { addListener() {} }
+      }
+    };
+
+    // @ts-ignore
+    window.__voiceMessages = messages;
+    // @ts-ignore
+    window.__voiceListeners = listeners;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => false,
+      createRecognizer: () => {
+        throw new Error('content page mic capture should not be used');
+      }
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/config.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+  await page.waitForFunction(() => (window as any).NavableTools?.getSpeechStatus);
+
+  const messages = await page.evaluate(async () => {
+    // @ts-ignore
+    window.NavableTools.startListening({ announce: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // @ts-ignore
+    const startMessage = window.__voiceMessages.find((msg: any) => msg.type === 'navable:voiceStart');
+    const eventMessage = {
+      type: 'navable:voiceEvent',
+      sessionId: startMessage.sessionId,
+      event: 'error',
+      payload: { error: 'not-allowed', provider: 'backend' }
+    };
+    // @ts-ignore
+    window.__voiceListeners.forEach((listener: any) => listener(eventMessage));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // @ts-ignore
+    return window.__voiceMessages;
+  });
+
+  expect(messages.find((msg: any) => msg.type === 'navable:openMicrophoneSetup')).toMatchObject({
+    type: 'navable:openMicrophoneSetup',
+    reason: 'not-allowed'
   });
 });
 

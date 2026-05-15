@@ -190,6 +190,7 @@ const NAVABLE_NEW_TAB_URL = (() => {
 const TRANSLATE_MESSAGES_URL = 'http://localhost:3000/api/translate-messages';
 const RESOLVE_SITE_URL = 'http://localhost:3000/api/resolve-site';
 const OFFSCREEN_SPEECH_DOCUMENT = 'src/offscreen/offscreen.html';
+const MICROPHONE_PERMISSION_PAGE = 'src/permissions/microphone.html';
 const OUTPUT_LOCALES = {
   en: 'en-US',
   fr: 'fr-FR',
@@ -198,6 +199,7 @@ const OUTPUT_LOCALES = {
 const outputMessageLoadPromises = {};
 let creatingOffscreenSpeechDocument = null;
 const offscreenSpeechSessions = new Map();
+let microphoneSetupLastOpenedAt = 0;
 
 const OUTPUT_MESSAGES = {
   en: {
@@ -635,6 +637,33 @@ async function stopOffscreenSpeechForTab(tabId, reason) {
     silent: true,
     reason
   }, id)));
+}
+
+function buildMicrophonePermissionUrl(reason) {
+  const url = chrome.runtime.getURL(MICROPHONE_PERMISSION_PAGE);
+  try {
+    const pageUrl = new URL(url);
+    const cleanReason = String(reason || '').trim();
+    if (cleanReason) pageUrl.searchParams.set('reason', cleanReason.slice(0, 80));
+    return pageUrl.toString();
+  } catch (_err) {
+    return url;
+  }
+}
+
+async function openMicrophonePermissionPage(msg) {
+  const now = Date.now();
+  if (now - microphoneSetupLastOpenedAt < 60000) {
+    return { ok: true, throttled: true };
+  }
+  microphoneSetupLastOpenedAt = now;
+  if (!chrome || !chrome.tabs || typeof chrome.tabs.create !== 'function') {
+    return { ok: false, error: 'Tabs API unavailable' };
+  }
+  await chrome.tabs.create({
+    url: buildMicrophonePermissionUrl(msg && msg.reason)
+  });
+  return { ok: true };
 }
 
 async function relayOffscreenSpeechEvent(msg) {
@@ -2541,6 +2570,14 @@ try {
 // Planner + bus bridge
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const sourceTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
+  if (msg && msg.type === 'navable:openMicrophoneSetup') {
+    openMicrophonePermissionPage(msg).then((res) => {
+      sendResponse(res);
+    }).catch((err) => {
+      sendResponse({ ok: false, error: String(err || 'microphone setup failed') });
+    });
+    return true;
+  }
   if (msg && msg.type === 'navable:voiceStart') {
     startOffscreenSpeechSession(msg, sourceTabId).then((res) => {
       sendResponse(res);

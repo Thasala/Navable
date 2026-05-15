@@ -73,7 +73,8 @@
         interimResults: false,
         continuous: true,
         autoRestart: true,
-        preferBackend: true
+        preferBackend: true,
+        nativeFallback: false
       });
       session.recognizer = recognizer;
       activeSession = session;
