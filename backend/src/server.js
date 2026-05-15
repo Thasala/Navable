@@ -322,15 +322,15 @@ function buildFallbackSummary(structure, outputLanguage, catalog) {
 }
 
 function buildFallbackSuggestions(structure, outputLanguage, catalog) {
-  const suggestions = [
-    outputMessage('suggestion_scroll', outputLanguage, {}, catalog),
-    outputMessage('suggestion_title', outputLanguage, {}, catalog),
-    outputMessage('suggestion_heading', outputLanguage, {}, catalog)
-  ];
+  const suggestions = [outputMessage('suggestion_title', outputLanguage, {}, catalog)];
+  if (structure && structure.headings && structure.headings.length) {
+    suggestions.push(outputMessage('suggestion_heading', outputLanguage, {}, catalog));
+  }
   if (structure && structure.links && structure.links.length) {
     suggestions.push(outputMessage('suggestion_open_link', outputLanguage, {}, catalog));
   }
-  return suggestions;
+  suggestions.push(outputMessage('suggestion_scroll', outputLanguage, {}, catalog));
+  return suggestions.slice(0, 5);
 }
 
 function sanitizePlan(rawPlan) {
@@ -430,6 +430,7 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
     '- If the command clearly refers to the current page, do not ask the user to clarify which page or which question they mean unless the visible page data is truly insufficient.',
     '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, describe_page, wait_for_user_input, move_heading.',
     '- If you propose a plan, use ONLY those actions in plan.steps.',
+    '- Suggestions must also be actions the extension can execute. Prefer exact voice commands like "Try: read the title.", "Try: move to the next heading.", "Try: open first link.", or "Try: scroll down." Do not suggest tasks outside these extension capabilities.',
     '- When referencing elements (links, headings, buttons, inputs), prefer their labels from the structure.',
     '- Keep output concise and friendly; avoid long lists and repeating raw counts unless helpful.',
     '',
@@ -655,10 +656,7 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
 
     const summary =
       (result && result.friendlySummary) || buildFallbackSummary(pageStructure, resolvedOutputLanguage, outputCatalog);
-    const suggestions =
-      (result && result.suggestions && result.suggestions.length
-        ? result.suggestions
-        : buildFallbackSuggestions(pageStructure, resolvedOutputLanguage, outputCatalog));
+    const suggestions = buildFallbackSuggestions(pageStructure, resolvedOutputLanguage, outputCatalog);
     const plan =
       (result && result.plan && Array.isArray(result.plan.steps)
         ? sanitizePlan(result.plan)
