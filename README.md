@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/navable-logo.svg" alt="Navable Logo" width="200"/>
+</p>
+
 # Navable
 
 ## Production prep
