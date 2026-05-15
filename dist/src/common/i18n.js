@@ -37,7 +37,17 @@
       navable_test_announcement: 'Navable: test announcement (fallback hotkey).',
       generic_announcement: 'Navable: announcement.',
       help_examples:
-        'Try: summarize this page, scroll down, read title, next heading, open first link, activate focused, read selection, or ask "what is machine learning?" Press Alt+Shift+M to toggle listening.',
+        'Welcome to Navable, your voice-powered web navigator. '
+        + 'Here is a quick guide. '
+        + 'Voice: press Alt+Shift+M to start or stop listening. '
+        + 'Navigation: say scroll down, scroll up, next heading, or previous heading to move around. '
+        + 'Page info: say summarize this page, read title, or read selection to hear page content. '
+        + 'Links and buttons: say open first link, click submit, or focus search to interact with elements. '
+        + 'Open websites: say open YouTube or search for weather to navigate the web. '
+        + 'Forms: say fill out the form to get guided through form fields step by step. '
+        + 'Ask questions: say any question like what is machine learning and I will answer. '
+        + 'Keyboard shortcuts: Alt+Shift+J scroll down, Alt+Shift+L scroll up, Alt+Shift+N next heading, Alt+Shift+P previous heading, Alt+Shift+H repeat this guide. '
+        + 'Say help anytime to hear this guide again.',
       listening_help: 'Listening. Say "help" to hear example commands.',
       stopped_listening: 'Stopped listening. Press Alt+Shift+M to start again.',
       unknown_command: 'I did not catch that. Say "help" to hear example commands.',
@@ -178,7 +188,17 @@
       navable_test_announcement: 'Navable : annonce de test (raccourci de secours).',
       generic_announcement: 'Navable : annonce.',
       help_examples:
-        'Essayez : resume cette page, fais defiler vers le bas, lis le titre, titre suivant, ouvre le premier lien, active l element cible, lis la selection, ou demande "qu est-ce que l apprentissage automatique ?". Appuyez sur Alt+Shift+M pour activer ou arreter l ecoute.',
+        'Bienvenue sur Navable, votre navigateur web vocal. '
+        + 'Voici un guide rapide. '
+        + 'Voix : appuyez sur Alt+Shift+M pour activer ou arreter l ecoute. '
+        + 'Navigation : dites fais defiler vers le bas, fais defiler vers le haut, titre suivant, ou titre precedent pour vous deplacer. '
+        + 'Infos page : dites resume cette page, lis le titre, ou lis la selection pour entendre le contenu. '
+        + 'Liens et boutons : dites ouvre le premier lien, clique sur soumettre, ou focus sur recherche pour interagir. '
+        + 'Ouvrir des sites : dites ouvre YouTube ou recherche la meteo pour naviguer sur le web. '
+        + 'Formulaires : dites remplis le formulaire pour etre guide champ par champ. '
+        + 'Questions : posez une question comme qu est-ce que l apprentissage automatique et je repondrai. '
+        + 'Raccourcis clavier : Alt+Shift+J defiler bas, Alt+Shift+L defiler haut, Alt+Shift+N titre suivant, Alt+Shift+P titre precedent, Alt+Shift+H repeter ce guide. '
+        + 'Dites aide a tout moment pour reentendre ce guide.',
       listening_help: 'J ecoute. Dites "aide" pour entendre des exemples de commandes.',
       stopped_listening: 'Ecoute arretee. Appuyez sur Alt+Shift+M pour recommencer.',
       unknown_command: 'Je n ai pas compris. Dites "aide" pour entendre des exemples de commandes.',
@@ -319,7 +339,17 @@
       navable_test_announcement: 'نافابل: إعلان تجريبي (اختصار احتياطي).',
       generic_announcement: 'نافابل: إعلان.',
       help_examples:
-        'جرّب: لخّص هذه الصفحة، مرر إلى الأسفل، اقرأ العنوان، العنوان التالي، افتح أول رابط، فعّل العنصر المحدد، اقرأ التحديد، أو اسأل "ما هو التعلم الآلي؟". اضغط Alt+Shift+M لتبديل الاستماع.',
+        'مرحباً بك في نافابل، مساعدك الصوتي لتصفح الإنترنت. '
+        + 'إليك دليل سريع. '
+        + 'الصوت: اضغط Alt+Shift+M لبدء أو إيقاف الاستماع. '
+        + 'التنقل: قل مرر إلى الأسفل، مرر إلى الأعلى، العنوان التالي، أو العنوان السابق للتحرك في الصفحة. '
+        + 'معلومات الصفحة: قل لخّص هذه الصفحة، اقرأ العنوان، أو اقرأ التحديد لسماع محتوى الصفحة. '
+        + 'الروابط والأزرار: قل افتح أول رابط، اضغط إرسال، أو ركّز على البحث للتفاعل مع العناصر. '
+        + 'فتح المواقع: قل افتح يوتيوب أو ابحث عن الطقس للتنقل في الإنترنت. '
+        + 'النماذج: قل املأ النموذج ليتم إرشادك خلال الحقول خطوة بخطوة. '
+        + 'الأسئلة: اسأل أي سؤال مثل ما هو التعلم الآلي وسأجيبك. '
+        + 'اختصارات لوحة المفاتيح: Alt+Shift+J تمرير لأسفل، Alt+Shift+L تمرير لأعلى، Alt+Shift+N العنوان التالي، Alt+Shift+P العنوان السابق، Alt+Shift+H لإعادة سماع هذا الدليل. '
+        + 'قل مساعدة في أي وقت لسماع هذا الدليل مرة أخرى.',
       listening_help: 'أستمع الآن. قل "مساعدة" لسماع أمثلة للأوامر.',
       stopped_listening: 'تم إيقاف الاستماع. اضغط Alt+Shift+M للبدء من جديد.',
       unknown_command: 'لم أفهم ذلك. قل "مساعدة" لسماع أمثلة للأوامر.',
