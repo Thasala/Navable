@@ -9,7 +9,11 @@ function isFollowUpIntentText(text) {
   if (!t) return false;
   return (
     /^(tell me more|more detail|more details|go on|continue|keep going|expand that|what about that|what about it|and then)\b/.test(t) ||
+    /^(ok|okay|yes|yeah|yep|sure|alright|please)?\s*(go ahead|proceed|do it|do that|read it|read them|read those|open it|open that|click it|click that|show it|show them|show that)\b/.test(t) ||
+    /^(ok|okay|yes|yeah|yep|sure|alright)\s+(read|open|click|show|start|create|compose|write)\b/.test(t) ||
+    /^(?:(?:ok|okay|yes|yeah|yep|sure|alright)\s+)?(let'?s|lets)\s+(do it|do that|start|create|compose|write|read|open|click)\b/.test(t) ||
     /^(dis[- ]?m[' ]?en plus|plus de d[ée]tails|continue|vas[- ]?y|et ensuite)\b/.test(t) ||
+    /^(oui|ok|d accord|vas[- ]?y|allez|continue)\s+(lis|ouvre|clique|montre|commence|cree|crée|compose|ecris|écris)?\b/.test(t) ||
     /^(احكيلي اكثر|احكيلي المزيد|زيدني|كم[ّ]?ل|كمل|ماذا عن ذلك|شو كمان|ايش كمان)\b/.test(t)
   );
 }

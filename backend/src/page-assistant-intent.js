@@ -104,11 +104,21 @@ function isPageContextIntentText(text) {
   );
 }
 
+function isPageLocalActionIntentText(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(create|compose|write|start|make)\b.*\bpost\b|\bpost\b.*\b(create|compose|write|start|make)\b/.test(t) ||
+    /\b(read|show|open|click|press|activate)\b.*\b(notifications?|alerts?|messages?|inbox)\b/.test(t)
+  );
+}
+
 function resolveRequestedAssistantPurpose(text, requestedPurpose = 'auto') {
   const normalizedPurpose = typeof requestedPurpose === 'string' ? String(requestedPurpose).trim().toLowerCase() : 'auto';
-  if (normalizedPurpose === 'answer' && isPageContextIntentText(text)) {
+  if (normalizedPurpose === 'answer' && (isPageContextIntentText(text) || isPageLocalActionIntentText(text))) {
     return 'page';
   }
+  if (normalizedPurpose === 'auto' && isPageLocalActionIntentText(text)) return 'page';
   return normalizedPurpose;
 }
 
@@ -117,5 +127,6 @@ export {
   isPageContextIntentText,
   isPageQuestionIntentText,
   isSummaryIntentText,
+  isPageLocalActionIntentText,
   resolveRequestedAssistantPurpose
 };
