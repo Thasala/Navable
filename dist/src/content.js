@@ -3972,6 +3972,7 @@
   var lastCommandFeedback = null;
   var lastUnknownCmdAt = 0;
   var lastMicBusyAt = 0;
+  var lastMicSetupRequestAt = 0;
   var recogLang = 'en-US';
   var outputLanguage = 'en';
   var transientRestoreTimer = null;
@@ -4291,6 +4292,18 @@
     });
   }
 
+  function requestMicrophoneSetup(reason) {
+    var now = Date.now();
+    if (now - lastMicSetupRequestAt < 30000) return;
+    lastMicSetupRequestAt = now;
+    sendVoiceBridgeMessage({
+      type: 'navable:openMicrophoneSetup',
+      reason: reason || 'microphone-blocked'
+    }).catch(function () {
+      // ignore setup-page failures; the spoken status still explains the permission issue
+    });
+  }
+
   function createExtensionVoiceRecognizer(options) {
     options = options || {};
     var emitter = createVoiceEmitter();
@@ -4513,8 +4526,9 @@
 	        } else if (code === 'not-allowed' || code === 'service-not-allowed') {
 	          listening = false;
 	          manualListening = false;
-	          speak(translate('speech_not_allowed'));
-	        } else if (code === 'network') {
+	          requestMicrophoneSetup(code);
+	          speak(translate('mic_access_blocked'));
+	        } else if (code === 'network' || code === 'backend-unavailable') {
 	          listening = false;
 	          manualListening = false;
 	          speak(translate('speech_network_issue'));

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navable Microphone Setup</title>
+  <link rel="stylesheet" href="microphone.css">
+</head>
+<body>
+  <main class="setup-shell">
+    <section class="setup-panel" aria-labelledby="setupTitle">
+      <div class="mark" aria-hidden="true">N</div>
+      <h1 id="setupTitle">Allow microphone for Navable</h1>
+      <p id="setupCopy">Navable needs microphone access on its extension page once. After you allow it here, voice commands can work across websites without asking per site.</p>
+      <button id="allowMic" type="button">Allow microphone</button>
+      <p id="micStatus" class="status" role="status" aria-live="polite">Waiting for microphone permission.</p>
+    </section>
+  </main>
+  <script src="microphone.js"></script>
+</body>
+</html>
