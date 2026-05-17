@@ -39,17 +39,17 @@
       help_examples:
         'Welcome to Navable, your voice-powered web navigator. '
         + 'Here is a quick guide. '
-        + 'Voice: press Alt+Shift+M to start or stop listening. '
+        + 'Voice: press Ctrl+Shift+M on Windows or Linux, or Command+Option+M on Mac, to start or stop listening. '
         + 'Navigation: say scroll down, scroll up, next heading, or previous heading to move around. '
         + 'Page info: say summarize this page, read title, or read selection to hear page content. '
         + 'Links and buttons: say open first link, click submit, or focus search to interact with elements. '
         + 'Open websites: say open YouTube or search for weather to navigate the web. '
         + 'Forms: say fill out the form to get guided through form fields step by step. '
         + 'Ask questions: say any question like what is machine learning and I will answer. '
-        + 'Keyboard shortcuts: Alt+Shift+J scroll down, Alt+Shift+L scroll up, Alt+Shift+N next heading, Alt+Shift+P previous heading, Alt+Shift+H repeat this guide. '
+        + 'Keyboard shortcuts: Ctrl+Shift+J or Command+Option+J scroll down, Ctrl+Shift+L or Command+Option+L scroll up, Ctrl+Shift+N or Command+Option+N move to the next heading, Ctrl+Shift+P or Command+Option+P move to the previous heading, and Ctrl+Shift+Slash or Command+Option+Slash repeat this guide. '
         + 'Say help anytime to hear this guide again.',
       listening_help: 'Listening. Say "help" to hear example commands.',
-      stopped_listening: 'Stopped listening. Press Alt+Shift+M to start again.',
+      stopped_listening: 'Stopped listening. Press Ctrl+Shift+M on Windows or Linux, or Command+Option+M on Mac, to start again.',
       unknown_command: 'I did not catch that. Say "help" to hear example commands.',
       processing_request: 'Working on that.',
       listening_paused_hidden: 'Listening is paused until this tab is visible again.',
@@ -190,17 +190,17 @@
       help_examples:
         'Bienvenue sur Navable, votre navigateur web vocal. '
         + 'Voici un guide rapide. '
-        + 'Voix : appuyez sur Alt+Shift+M pour activer ou arreter l ecoute. '
+        + 'Voix : appuyez sur Ctrl+Shift+M sous Windows ou Linux, ou sur Command+Option+M sur Mac, pour activer ou arreter l ecoute. '
         + 'Navigation : dites fais defiler vers le bas, fais defiler vers le haut, titre suivant, ou titre precedent pour vous deplacer. '
         + 'Infos page : dites resume cette page, lis le titre, ou lis la selection pour entendre le contenu. '
         + 'Liens et boutons : dites ouvre le premier lien, clique sur soumettre, ou focus sur recherche pour interagir. '
         + 'Ouvrir des sites : dites ouvre YouTube ou recherche la meteo pour naviguer sur le web. '
         + 'Formulaires : dites remplis le formulaire pour etre guide champ par champ. '
         + 'Questions : posez une question comme qu est-ce que l apprentissage automatique et je repondrai. '
-        + 'Raccourcis clavier : Alt+Shift+J defiler bas, Alt+Shift+L defiler haut, Alt+Shift+N titre suivant, Alt+Shift+P titre precedent, Alt+Shift+H repeter ce guide. '
+        + 'Raccourcis clavier : Ctrl+Shift+J ou Command+Option+J pour defiler vers le bas, Ctrl+Shift+L ou Command+Option+L pour defiler vers le haut, Ctrl+Shift+N ou Command+Option+N pour le titre suivant, Ctrl+Shift+P ou Command+Option+P pour le titre precedent, et Ctrl+Shift+Slash ou Command+Option+Slash pour repeter ce guide. '
         + 'Dites aide a tout moment pour reentendre ce guide.',
       listening_help: 'J ecoute. Dites "aide" pour entendre des exemples de commandes.',
-      stopped_listening: 'Ecoute arretee. Appuyez sur Alt+Shift+M pour recommencer.',
+      stopped_listening: 'Ecoute arretee. Appuyez sur Ctrl+Shift+M sous Windows ou Linux, ou sur Command+Option+M sur Mac, pour recommencer.',
       unknown_command: 'Je n ai pas compris. Dites "aide" pour entendre des exemples de commandes.',
       processing_request: 'Je m en occupe.',
       listening_paused_hidden: 'L ecoute est en pause jusqu a ce que vous reveniez sur cet onglet.',
@@ -341,17 +341,17 @@
       help_examples:
         'مرحباً بك في نافابل، مساعدك الصوتي لتصفح الإنترنت. '
         + 'إليك دليل سريع. '
-        + 'الصوت: اضغط Alt+Shift+M لبدء أو إيقاف الاستماع. '
+        + 'الصوت: اضغط Ctrl+Shift+M على ويندوز أو لينكس، أو Command+Option+M على ماك، لبدء أو إيقاف الاستماع. '
         + 'التنقل: قل مرر إلى الأسفل، مرر إلى الأعلى، العنوان التالي، أو العنوان السابق للتحرك في الصفحة. '
         + 'معلومات الصفحة: قل لخّص هذه الصفحة، اقرأ العنوان، أو اقرأ التحديد لسماع محتوى الصفحة. '
         + 'الروابط والأزرار: قل افتح أول رابط، اضغط إرسال، أو ركّز على البحث للتفاعل مع العناصر. '
         + 'فتح المواقع: قل افتح يوتيوب أو ابحث عن الطقس للتنقل في الإنترنت. '
         + 'النماذج: قل املأ النموذج ليتم إرشادك خلال الحقول خطوة بخطوة. '
         + 'الأسئلة: اسأل أي سؤال مثل ما هو التعلم الآلي وسأجيبك. '
-        + 'اختصارات لوحة المفاتيح: Alt+Shift+J تمرير لأسفل، Alt+Shift+L تمرير لأعلى، Alt+Shift+N العنوان التالي، Alt+Shift+P العنوان السابق، Alt+Shift+H لإعادة سماع هذا الدليل. '
+        + 'اختصارات لوحة المفاتيح: Ctrl+Shift+J أو Command+Option+J للتمرير لأسفل، Ctrl+Shift+L أو Command+Option+L للتمرير لأعلى، Ctrl+Shift+N أو Command+Option+N للعنوان التالي، Ctrl+Shift+P أو Command+Option+P للعنوان السابق، و Ctrl+Shift+Slash أو Command+Option+Slash لإعادة سماع هذا الدليل. '
         + 'قل مساعدة في أي وقت لسماع هذا الدليل مرة أخرى.',
       listening_help: 'أستمع الآن. قل "مساعدة" لسماع أمثلة للأوامر.',
-      stopped_listening: 'تم إيقاف الاستماع. اضغط Alt+Shift+M للبدء من جديد.',
+      stopped_listening: 'تم إيقاف الاستماع. اضغط Ctrl+Shift+M على ويندوز أو لينكس، أو Command+Option+M على ماك، للبدء من جديد.',
       unknown_command: 'لم أفهم ذلك. قل "مساعدة" لسماع أمثلة للأوامر.',
       processing_request: 'أعمل على ذلك الآن.',
       listening_paused_hidden: 'تم إيقاف الاستماع مؤقتاً حتى تعود إلى هذا التبويب.',

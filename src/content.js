@@ -3988,6 +3988,18 @@
   var ttsPlaybackInFlight = false;
   var ttsPlaybackToken = 0;
   var ttsPlaybackResumeTimer = null;
+  var isMacPlatform = /\bMac\b/.test(String((window.navigator && window.navigator.platform) || ''));
+
+  function isPrimaryNavableShortcut(event, key) {
+    if (!event) return false;
+    var pressedKey = String(event.key || '').toLowerCase();
+    var wantedKey = String(key || '').toLowerCase();
+    if (!pressedKey || pressedKey !== wantedKey) return false;
+    if (isMacPlatform) {
+      return !!(event.metaKey && event.altKey && !event.ctrlKey);
+    }
+    return !!(event.ctrlKey && event.shiftKey && !event.metaKey);
+  }
 
   function normalizeFeedbackStatus(status) {
     var raw = String(status || '').trim().toLowerCase();
@@ -7054,9 +7066,14 @@
     };
   };
 
-  // Hotkey to toggle listening: Alt+Shift+M (prototype)
+  // Primary hotkey to toggle listening:
+  // Windows/Linux -> Ctrl+Shift+M
+  // Mac           -> Command+Option+M
   document.addEventListener('keydown', function (e) {
-    if (e.altKey && e.shiftKey && (e.key === 'm' || e.key === 'M')) { toggleListening(); }
+    if (isPrimaryNavableShortcut(e, 'm')) {
+      toggleListening();
+      e.preventDefault();
+    }
   }, { capture: true });
 
 	  // Allow popup/background to toggle listening
@@ -7133,14 +7150,14 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.altKey && e.shiftKey && (e.key === 'h' || e.key === 'H')) { speakHelp(); }
+    if (isPrimaryNavableShortcut(e, '/') || isPrimaryNavableShortcut(e, '?')) {
+      speakHelp();
+      e.preventDefault();
+    }
   }, { capture: true });
 
-  // Keyboard shortcuts for scrolling and heading navigation
-  // Alt+Shift+ArrowDown  → scroll down
-  // Alt+Shift+ArrowUp    → scroll up
-  // Alt+Shift+PageDown   → next heading
-  // Alt+Shift+PageUp     → previous heading
+  // Legacy on-page fallback shortcuts kept for compatibility when the user has not
+  // assigned Chrome command shortcuts yet.
   document.addEventListener('keydown', function (e) {
     if (!e.altKey || !e.shiftKey) return;
     if (e.key === 'ArrowDown') {
