@@ -3996,9 +3996,9 @@
     var wantedKey = String(key || '').toLowerCase();
     if (!pressedKey || pressedKey !== wantedKey) return false;
     if (isMacPlatform) {
-      return !!(event.metaKey && event.altKey && !event.ctrlKey);
+      return !!(event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey);
     }
-    return !!(event.ctrlKey && event.shiftKey && !event.metaKey);
+    return !!(event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey);
   }
 
   function normalizeFeedbackStatus(status) {
@@ -7068,7 +7068,7 @@
 
   // Primary hotkey to toggle listening:
   // Windows/Linux -> Ctrl+Shift+M
-  // Mac           -> Command+Option+M
+  // Mac           -> Command+Shift+M
   document.addEventListener('keydown', function (e) {
     if (isPrimaryNavableShortcut(e, 'm')) {
       toggleListening();
