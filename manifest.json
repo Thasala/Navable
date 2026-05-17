@@ -19,19 +19,31 @@
   ],
   "commands": {
     "scroll-down": {
-      "suggested_key": { "default": "Alt+Shift+J" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+J",
+        "mac": "Command+Option+J"
+      },
       "description": "Scroll down the page"
     },
     "scroll-up": {
-      "suggested_key": { "default": "Alt+Shift+L" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Option+L"
+      },
       "description": "Scroll up the page"
     },
     "next-heading": {
-      "suggested_key": { "default": "Alt+Shift+N" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+N",
+        "mac": "Command+Option+N"
+      },
       "description": "Move to the next heading"
     },
     "prev-heading": {
-      "suggested_key": { "default": "Alt+Shift+P" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Option+P"
+      },
       "description": "Move to the previous heading"
     }
   }
