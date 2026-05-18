@@ -35,16 +35,23 @@ docker compose --profile ci run --rm ci
 
 ## CI/CD (GitHub Actions)
 
+Branch model:
+
+- `develop` is the default development branch. Normal work and pull requests target `develop`.
+- `production` is the release branch. Pushing or manually running CD from `production` publishes the backend image and deploys Render.
+- `main` is no longer part of the active CI/CD flow.
+
 Workflows used for the CI/CD demonstration:
 
+- CI: `.github/workflows/main.yml` runs lint, Playwright tests, and an extension build on `develop`, `production`, and pull requests targeting either branch.
 - Functional: `.github/workflows/docker-publish.yml` builds + publishes the backend Docker image (GHCR + Docker Hub), then triggers the Render production deployment.
 - Non-functional: `.github/workflows/performance.yml` runs a quick AI-backed latency smoke test for `/api/assistant` (requires repo secret `OPENAI_API_KEY`).
 
-Both workflows also support manual runs from the GitHub Actions tab.
+The production workflows also support manual runs from the GitHub Actions tab, but their jobs only run from the `production` branch.
 
 ## Production CD (Docker + Render)
 
-The backend image is published on every push to `main` (or manual workflow run). After both image pushes succeed, GitHub Actions triggers the Render production deploy hook and verifies:
+The backend image is published on every backend-related push to `production` (or manual workflow run from `production`). After both image pushes succeed, GitHub Actions triggers the Render production deploy hook and verifies:
 
 ```sh
 https://navable.onrender.com/health
@@ -78,5 +85,6 @@ docker run --rm -p 3000:3000 ghcr.io/<OWNER>/<REPO>/navable-backend:latest
 2. Under "Workflow permissions", select **Read and write permissions**
 3. Save changes
 4. Add repo secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `OPENAI_API_KEY`, `RENDER_DEPLOY_HOOK_URL`
-5. In GitHub **Settings** → **Environments**, create a `production` environment if you want approval gates or deployment history.
-6. In Render, set production environment variables such as `OPENAI_API_KEY`.
+5. In GitHub **Settings** → **Branches**, protect `production` and require pull requests plus the CI check before release merges.
+6. In GitHub **Settings** → **Environments**, keep the `production` environment for deployment history and optional approval gates.
+7. In Render, set production environment variables such as `OPENAI_API_KEY`.

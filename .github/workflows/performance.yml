@@ -3,13 +3,14 @@ name: Performance (Non-Functional)
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [production]
     paths:
       - backend/**
       - .github/workflows/performance.yml
 
 jobs:
   backend-latency-smoke:
+    if: github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

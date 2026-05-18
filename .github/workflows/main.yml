@@ -3,8 +3,9 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, develop, production ]
+    branches: [ develop, production ]
   pull_request:
+    branches: [ develop, production ]
 
 jobs:
   build-and-test:

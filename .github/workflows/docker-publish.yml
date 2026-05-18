@@ -3,7 +3,7 @@ name: Functional - Publish Backend Docker Image
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [production]
     paths:
       - 'backend/**'
       - '.github/workflows/docker-publish.yml'
@@ -15,6 +15,7 @@ env:
 
 jobs:
   build-and-push:
+    if: github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,7 +50,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             ${{ env.DOCKERHUB_IMAGE }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
