@@ -16,6 +16,8 @@ curl http://localhost:3000/health
 
 Swagger UI is available at `http://localhost:3000/api-docs` (OpenAPI JSON: `http://localhost:3000/api-docs.json`).
 
+The packaged extension uses the production backend at `https://navable.onrender.com` by default. Local development can still override the backend base URL through `globalThis.__NAVABLE_CONFIG__.backendBaseUrl` before the extension scripts load.
+
 ## Tests / CI (Docker)
 
 Runs `npm run ci` (lint + Playwright tests) inside a Playwright container.

@@ -1,7 +1,7 @@
 (function (root) {
   if (!root || root.NavableConfig) return;
 
-  var DEFAULT_BACKEND_BASE_URL = 'http://localhost:3000';
+  var DEFAULT_BACKEND_BASE_URL = 'https://navable.onrender.com';
 
   function normalizeBaseUrl(value) {
     var url = String(value || '').trim().replace(/\/+$/, '');

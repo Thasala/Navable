@@ -1343,7 +1343,9 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   }
 
   try {
-    const response = await window.fetch('http://localhost:3000/api/assistant', {
+    const response = await window.fetch(window.NavableConfig
+      ? window.NavableConfig.buildApiUrl('/api/assistant')
+      : 'https://navable.onrender.com/api/assistant', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
