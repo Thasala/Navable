@@ -1,7 +1,6 @@
 (function (root) {
   if (!root || root.NavableConfig) return;
 
-  // Replace this with your Render HTTPS URL before building a production demo.
   var DEFAULT_BACKEND_BASE_URL = 'https://navable.onrender.com';
 
   function normalizeBaseUrl(value) {

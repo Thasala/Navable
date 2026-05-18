@@ -6,10 +6,10 @@
 
   var DEFAULT_TRANSCRIBE_URL = window.NavableConfig
     ? window.NavableConfig.buildApiUrl('/api/transcribe')
-    : 'http://localhost:3000/api/transcribe';
+    : 'https://navable.onrender.com/api/transcribe';
   var DEFAULT_HEALTH_URL = window.NavableConfig
     ? window.NavableConfig.buildApiUrl('/health')
-    : 'http://localhost:3000/health';
+    : 'https://navable.onrender.com/health';
 
   function getSpeechEnv() {
     return window.__NavableSpeechEnv || {};

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Navable (Phase A)",
+  "name": "Navable",
   "version": "0.1.0",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
   "icons": {

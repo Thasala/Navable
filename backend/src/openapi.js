@@ -165,6 +165,48 @@ const baseSpec = {
         }
       }
     },
+    '/api/resolve-site': {
+      post: {
+        tags: ['Resolution'],
+        summary: 'Resolve a spoken website name to an official URL',
+        description:
+          'Uses AI to map a spoken organization, service, or website name to the best-known official public homepage URL.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ResolveSiteRequest' }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: 'Resolved destination',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ResolveSiteResponse' }
+              }
+            }
+          },
+          400: {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          500: {
+            description: 'Server error',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          }
+        }
+      }
+    },
     '/api/assistant': {
       post: {
         tags: ['Assistant'],

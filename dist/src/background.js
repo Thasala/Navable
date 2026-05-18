@@ -187,16 +187,7 @@ const NAVABLE_NEW_TAB_URL = (() => {
   }
 })();
 
-// Keep this in sync with src/common/config.js before building a production demo.
-const BACKEND_BASE_URL = 'https://navable.onrender.com';
-
-function buildBackendApiUrl(path) {
-  const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
-  return `${BACKEND_BASE_URL}${normalizedPath}`;
-}
-
-const TRANSLATE_MESSAGES_URL = buildBackendApiUrl('/api/translate-messages');
-const RESOLVE_SITE_URL = buildBackendApiUrl('/api/resolve-site');
+const DEFAULT_BACKEND_BASE_URL = 'https://navable.onrender.com';
 const OFFSCREEN_SPEECH_DOCUMENT = 'src/offscreen/offscreen.html';
 const MICROPHONE_PERMISSION_PAGE = 'src/permissions/microphone.html';
 const OUTPUT_LOCALES = {
@@ -208,6 +199,24 @@ const outputMessageLoadPromises = {};
 let creatingOffscreenSpeechDocument = null;
 const offscreenSpeechSessions = new Map();
 let microphoneSetupLastOpenedAt = 0;
+
+function normalizeBackendBaseUrl(value) {
+  const url = String(value || '').trim().replace(/\/+$/, '');
+  return url || DEFAULT_BACKEND_BASE_URL;
+}
+
+function getBackendBaseUrl() {
+  const config = typeof globalThis !== 'undefined' ? globalThis.__NAVABLE_CONFIG__ : null;
+  return normalizeBackendBaseUrl(config && config.backendBaseUrl);
+}
+
+function buildBackendApiUrl(path) {
+  const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
+  return `${getBackendBaseUrl()}${normalizedPath}`;
+}
+
+const TRANSLATE_MESSAGES_URL = buildBackendApiUrl('/api/translate-messages');
+const RESOLVE_SITE_URL = buildBackendApiUrl('/api/resolve-site');
 
 const OUTPUT_MESSAGES = {
   en: {
