@@ -35,14 +35,25 @@ docker compose --profile ci run --rm ci
 
 Workflows used for the CI/CD demonstration:
 
-- Functional: `.github/workflows/docker-publish.yml` builds + publishes the backend Docker image (GHCR + Docker Hub).
+- Functional: `.github/workflows/docker-publish.yml` builds + publishes the backend Docker image (GHCR + Docker Hub), then triggers the Render production deployment.
 - Non-functional: `.github/workflows/performance.yml` runs a quick AI-backed latency smoke test for `/api/assistant` (requires repo secret `OPENAI_API_KEY`).
 
 Both workflows also support manual runs from the GitHub Actions tab.
 
-## Docker Publishing (GHCR + Docker Hub)
+## Production CD (Docker + Render)
 
-The backend image is published on every push to `main` (or manual workflow run).
+The backend image is published on every push to `main` (or manual workflow run). After both image pushes succeed, GitHub Actions triggers the Render production deploy hook and verifies:
+
+```sh
+https://navable.onrender.com/health
+```
+
+The workflow publishes both registries:
+
+- Docker Hub: `thasala/navable-backend`
+- GHCR: `ghcr.io/<OWNER>/<REPO>/navable-backend`
+
+Render should be configured to deploy from either the Docker Hub image or the GHCR image. The workflow keeps both images current before triggering Render.
 
 ### Pull and run from Docker Hub:
 
@@ -64,4 +75,6 @@ docker run --rm -p 3000:3000 ghcr.io/<OWNER>/<REPO>/navable-backend:latest
 1. Go to repo **Settings** → **Actions** → **General**
 2. Under "Workflow permissions", select **Read and write permissions**
 3. Save changes
-4. Add repo secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `OPENAI_API_KEY`
+4. Add repo secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `OPENAI_API_KEY`, `RENDER_DEPLOY_HOOK_URL`
+5. In GitHub **Settings** → **Environments**, create a `production` environment if you want approval gates or deployment history.
+6. In Render, set production environment variables such as `OPENAI_API_KEY`.
