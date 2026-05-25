@@ -182,6 +182,32 @@ test('page-context assistant runtime requests execute plans on the sender tab wi
   expect(result.calls[0].payload.type).toBe('navable:executePlan');
 });
 
+test('assistant switches to offline mode when the backend assistant is unreachable', async ({ page }) => {
+  await page.addScriptTag({ path: 'src/background.js' });
+
+  const result = await page.evaluate(async () => {
+    window.fetch = async (url) => {
+      if (!String(url).includes('/api/assistant')) {
+        throw new Error(`Unexpected fetch: ${String(url)}`);
+      }
+      throw new TypeError('Failed to fetch');
+    };
+
+    return await (window as any).requestAssistant('What is the moon?', 'en', {
+      sourceTabId: 42,
+      purpose: 'answer'
+    });
+  });
+
+  expect(result).toMatchObject({
+    ok: true,
+    offline: true,
+    offlineMode: true,
+    mode: 'answer'
+  });
+  expect(String((result as any).speech)).toContain('Offline mode is on');
+});
+
 test('assistant runtime requests carry session memory into answer follow-ups', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 

@@ -107,6 +107,97 @@ test('content script handles typed command messages through the normal assistant
   expect(messages[1].input).toBe('What is the moon?');
 });
 
+test('content script returns offline mode when background and direct assistant calls fail', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <h1>Docs</h1>
+      <p>Welcome to the docs.</p>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    const listeners: Array<(msg: any, sender: any, sendResponse: (res: any) => void) => any> = [];
+
+    // @ts-ignore
+    window.chrome = {
+      runtime: {
+        sendMessage: async (payload: any) => {
+          if (payload.type === 'planner:run') {
+            return { ok: false, unhandled: true };
+          }
+          if (payload.type === 'navable:assistant') {
+            return { ok: false, error: 'assistant unavailable' };
+          }
+          return { ok: true };
+        },
+        onMessage: {
+          addListener(fn: any) {
+            listeners.push(fn);
+          }
+        }
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({ navable_settings: { language: 'en-US', autostart: false, overlay: false } });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+
+    window.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+
+    // @ts-ignore
+    window.__contentListeners = listeners;
+    // @ts-ignore
+    window.NavableSpeech = {
+      supportsRecognition: () => true,
+      createRecognizer: () => ({
+        start() {},
+        stop() {},
+        on() { return this; }
+      })
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/speech.js' });
+  await page.addScriptTag({ path: 'src/content.js' });
+
+  await page.waitForFunction(() => (window as any).__contentListeners?.length > 0);
+
+  const result = await page.evaluate(async () => {
+    // @ts-ignore
+    const listener = (window as any).__contentListeners[0];
+    return await new Promise((resolve, reject) => {
+      try {
+        const maybeAsync = listener(
+          { type: 'navable:runTypedCommand', text: 'What is the moon?', detectedLanguage: 'en' },
+          {},
+          resolve
+        );
+        if (maybeAsync !== true) resolve(undefined);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+
+  expect(result).toMatchObject({
+    ok: true,
+    feedback: {
+      status: 'blocked'
+    }
+  });
+  expect(String((result as any).speech)).toContain('Offline mode is on');
+});
+
 test('typed open-site command returns loading feedback while the page opens', async ({ page }) => {
   await page.setContent(`
     <main>

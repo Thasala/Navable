@@ -845,6 +845,60 @@ test('new tab spoken question retries directly without logging a background warn
   expect(warns.some((msg: string) => msg.includes('[Navable] newtab assistant background request returned error'))).toBe(false);
 });
 
+test('new tab switches to offline mode when assistant requests are unavailable', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="btnMicToggle" type="button">Start listening</button>
+      <div id="micStatus">Not listening.</div>
+    </main>
+  `);
+
+  await page.evaluate(() => {
+    // @ts-ignore
+    (window as any).chrome = {
+      runtime: {
+        sendMessage: async () => ({
+          ok: false,
+          error: 'assistant unavailable'
+        })
+      },
+      storage: {
+        sync: {
+          get(_defaults: any, cb: (res: any) => void) {
+            cb({
+              navable_settings: {
+                language: 'en-US',
+                languageMode: 'auto',
+                outputMode: 'screen_reader'
+              }
+            });
+          }
+        },
+        onChanged: {
+          addListener() {}
+        }
+      }
+    };
+    window.fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+  });
+
+  await page.addScriptTag({ path: 'src/common/i18n.js' });
+  await page.addScriptTag({ path: 'src/common/announce.js' });
+  await page.addScriptTag({ path: 'src/newtab/newtab.js' });
+
+  await page.waitForFunction(() => (window as any).NavableNewtabTools?.handleTranscript);
+
+  await page.evaluate(async () => {
+    // @ts-ignore
+    await (window as any).NavableNewtabTools.handleTranscript('What is the moon?', 'en');
+  });
+
+  await expect(page.locator('#micStatus')).toContainText('Offline mode is on');
+  await expect(page.locator('#navable-live-region-assertive')).toContainText('Offline mode is on');
+});
+
 test('new tab describes itself with doable next actions instead of blocking page commands', async ({ page }) => {
   await page.setContent(`
     <main>

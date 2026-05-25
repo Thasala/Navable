@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Navable",
-  "version": "0.1.0",
-  "description": "Baseline MV3 with announce helper + messaging + CI.",
+  "version": "0.1.1",
+  "description": "Voice and typed commands for accessible webpage navigation, summaries, and browser actions.",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
   "options_page": "src/options/index.html",
   "chrome_url_overrides": { "newtab": "src/newtab/newtab.html" },
   "icons": { "16": "assets/icon16.png", "48": "assets/icon48.png", "128": "assets/icon128.png" },
-  "permissions": ["tabs", "scripting", "storage", "tts", "offscreen"],
-  "host_permissions": ["https://*/*", "http://*/*"],
+  "permissions": ["tabs", "storage", "tts", "offscreen"],
+  "host_permissions": ["https://navable.onrender.com/*"],
   "background": { "service_worker": "src/background.js", "type": "module" },
   "content_scripts": [
     {

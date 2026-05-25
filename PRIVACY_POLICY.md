@@ -18,6 +18,8 @@ Navable does not sell user data.
 
 Navable does not use user data for advertising, creditworthiness, lending, or unrelated purposes.
 
+Navable's use and transfer of information received from Chrome APIs adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements.
+
 ## AI and backend features
 
 Some optional AI-assisted features may send a minimized page summary and the user's command to the Navable backend API. The backend may use an AI service to generate summaries, answers, translations, or transcriptions.

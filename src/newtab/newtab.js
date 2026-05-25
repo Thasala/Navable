@@ -959,6 +959,10 @@ function buildNewtabPageGuidanceMessage() {
   return `${summary} ${translate('newtab_suggestions_intro')} ${suggestions.join(' ')}`.trim();
 }
 
+function buildNewtabOfflineAssistantMessage() {
+  return translate('offline_assistant_mode');
+}
+
 function respondWithNewtabPageGuidance(sendResponse, details = {}) {
   const summary = translate('newtab_page_summary');
   const suggestions = buildNewtabActionSuggestions();
@@ -1375,8 +1379,7 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
       return true;
     }
     if (data?.error) {
-      setNewtabMicMessage(String(data.error), 'assertive');
-      return true;
+      directRequestFailure = String(data.error);
     }
   } catch (err) {
     directRequestFailure = err;
@@ -1390,7 +1393,17 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
   if (directRequestFailure) {
     console.warn('[Navable] newtab direct assistant request failed', directRequestFailure);
   }
-  setNewtabMicMessage(translate('answer_failed'), 'assertive');
+  const offlineSpeech = buildNewtabOfflineAssistantMessage();
+  rememberNewtabAssistantTurn({
+    input: q,
+    purpose,
+    speech: offlineSpeech,
+    answer: purpose === 'answer' ? offlineSpeech : '',
+    outputLanguage: currentOutputLanguage(),
+    detectedLanguage: turnContext.detectedLanguage || '',
+    recognitionProvider: turnContext.recognitionProvider || ''
+  });
+  setNewtabMicMessage(offlineSpeech, 'assertive');
   return true;
 }
 

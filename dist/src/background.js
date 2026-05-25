@@ -236,7 +236,9 @@ const OUTPUT_MESSAGES = {
     open_website_failed: 'Could not open that website.',
     missing_url: 'Missing website name or URL.',
     ai_answers_off: 'AI answers are off. Enable AI in options to ask general questions.',
-    answer_unavailable: 'I could not answer that right now.'
+    answer_unavailable: 'I could not answer that right now.',
+    offline_assistant_mode: 'Offline mode is on. The AI assistant is unavailable or turned off, but I can still navigate pages, read page details, fill forms, open known websites, and handle local commands.',
+    offline_page_mode: 'Offline mode is on. The AI assistant is unavailable, so I am using local page details.'
   },
   fr: {
     summary_unavailable: 'Le resume de la page n est pas disponible.',
@@ -255,7 +257,9 @@ const OUTPUT_MESSAGES = {
     open_website_failed: 'Impossible d ouvrir ce site.',
     missing_url: 'Nom du site ou URL manquant.',
     ai_answers_off: 'Les reponses IA sont desactivees. Activez l IA dans les options pour poser des questions generales.',
-    answer_unavailable: 'Je n ai pas pu repondre a cela pour le moment.'
+    answer_unavailable: 'Je n ai pas pu repondre a cela pour le moment.',
+    offline_assistant_mode: 'Le mode hors ligne est active. L assistant IA est indisponible ou desactive, mais je peux encore naviguer dans les pages, lire les details de la page, remplir des formulaires, ouvrir des sites connus et executer des commandes locales.',
+    offline_page_mode: 'Le mode hors ligne est active. L assistant IA est indisponible, donc j utilise les details locaux de la page.'
   },
   ar: {
     summary_unavailable: 'ملخص الصفحة غير متاح.',
@@ -274,7 +278,9 @@ const OUTPUT_MESSAGES = {
     open_website_failed: 'تعذر فتح هذا الموقع.',
     missing_url: 'اسم الموقع أو الرابط مفقود.',
     ai_answers_off: 'إجابات الذكاء الاصطناعي متوقفة. فعّل الذكاء الاصطناعي من الإعدادات لطرح أسئلة عامة.',
-    answer_unavailable: 'تعذر عليّ الإجابة عن ذلك الآن.'
+    answer_unavailable: 'تعذر عليّ الإجابة عن ذلك الآن.',
+    offline_assistant_mode: 'وضع عدم الاتصال مفعل. مساعد الذكاء الاصطناعي غير متاح أو متوقف، لكن ما زال بإمكاني التنقل في الصفحات، وقراءة تفاصيل الصفحة، وتعبئة النماذج، وفتح المواقع المعروفة، وتنفيذ الأوامر المحلية.',
+    offline_page_mode: 'وضع عدم الاتصال مفعل. مساعد الذكاء الاصطناعي غير متاح، لذلك أستخدم تفاصيل الصفحة المحلية.'
   }
 };
 
@@ -1520,6 +1526,97 @@ function buildFriendlyOrientation(structure, outputLanguage) {
 }
 
 const summaryCache = { url: null, outputLanguage: 'en', ts: 0, result: null };
+const ASSISTANT_OFFLINE_RETRY_MS = 30 * 1000;
+let assistantOfflineUntil = 0;
+let assistantOfflineReason = '';
+
+function browserReportsOffline() {
+  try {
+    const root = typeof globalThis !== 'undefined' ? globalThis : null;
+    return !!(root && root.navigator && root.navigator.onLine === false);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function assistantOfflineModeActive() {
+  if (browserReportsOffline()) {
+    assistantOfflineReason = 'browser_offline';
+    return true;
+  }
+  return assistantOfflineUntil > Date.now();
+}
+
+function markAssistantOffline(reason) {
+  assistantOfflineReason = String(reason || 'assistant_unavailable');
+  assistantOfflineUntil = Date.now() + ASSISTANT_OFFLINE_RETRY_MS;
+}
+
+function markAssistantOnline() {
+  assistantOfflineUntil = 0;
+  assistantOfflineReason = '';
+}
+
+function offlineAssistantSpeech(purpose, structure, outputLanguage) {
+  const normalizedPurpose = String(purpose || '').trim().toLowerCase();
+  if ((normalizedPurpose === 'summary' || normalizedPurpose === 'page') && structure) {
+    return [
+      outputMessage('offline_page_mode', outputLanguage),
+      buildFriendlyOrientation(structure, outputLanguage),
+      outputMessage('try_commands', outputLanguage)
+    ].filter(Boolean).join(' ');
+  }
+  return outputMessage('offline_assistant_mode', outputLanguage);
+}
+
+async function buildOfflineAssistantResult(input, purpose, structure, outputLanguage, sourceTabId, options = {}) {
+  await ensureOutputMessages(outputLanguage);
+  const text = String(input || '').trim();
+  const normalizedPurpose = String(purpose || 'answer').trim().toLowerCase() || 'answer';
+  const localPlan = structure ? stubPlanner(text, structure, outputLanguage, true) : { steps: [], matched: false, description: '' };
+  const speech = localPlan.description || offlineAssistantSpeech(normalizedPurpose, structure, outputLanguage);
+  const plan = localPlan.steps && localPlan.steps.length ? { steps: localPlan.steps } : { steps: [] };
+  const mode = normalizedPurpose === 'summary' || normalizedPurpose === 'page' ? 'page' : 'answer';
+  const reason = options.reason || assistantOfflineReason || 'assistant_unavailable';
+
+  await rememberAssistantTurn(sourceTabId, {
+    input: text,
+    purpose: normalizedPurpose,
+    outputLanguage,
+    structure,
+    speech,
+    description: speech,
+    summary: normalizedPurpose === 'summary' || normalizedPurpose === 'page' ? speech : '',
+    answer: normalizedPurpose === 'answer' ? speech : '',
+    plan,
+    detectedLanguage: options.detectedLanguage || '',
+    recognitionProvider: options.recognitionProvider || '',
+    pageUrl: options.pageUrl || (structure && structure.url ? structure.url : '')
+  });
+
+  return {
+    ok: true,
+    offline: true,
+    offlineMode: true,
+    offlineReason: reason,
+    structure,
+    mode,
+    speech,
+    description: speech,
+    summary: normalizedPurpose === 'summary' || normalizedPurpose === 'page' ? speech : '',
+    answer: normalizedPurpose === 'answer' ? speech : '',
+    suggestions: [],
+    plan,
+    action: null,
+    feedback: buildFeedback(localPlan.matched ? 'success' : 'blocked', speech, {
+      command: 'assistant',
+      offlineMode: true,
+      reason,
+      purpose: normalizedPurpose,
+      matched: !!localPlan.matched
+    })
+  };
+}
 
 async function loadSettings() {
   return new Promise((resolve) => {
@@ -1851,6 +1948,20 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     }
   }
 
+  if (settings.aiEnabled === false) {
+    return await buildOfflineAssistantResult(assistantInput, purpose, structure, outputLanguage, sourceTabId, {
+      ...options,
+      reason: 'ai_disabled'
+    });
+  }
+
+  if (assistantOfflineModeActive()) {
+    return await buildOfflineAssistantResult(assistantInput, purpose, structure, outputLanguage, sourceTabId, {
+      ...options,
+      reason: assistantOfflineReason || 'assistant_unavailable'
+    });
+  }
+
   try {
     const response = await fetch(buildBackendApiUrl('/api/assistant'), {
       method: 'POST',
@@ -1865,6 +1976,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     });
     const data = await response.json().catch(() => ({}));
     if (response.ok) {
+      markAssistantOnline();
       const normalized = normalizeAssistantResult(data);
       if (normalized.action && normalized.action.type === 'open_site') {
         const openResult = await openSiteInBrowser(
@@ -1919,15 +2031,21 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
       });
       return { ok: true, structure, ...normalized };
     }
-    if (data && typeof data.error === 'string' && data.error.trim()) {
-      return { ok: false, structure, error: data.error.trim() };
-    }
+    markAssistantOffline(data && typeof data.error === 'string' && data.error.trim()
+      ? data.error.trim()
+      : `assistant_http_${response.status || 'error'}`);
+    return await buildOfflineAssistantResult(assistantInput, purpose, structure, outputLanguage, sourceTabId, {
+      ...options,
+      reason: assistantOfflineReason
+    });
   } catch (err) {
     console.warn('[Navable] assistant backend failed', err);
+    markAssistantOffline('assistant_unreachable');
+    return await buildOfflineAssistantResult(assistantInput, purpose, structure, outputLanguage, sourceTabId, {
+      ...options,
+      reason: assistantOfflineReason
+    });
   }
-
-  await outputMessagesReady;
-  return { ok: false, structure, error: outputMessage('answer_unavailable', outputLanguage) };
 }
 
 async function runPlanner(command, requestedOutputLanguage, preferIntentFallback, options = {}) {
@@ -2023,6 +2141,9 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
 
         const result = {
           ok: true,
+          offline: !!assistantResult.offline,
+          offlineMode: !!assistantResult.offlineMode,
+          offlineReason: assistantResult.offlineReason || '',
           plan: assistantResult.plan,
           structure,
           description,
@@ -2030,10 +2151,12 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           suggestions: assistantResult.suggestions,
           feedback
         };
-        summaryCache.url = structure && structure.url ? structure.url : null;
-        summaryCache.outputLanguage = outputLanguage;
-        summaryCache.ts = Date.now();
-        summaryCache.result = result;
+        if (!assistantResult.offlineMode) {
+          summaryCache.url = structure && structure.url ? structure.url : null;
+          summaryCache.outputLanguage = outputLanguage;
+          summaryCache.ts = Date.now();
+          summaryCache.result = result;
+        }
         return result;
       }
       // If AI path fails, fall back to local stub planner.

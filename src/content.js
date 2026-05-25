@@ -1670,6 +1670,14 @@
     return parts.join(' ');
   }
 
+  function buildOfflineAssistantMessage(purpose, structure) {
+    var normalizedPurpose = String(purpose || '').trim().toLowerCase();
+    if ((normalizedPurpose === 'summary' || normalizedPurpose === 'page') && structure) {
+      return (translate('offline_page_mode') + ' ' + describeStructure(structure)).trim();
+    }
+    return translate('offline_assistant_mode');
+  }
+
   function listHeadingsText(structure) {
     if (!structure || !structure.headings || !structure.headings.length) {
       return 'No headings on this page.';
@@ -6916,15 +6924,7 @@
         }, { mode: 'assertive' });
       }
       if (directData && directData.error) {
-        return speakFeedback({
-          status: 'failure',
-          message: String(directData.error),
-          details: {
-            command: 'assistant',
-            purpose: purpose,
-            source: 'direct'
-          }
-        }, { mode: 'assertive' });
+        directRequestFailure = String(directData.error);
       }
     } catch (err2) {
       directRequestFailure = err2;
@@ -6938,12 +6938,25 @@
     if (directRequestFailure) {
       console.warn('[Navable] assistant direct request failed', directRequestFailure);
     }
+    var offlineSpeech = buildOfflineAssistantMessage(purpose, structure);
+    rememberLocalAssistantTurn({
+      input: assistantInput,
+      purpose: purpose,
+      structure: structure,
+      speech: offlineSpeech,
+      summary: purpose === 'summary' || purpose === 'page' ? offlineSpeech : '',
+      answer: purpose === 'answer' ? offlineSpeech : '',
+      outputLanguage: currentOutputLanguage(),
+      detectedLanguage: context.detectedLanguage || '',
+      recognitionProvider: context.recognitionProvider || ''
+    });
     return speakFeedback({
-      status: 'failure',
-      message: translate('answer_failed'),
+      status: 'blocked',
+      message: offlineSpeech,
       details: {
         command: 'assistant',
-        purpose: purpose
+        purpose: purpose,
+        offlineMode: true
       }
     }, { mode: 'assertive' });
   }
