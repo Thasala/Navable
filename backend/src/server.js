@@ -289,13 +289,19 @@ function sanitizePlan(rawPlan) {
   if (!rawPlan || !Array.isArray(rawPlan.steps)) return { steps: [] };
   const steps = rawPlan.steps
     .filter((step) => step && typeof step === 'object')
-    .map((step) => ({
-      action: typeof step.action === 'string' ? step.action : '',
-      label: step.label,
-      n: step.n,
-      direction: step.direction || step.dir,
-      target: step.target || step.targetType
-    }))
+    .map((step) => {
+      const sanitized = {
+        action: typeof step.action === 'string' ? step.action : '',
+        label: typeof step.label === 'string' ? step.label.trim().slice(0, 200) : step.label,
+        n: Number.isFinite(Number(step.n)) ? Number(step.n) : undefined,
+        direction: step.direction || step.dir,
+        target: step.target || step.targetType
+      };
+      if (typeof step.value === 'string') sanitized.value = step.value.slice(0, 2000);
+      if (typeof step.prompt === 'string') sanitized.prompt = step.prompt.slice(0, 500);
+      if (Number.isFinite(Number(step.pauseMs))) sanitized.pauseMs = Math.max(0, Math.min(5000, Number(step.pauseMs)));
+      return sanitized;
+    })
     .filter((step) => ALLOWED_ACTIONS.has(step.action));
   return { steps };
 }
@@ -343,13 +349,24 @@ function sanitizeResolvedSiteResult(candidate) {
   };
 }
 
+function wantsRemoteAutomation(value) {
+  return value === true;
+}
+
 function getOpenAiClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }
 
-async function callOpenAiSummarize(command, pageStructure, sessionContext, settings = DEFAULT_SETTINGS, outputLanguage = 'en') {
+async function callOpenAiSummarize(
+  command,
+  pageStructure,
+  sessionContext,
+  settings = DEFAULT_SETTINGS,
+  outputLanguage = 'en',
+  allowRemoteAutomation = false
+) {
   if (settings.aiEnabled === false) {
     return null;
   }
@@ -358,6 +375,35 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
   if (!client) return null;
   // Use the cheapest suitable model for short page summaries.
   const model = settings.model || DEFAULT_SETTINGS.model;
+
+  const automationPrompt = allowRemoteAutomation
+    ? [
+        '- If the user asked for an action you can do with the listed tools, propose a deterministic plan for the extension to execute. If the action is not possible from visible pageStructure, say exactly what visible control or content is missing.',
+        '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, fill_text, describe_page, wait_for_user_input, move_heading.',
+        '- If you propose a plan, use ONLY those actions in plan.steps. Use labels that exactly match visible pageStructure labels when possible.',
+        '- Never propose filling passwords, payment fields, government IDs, one-time codes, or other sensitive values.',
+        '',
+        'You MUST respond with a single JSON object of the form:',
+        '{',
+        '  "friendlySummary": string,',
+        '  "suggestions": string[],',
+        '  "plan": { "steps": [',
+        '    { "action": string, "direction"?: "up"|"down"|"top"|"bottom"|"next"|"prev", "target"?: "heading"|"link"|"button"|"input", "label"?: string, "n"?: number, "value"?: string, "prompt"?: string, "pauseMs"?: number }',
+        '  ] }',
+        '}',
+        '',
+        'If you do not want to propose a plan, set "plan": { "steps": [] }.'
+      ]
+    : [
+        '- If the user asked for an action, explain the visible control or content the packaged extension can use.',
+        '- Do not return executable browser actions, automation steps, or navigation commands. The packaged extension handles those locally.',
+        '',
+        'You MUST respond with a single JSON object of the form:',
+        '{',
+        '  "friendlySummary": string,',
+        '  "suggestions": string[]',
+        '}'
+      ];
 
   const systemPrompt = [
     'You are an accessibility-oriented navigator assistant for a browser extension called Navable.',
@@ -370,10 +416,9 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
     '- If the command asks about the current page generally, give a concise orientation: 2–4 short sentences on what the page is, key sections/headings/controls, and any focused element worth noting.',
     '- If the command asks you to answer or explain a question shown on the current page, answer from the visible page content instead of giving a generic orientation.',
     '- If the command is a short continuation such as "ok go ahead", "read them", "do it", or "create a post", resolve it against sessionContext and the current pageStructure instead of asking what the user means.',
-    '- Do not end with generic prompts like "What would you like me to do next?" If the user asked for an action you can do with the listed tools, propose that plan. If the action is not possible from visible pageStructure, say exactly what visible control or content is missing.',
+    '- Do not end with generic prompts like "What would you like me to do next?"',
     '- When pageStructure shows answer choices or form options, identify the best visible answer first and briefly explain why it fits the visible question.',
     '- Keep friendlySummary focused on the current answer/orientation. Do not include speculative "next action" prompts inside friendlySummary.',
-    '- Optionally propose a deterministic plan for the extension to execute via existing tools.',
     '- Understand implicit or indirect requests (e.g., “what is this page?”, “help me here”, “what is the answer to the question on this page”, and non-English variants). Infer whether the user wants orientation or page-local question answering from the command and pageStructure.',
     '- The command may be in any language; interpret intent from context and pageStructure.',
     '- Arabic may be Modern Standard Arabic, dialectal Arabic, or Arabic-English code switching. Treat colloquial Arabic as valid input.',
@@ -382,22 +427,11 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
     '- Only use the information provided in pageStructure and command; do not hallucinate hidden content.',
     '- Use sessionContext only as a short continuity hint. If it conflicts with the current pageStructure, prefer pageStructure.',
     '- If the command clearly refers to the current page, do not ask the user to clarify which page or which question they mean unless the visible page data is truly insufficient.',
-    '- Assume the extension can only perform these actions: scroll, read_title, read_selection, read_focused, read_heading, focus_element, click_element, describe_page, wait_for_user_input, move_heading.',
-    '- If you propose a plan, use ONLY those actions in plan.steps.',
     '- Suggestions must also be actions the extension can execute. Prefer exact voice commands like "Try: read the title.", "Try: move to the next heading.", "Try: open first link.", or "Try: scroll down." Do not suggest tasks outside these extension capabilities.',
     '- When referencing elements (links, headings, buttons, inputs), prefer their labels from the structure.',
     '- Keep output concise and friendly; avoid long lists and repeating raw counts unless helpful.',
     '',
-    'You MUST respond with a single JSON object of the form:',
-    '{',
-    '  "friendlySummary": string,',
-    '  "suggestions": string[],',
-    '  "plan": { "steps": [',
-    '    { "action": string, "direction"?: "up"|"down"|"top"|"bottom"|"next"|"prev", "target"?: "heading"|"link"|"button"|"input", "label"?: string, "n"?: number }',
-    '  ] }',
-    '}',
-    '',
-    'If you do not want to propose a plan, set "plan": { "steps": [] }.'
+    ...automationPrompt
   ].join('\n');
 
   const userContent = JSON.stringify({
@@ -427,7 +461,7 @@ async function callOpenAiSummarize(command, pageStructure, sessionContext, setti
   return {
     friendlySummary: parsed.friendlySummary,
     suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
-    plan: sanitizePlan(parsed.plan)
+    plan: allowRemoteAutomation ? sanitizePlan(parsed.plan) : { steps: [] }
   };
 }
 
@@ -436,7 +470,8 @@ async function callOpenAiAnswerQuestion(
   sessionContext,
   settings = DEFAULT_SETTINGS,
   outputLanguage = 'en',
-  resolvedQuestion = ''
+  resolvedQuestion = '',
+  allowRemoteAutomation = false
 ) {
   if (settings.aiEnabled === false) {
     return null;
@@ -446,6 +481,19 @@ async function callOpenAiAnswerQuestion(
   if (!client) return null;
 
   const model = settings.model || DEFAULT_SETTINGS.model;
+  const actionPrompt = allowRemoteAutomation
+    ? [
+        'Navable can open websites and web apps in the browser for the user.',
+        'If the user is asking Navable to open, navigate to, visit, launch, bring up, or take them to a website, web app, or named online service, do not refuse or say that you cannot do it.',
+        'For those browser-navigation requests, return an action object with type "open_site" and a short query such as "facebook", "gmail", or a URL. Keep answer empty or use a very short acknowledgment.',
+        'Return exactly one JSON object: { "answer": string, "action": null | { "type": "open_site", "query": string, "newTab": boolean } }.'
+      ]
+    : [
+        'The packaged extension handles website navigation locally. Do not return navigation actions.',
+        'If the user is asking Navable to open, navigate to, visit, launch, bring up, or take them to a website, web app, or named online service, give a very short acknowledgement and do not include an action.',
+        'Return exactly one JSON object: { "answer": string }.'
+      ];
+
   const completion = await client.chat.completions.create({
     model,
     response_format: { type: 'json_object' },
@@ -456,23 +504,20 @@ async function callOpenAiAnswerQuestion(
           'You are a concise voice-first assistant for a browser extension called Navable.',
           `Answer in outputLanguage "${normalizeOutputLanguage(outputLanguage)}" unless the user explicitly requests another language.`,
           'The user asked a general informational question.',
-          'Navable can open websites and web apps in the browser for the user.',
           'You may receive a sessionContext object with the previous purpose, last entity, last assistant reply, and a sanitized lastPage summary from the same tab.',
           'You may also receive a resolvedQuestion string. If resolvedQuestion is non-empty, treat it as the fully disambiguated version of the current request.',
           'The spoken question may be colloquial Arabic, dialectal Arabic, informal English, or Arabic-English code switching.',
           'Use sessionContext only when it clearly helps resolve a short follow-up such as "tell me more" or "what about that".',
           'If resolvedQuestion or sessionContext already identifies the topic, answer directly and do not ask the user to specify the topic again.',
           'If sessionContext conflicts with the current question, prefer the current question.',
-          'If the user is asking Navable to open, navigate to, visit, launch, bring up, or take them to a website, web app, or named online service, do not refuse or say that you cannot do it.',
-          'For those browser-navigation requests, return an action object with type "open_site" and a short query such as "facebook", "gmail", or a URL. Keep answer empty or use a very short acknowledgment.',
+          ...actionPrompt,
           'If the user says "app" but the destination is also available in a browser, treat it as an "open_site" request for the browser version.',
           'If the user is asking for information about the service instead of asking to navigate there, answer normally and return action null.',
           'Only return an action when the navigation intent is clear.',
           'Reply with 1 to 3 short sentences that are useful when read aloud.',
           'Do not use markdown, lists, headings, or emojis.',
           'If the question is ambiguous, ask one short clarifying question instead of guessing.',
-          'If you do not know, say so briefly.',
-          'Return exactly one JSON object: { "answer": string, "action": null | { "type": "open_site", "query": string, "newTab": boolean } }.'
+          'If you do not know, say so briefly.'
         ].join('\n')
       },
       {
@@ -497,7 +542,7 @@ async function callOpenAiAnswerQuestion(
 
   return {
     answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
-    action: sanitizeAssistantAction(parsed.action)
+    action: allowRemoteAutomation ? sanitizeAssistantAction(parsed.action) : null
   };
 }
 
@@ -571,7 +616,15 @@ function buildAssistantSpeech(primaryText, suggestions = []) {
   return parts.join(' ').trim();
 }
 
-async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, outputLanguage = 'en', purpose = 'auto', sessionContext = null) {
+async function runAssistant(
+  input,
+  pageStructure,
+  settings = DEFAULT_SETTINGS,
+  outputLanguage = 'en',
+  purpose = 'auto',
+  sessionContext = null,
+  allowRemoteAutomation = false
+) {
   const resolvedOutputLanguage = normalizeOutputLanguage(outputLanguage);
   const outputCatalog = await getOutputCatalog(resolvedOutputLanguage, settings);
   const text = String(input || '').trim();
@@ -602,7 +655,14 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
   if (wantsPageAssistant) {
     let result = null;
     try {
-      result = await callOpenAiSummarize(text, pageStructure, sessionContext, settings, resolvedOutputLanguage);
+      result = await callOpenAiSummarize(
+        text,
+        pageStructure,
+        sessionContext,
+        settings,
+        resolvedOutputLanguage,
+        allowRemoteAutomation
+      );
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[Navable backend] OpenAI page assistant error:', err);
@@ -612,9 +672,9 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
       (result && result.friendlySummary) || buildFallbackSummary(pageStructure, resolvedOutputLanguage, outputCatalog);
     const suggestions = buildFallbackSuggestions(pageStructure, resolvedOutputLanguage, outputCatalog);
     const plan =
-      (result && result.plan && Array.isArray(result.plan.steps)
+      allowRemoteAutomation && result && result.plan && Array.isArray(result.plan.steps)
         ? sanitizePlan(result.plan)
-        : { steps: [] });
+        : { steps: [] };
 
     return {
       mode: 'page',
@@ -642,7 +702,8 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
       sessionContext,
       settings,
       resolvedOutputLanguage,
-      resolvedAnswer.resolvedQuestion !== resolvedAnswer.question ? resolvedAnswer.resolvedQuestion : ''
+      resolvedAnswer.resolvedQuestion !== resolvedAnswer.question ? resolvedAnswer.resolvedQuestion : '',
+      allowRemoteAutomation
     );
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -661,7 +722,8 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
         sessionContext,
         settings,
         resolvedOutputLanguage,
-        resolvedAnswer.resolvedQuestion
+        resolvedAnswer.resolvedQuestion,
+        allowRemoteAutomation
       );
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -669,7 +731,7 @@ async function runAssistant(input, pageStructure, settings = DEFAULT_SETTINGS, o
     }
   }
 
-  const action = sanitizeAssistantAction(answerResult && answerResult.action);
+  const action = allowRemoteAutomation ? sanitizeAssistantAction(answerResult && answerResult.action) : null;
   if (action) {
     return {
       mode: 'action',
@@ -880,12 +942,21 @@ app.post('/api/resolve-site', async (req, res) => {
 
 app.post('/api/assistant', async (req, res) => {
   try {
-    const { input, pageStructure, outputLanguage, purpose, sessionContext } = req.body || {};
+    const { input, pageStructure, outputLanguage, purpose, sessionContext, allowRemoteAutomation } = req.body || {};
     if (!input || typeof input !== 'string' || !input.trim()) {
       return res.status(400).json({ error: 'Missing input' });
     }
 
-    const result = await runAssistant(input, pageStructure || null, runtimeSettings, outputLanguage, purpose || 'auto', sessionContext || null);
+    const canReturnAutomation = wantsRemoteAutomation(allowRemoteAutomation);
+    const result = await runAssistant(
+      input,
+      pageStructure || null,
+      runtimeSettings,
+      outputLanguage,
+      purpose || 'auto',
+      sessionContext || null,
+      canReturnAutomation
+    );
     if (result && result.ok === false) {
       return res.status(result.status || 503).json({ error: result.error || 'Assistant unavailable' });
     }
@@ -896,8 +967,8 @@ app.post('/api/assistant', async (req, res) => {
       summary: result.summary || '',
       answer: result.answer || '',
       suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
-      plan: result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] },
-      action: sanitizeAssistantAction(result.action)
+      plan: canReturnAutomation && result.plan && Array.isArray(result.plan.steps) ? result.plan : { steps: [] },
+      action: canReturnAutomation ? sanitizeAssistantAction(result.action) : null
     });
   } catch (err) {
     // eslint-disable-next-line no-console

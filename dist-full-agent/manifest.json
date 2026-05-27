@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Navable",
+  "name": "Navable Full Agent",
   "version": "0.1.2",
-  "description": "Voice and typed commands for accessible webpage navigation, summaries, and browser actions.",
+  "version_name": "0.1.2 full-agent private",
+  "description": "Private sideload build with AI-generated action plans for accessible webpage navigation.",
   "action": { "default_title": "Navable", "default_popup": "src/popup/popup.html" },
   "options_page": "src/options/index.html",
   "chrome_url_overrides": { "newtab": "src/newtab/newtab.html" },

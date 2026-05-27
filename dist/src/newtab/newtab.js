@@ -188,7 +188,7 @@ function looksLikeUrl(text) {
   return text.includes('.') || text.includes('/') || text.includes(':');
 }
 
-function resolveQueryToUrl(raw) {
+function resolveQueryInput(raw) {
   const q0 = (raw || '').trim();
   if (!q0) return null;
 
@@ -199,11 +199,11 @@ function resolveQueryToUrl(raw) {
     .trim();
 
   if (looksLikeUrl(q)) {
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(q)) return q;
-    return `https://${q}`;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(q)) return { type: 'url', url: q };
+    return { type: 'url', url: `https://${q}` };
   }
 
-  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  return { type: 'search', text: q };
 }
 
 async function openUrl(url) {
@@ -217,6 +217,33 @@ async function openUrl(url) {
     // fall through
   }
   window.location.assign(url);
+}
+
+async function searchDefaultProvider(text) {
+  const query = String(text || '').trim();
+  if (!query) return false;
+  try {
+    if (chrome?.search?.query) {
+      await chrome.search.query({ text: query, disposition: 'CURRENT_TAB' });
+      return true;
+    }
+  } catch (_err) {
+    // fall through
+  }
+  return false;
+}
+
+async function openSearchOrUrl(raw) {
+  const destination = resolveQueryInput(raw);
+  if (!destination) return;
+  if (destination.type === 'url') {
+    await openUrl(destination.url);
+    return;
+  }
+  const searched = await searchDefaultProvider(destination.text);
+  if (!searched) {
+    setNewtabMicMessage('Search is unavailable in this browser.', 'assertive');
+  }
 }
 
 function announce(text, mode = 'polite') {
@@ -1041,7 +1068,9 @@ async function ensureNewtabRecognizer() {
       lang: newtabVoiceLang,
       interimResults: false,
       continuous: true,
-      autoRestart: true
+      autoRestart: true,
+      preferBackend: false,
+      nativeFallback: true
     });
 
     newtabRecognizer.on('result', (ev) => {
@@ -1227,12 +1256,7 @@ async function openSiteFromVoice(query) {
     // fall through
   }
 
-  const url = resolveQueryToUrl(q);
-  if (!url) {
-    setNewtabMicMessage(translate('missing_url'), 'assertive');
-    return;
-  }
-  await openUrl(url);
+  await openSearchOrUrl(q);
 }
 
 async function navigateBrowserHistoryFromVoice(dir) {
@@ -1360,10 +1384,6 @@ async function assistantQuestionFromVoice(questionText, turnContext = {}) {
       })
     });
     const data = await response.json().catch(() => ({}));
-    if (response.ok && data?.action?.type === 'open_site' && data.action.query) {
-      await openSiteFromVoice(data.action.query);
-      return true;
-    }
     if (response.ok && data?.speech) {
       const rememberedPurpose = purpose === 'auto' ? (data.mode === 'page' ? 'page' : 'answer') : purpose;
       rememberNewtabAssistantTurn({
@@ -1716,8 +1736,7 @@ function wireNewtab() {
   if (searchForm && searchInput) {
     searchForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const url = resolveQueryToUrl(searchInput.value);
-      await openUrl(url);
+      await openSearchOrUrl(searchInput.value);
     });
   }
 

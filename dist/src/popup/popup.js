@@ -1,5 +1,6 @@
 function isSupportedTab(tab) {
-  if (!tab || !tab.id || !tab.url) return false;
+  if (!tab || !tab.id) return false;
+  if (!tab.url) return true;
   return /^https?:/i.test(tab.url) || /^file:/i.test(tab.url);
 }
 

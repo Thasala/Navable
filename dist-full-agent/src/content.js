@@ -6889,11 +6889,24 @@
           outputLanguage: currentOutputLanguage(),
           pageStructure: structure,
           purpose: purpose,
-          sessionContext: sessionContext
+          sessionContext: sessionContext,
+          allowRemoteAutomation: true
         })
       });
       var directData = await directResponse.json().catch(function () { return {}; });
+      if (
+        directResponse.ok &&
+        directData &&
+        directData.action &&
+        directData.action.type === 'open_site' &&
+        directData.action.query
+      ) {
+        return openSiteRequest(directData.action.query, directData.action.newTab !== false);
+      }
       if (directResponse.ok && directData && directData.speech) {
+        if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
+          await runPlan(directData.plan);
+        }
         var directRememberedPurpose = purpose === 'auto' ? (directData.mode === 'page' ? 'page' : 'answer') : purpose;
         rememberLocalAssistantTurn({
           input: assistantInput,

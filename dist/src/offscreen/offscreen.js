@@ -73,8 +73,8 @@
         interimResults: false,
         continuous: true,
         autoRestart: true,
-        preferBackend: true,
-        nativeFallback: false
+        preferBackend: msg.preferBackend === true,
+        nativeFallback: msg.nativeFallback !== false
       });
       session.recognizer = recognizer;
       activeSession = session;

@@ -1,0 +1,224 @@
+/* ============================================================
+   Navable — Options Page Styles
+   ============================================================ */
+
+.options-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-lg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.3s ease;
+}
+
+/* -----------------------------------------------------------
+   Header
+   ----------------------------------------------------------- */
+.options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-lg);
+  margin-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+  position: relative;
+}
+
+.options-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.options-header__logo {
+  height: 32px;
+  width: auto;
+}
+
+.options-header__title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.options-header__save-status {
+  font-size: 13px;
+  color: var(--color-success);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.options-header__save-status.show {
+  animation: saveStatusFade 3s ease forwards;
+}
+
+/* -----------------------------------------------------------
+   Main Content
+   ----------------------------------------------------------- */
+.options-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* -----------------------------------------------------------
+   Section
+   ----------------------------------------------------------- */
+.options-section {
+  opacity: 0;
+  animation: fadeInUp 0.3s ease both;
+}
+
+.options-section:nth-child(1) { animation-delay: 0.08s; }
+.options-section:nth-child(2) { animation-delay: 0.16s; }
+.options-section:nth-child(3) { animation-delay: 0.24s; }
+.options-section:nth-child(4) { animation-delay: 0.32s; }
+.options-section:nth-child(5) { animation-delay: 0.4s; }
+
+.options-section__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-md) 0;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.options-section__description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-md) 0;
+  line-height: 1.5;
+}
+
+.options-voice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.options-voice__copy {
+  min-width: 0;
+}
+
+.options-voice .options-section__title {
+  margin-bottom: var(--space-xs);
+}
+
+.options-voice .options-section__description {
+  margin-bottom: 0;
+}
+
+/* -----------------------------------------------------------
+   Field
+   ----------------------------------------------------------- */
+.options-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.options-field:last-child {
+  margin-bottom: 0;
+}
+
+.options-field--toggle {
+  align-items: flex-start;
+}
+
+.options-field:has(input:disabled) {
+  opacity: 0.72;
+}
+
+.options-field__label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.options-field__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.options-field__description {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* -----------------------------------------------------------
+   Footer
+   ----------------------------------------------------------- */
+.options-footer {
+  padding: var(--space-lg) 0;
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.options-footer p {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+/* -----------------------------------------------------------
+   Responsive
+   ----------------------------------------------------------- */
+@media (max-width: 640px) {
+  .options-container {
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .options-field {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .options-field--toggle {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .options-voice {
+    align-items: flex-start;
+  }
+
+  .select-field {
+    width: 100%;
+  }
+}
+
+/* -----------------------------------------------------------
+   Focus styles
+   ----------------------------------------------------------- */
+.options-container *:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-glow-accent);
+  border-radius: var(--radius-sm);
+}
+
+.select-field:focus-visible {
+  border-radius: var(--radius-md);
+}
+
+.toggle-switch__input:focus-visible + .toggle-switch__track {
+  border-radius: var(--radius-pill);
+}
+
+.btn-secondary:focus-visible {
+  border-radius: var(--radius-pill);
+}

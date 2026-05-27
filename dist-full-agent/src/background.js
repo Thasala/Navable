@@ -1611,6 +1611,20 @@ async function loadSettings() {
   });
 }
 
+function normalizeAssistantAction(data) {
+  const raw = data && data.action && typeof data.action === 'object' ? data.action : null;
+  if (!raw || Array.isArray(raw)) return null;
+  const type = typeof raw.type === 'string' ? raw.type.trim().toLowerCase() : '';
+  if (type !== 'open_site') return null;
+  const query = typeof raw.query === 'string' ? raw.query.trim() : '';
+  if (!query) return null;
+  return {
+    type: 'open_site',
+    query,
+    newTab: raw.newTab !== false
+  };
+}
+
 function stripOpenIntentPrefixes(text) {
   let value = String(text || '').trim().toLowerCase();
   if (!value) return '';
@@ -1752,6 +1766,8 @@ function normalizeAssistantResult(data) {
   const answer = data && typeof data.answer === 'string' ? data.answer.trim() : '';
   const speech = data && typeof data.speech === 'string' ? data.speech.trim() : '';
   const suggestions = Array.isArray(data && data.suggestions) ? data.suggestions : [];
+  const plan = data && data.plan && Array.isArray(data.plan.steps) ? data.plan : { steps: [] };
+  const action = normalizeAssistantAction(data);
   const description = speech || [summary, suggestions.join(' ')].filter(Boolean).join(' ').trim();
   return {
     mode: data && typeof data.mode === 'string' ? data.mode : 'answer',
@@ -1760,10 +1776,8 @@ function normalizeAssistantResult(data) {
     summary,
     answer,
     suggestions,
-    // Remote assistant responses are data only. Browser actions and page
-    // manipulation stay in the packaged extension's deterministic planner.
-    plan: { steps: [] },
-    action: null
+    plan,
+    action
   };
 }
 
@@ -1938,13 +1952,51 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
         outputLanguage,
         pageStructure: structure,
         purpose,
-        sessionContext
+        sessionContext,
+        allowRemoteAutomation: true
       })
     });
     const data = await response.json().catch(() => ({}));
     if (response.ok) {
       markAssistantOnline();
       const normalized = normalizeAssistantResult(data);
+      if (normalized.action && normalized.action.type === 'open_site') {
+        const openResult = await openSiteInBrowser(
+          normalized.action.query,
+          normalized.action.newTab,
+          outputLanguage,
+          { sourceTabId, announce: false, settings }
+        );
+        if (!openResult.ok) {
+          return { ok: false, structure, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
+        }
+
+        const actionSpeech = openResult.speech || normalized.speech || '';
+        await rememberAssistantTurn(sourceTabId, {
+          input: assistantInput,
+          purpose: 'answer',
+          outputLanguage,
+          speech: actionSpeech,
+          detectedLanguage: options.detectedLanguage || '',
+          recognitionProvider: options.recognitionProvider || '',
+          pageUrl: openResult.url || ''
+        });
+
+        return {
+          ok: true,
+          structure,
+          mode: 'action',
+          speech: actionSpeech,
+          description: actionSpeech,
+          summary: '',
+          answer: '',
+          suggestions: [],
+          plan: { steps: [] },
+          action: normalized.action,
+          url: openResult.url || ''
+        };
+      }
+
       await rememberAssistantTurn(sourceTabId, {
         input: assistantInput,
         purpose,
@@ -2018,7 +2070,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             details: cachedFeedback.details
           });
         }
-        if (cached.offlineMode === true && cached.plan && cached.plan.steps && cached.plan.steps.length) {
+        if (cached.plan && cached.plan.steps && cached.plan.steps.length) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: cached.plan,
@@ -2058,7 +2110,6 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           });
         }
         if (
-          assistantResult.offlineMode === true &&
           assistantResult.plan &&
           assistantResult.plan.steps &&
           assistantResult.plan.steps.length
@@ -2820,7 +2871,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (
         res &&
         res.ok === true &&
-        res.offlineMode === true &&
         msg.autoExecutePlan !== false &&
         (msg.pageContext || res.mode === 'page') &&
         res.plan &&

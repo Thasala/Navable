@@ -116,6 +116,13 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
         });
       }
     },
+    search: {
+      _queries: [],
+      query(queryInfo) {
+        chrome.search._queries.push({ ...(queryInfo || {}) });
+        return Promise.resolve();
+      }
+    },
     runtime: {
       _listeners: [],
       onMessage: {
@@ -177,16 +184,6 @@ if (typeof window !== 'undefined' && typeof chrome === 'undefined') {
   };
 }
 
-const NAVABLE_NEW_TAB_URL = (() => {
-  try {
-    return chrome && chrome.runtime && chrome.runtime.getURL
-      ? String(chrome.runtime.getURL('src/newtab/newtab.html'))
-      : '';
-  } catch (_err) {
-    return '';
-  }
-})();
-
 const DEFAULT_BACKEND_BASE_URL = 'https://navable.onrender.com';
 const OFFSCREEN_SPEECH_DOCUMENT = 'src/offscreen/offscreen.html';
 const MICROPHONE_PERMISSION_PAGE = 'src/permissions/microphone.html';
@@ -233,6 +230,7 @@ const OUTPUT_MESSAGES = {
     suggestion_heading: 'Try: move to the next heading.',
     suggestion_open_link: 'Try: open first link.',
     opening_value: 'Opening {value}.',
+    searching_value: 'Searching for {value}.',
     open_website_failed: 'Could not open that website.',
     missing_url: 'Missing website name or URL.',
     ai_answers_off: 'AI answers are off. Enable AI in options to ask general questions.',
@@ -254,6 +252,7 @@ const OUTPUT_MESSAGES = {
     suggestion_heading: 'Essayez : va au titre suivant.',
     suggestion_open_link: 'Essayez : ouvre le premier lien.',
     opening_value: 'Ouverture de {value}.',
+    searching_value: 'Recherche de {value}.',
     open_website_failed: 'Impossible d ouvrir ce site.',
     missing_url: 'Nom du site ou URL manquant.',
     ai_answers_off: 'Les reponses IA sont desactivees. Activez l IA dans les options pour poser des questions generales.',
@@ -275,6 +274,7 @@ const OUTPUT_MESSAGES = {
     suggestion_heading: 'جرّب: انتقل إلى العنوان التالي.',
     suggestion_open_link: 'جرّب: افتح أول رابط.',
     opening_value: 'جارٍ فتح {value}.',
+    searching_value: 'جارٍ البحث عن {value}.',
     open_website_failed: 'تعذر فتح هذا الموقع.',
     missing_url: 'اسم الموقع أو الرابط مفقود.',
     ai_answers_off: 'إجابات الذكاء الاصطناعي متوقفة. فعّل الذكاء الاصطناعي من الإعدادات لطرح أسئلة عامة.',
@@ -468,27 +468,6 @@ function outputMessage(key, lang, params = {}) {
   ));
 }
 
-function isInternalNewTabUrl(url) {
-  const u = String(url || '');
-  if (!u) return false;
-  if (u === 'chrome://newtab/' || u === 'chrome://newtab') return true;
-  if (u === 'edge://newtab/' || u === 'edge://newtab') return true;
-  if (u === 'about:newtab' || u === 'about:newtab#' || u === 'about:home') return true;
-  if (u.startsWith('chrome-search://local-ntp')) return true;
-  if (u.startsWith('chrome://new-tab-page')) return true;
-  return false;
-}
-
-async function redirectNewTabToNavable(tabId, url) {
-  if (!NAVABLE_NEW_TAB_URL || !tabId) return;
-  if (!isInternalNewTabUrl(url)) return;
-  try {
-    await chrome.tabs.update(tabId, { url: NAVABLE_NEW_TAB_URL });
-  } catch (err) {
-    console.warn('[Navable] new tab redirect failed', err);
-  }
-}
-
 // Send message to the active tab
 async function sendToActiveTab(payload) {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -616,7 +595,9 @@ async function startOffscreenSpeechSession(msg, sourceTabId) {
     action: 'start',
     sessionId,
     tabId: sourceTabId,
-    lang: msg.lang || 'en-US'
+    lang: msg.lang || 'en-US',
+    preferBackend: msg.preferBackend === true,
+    nativeFallback: msg.nativeFallback !== false
   });
 
   if (!response || response.ok !== true) {
@@ -1630,20 +1611,6 @@ async function loadSettings() {
   });
 }
 
-function normalizeAssistantAction(data) {
-  const raw = data && data.action && typeof data.action === 'object' ? data.action : null;
-  if (!raw || Array.isArray(raw)) return null;
-  const type = typeof raw.type === 'string' ? raw.type.trim().toLowerCase() : '';
-  if (type !== 'open_site') return null;
-  const query = typeof raw.query === 'string' ? raw.query.trim() : '';
-  if (!query) return null;
-  return {
-    type: 'open_site',
-    query,
-    newTab: raw.newTab !== false
-  };
-}
-
 function stripOpenIntentPrefixes(text) {
   let value = String(text || '').trim().toLowerCase();
   if (!value) return '';
@@ -1785,8 +1752,6 @@ function normalizeAssistantResult(data) {
   const answer = data && typeof data.answer === 'string' ? data.answer.trim() : '';
   const speech = data && typeof data.speech === 'string' ? data.speech.trim() : '';
   const suggestions = Array.isArray(data && data.suggestions) ? data.suggestions : [];
-  const plan = data && data.plan && Array.isArray(data.plan.steps) ? data.plan : { steps: [] };
-  const action = normalizeAssistantAction(data);
   const description = speech || [summary, suggestions.join(' ')].filter(Boolean).join(' ').trim();
   return {
     mode: data && typeof data.mode === 'string' ? data.mode : 'answer',
@@ -1795,8 +1760,10 @@ function normalizeAssistantResult(data) {
     summary,
     answer,
     suggestions,
-    plan,
-    action
+    // Remote assistant responses are data only. Browser actions and page
+    // manipulation stay in the packaged extension's deterministic planner.
+    plan: { steps: [] },
+    action: null
   };
 }
 
@@ -1948,7 +1915,7 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     }
   }
 
-  if (settings.aiEnabled === false) {
+  if (settings.aiEnabled !== true) {
     return await buildOfflineAssistantResult(assistantInput, purpose, structure, outputLanguage, sourceTabId, {
       ...options,
       reason: 'ai_disabled'
@@ -1978,43 +1945,6 @@ async function requestAssistant(input, requestedOutputLanguage, options = {}) {
     if (response.ok) {
       markAssistantOnline();
       const normalized = normalizeAssistantResult(data);
-      if (normalized.action && normalized.action.type === 'open_site') {
-        const openResult = await openSiteInBrowser(
-          normalized.action.query,
-          normalized.action.newTab,
-          outputLanguage,
-          { sourceTabId, announce: false, settings }
-        );
-        if (!openResult.ok) {
-          return { ok: false, structure, error: openResult.error || outputMessage('open_website_failed', outputLanguage) };
-        }
-
-        const actionSpeech = openResult.speech || normalized.speech || '';
-        await rememberAssistantTurn(sourceTabId, {
-          input: assistantInput,
-          purpose: 'answer',
-          outputLanguage,
-          speech: actionSpeech,
-          detectedLanguage: options.detectedLanguage || '',
-          recognitionProvider: options.recognitionProvider || '',
-          pageUrl: openResult.url || ''
-        });
-
-        return {
-          ok: true,
-          structure,
-          mode: 'action',
-          speech: actionSpeech,
-          description: actionSpeech,
-          summary: '',
-          answer: '',
-          suggestions: [],
-          plan: { steps: [] },
-          action: normalized.action,
-          url: openResult.url || ''
-        };
-      }
-
       await rememberAssistantTurn(sourceTabId, {
         input: assistantInput,
         purpose,
@@ -2071,7 +2001,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
       summaryCache.outputLanguage === outputLanguage &&
       Date.now() - summaryCache.ts < 2 * 60 * 1000;
 
-    if (settings.aiEnabled) {
+    if (settings.aiEnabled === true) {
       if (canUseCache && summaryCache.result) {
         const cached = summaryCache.result;
         const cachedFeedback = buildFeedback('success', cached.description || cached.summary || '', {
@@ -2088,7 +2018,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
             details: cachedFeedback.details
           });
         }
-        if (cached.plan && cached.plan.steps && cached.plan.steps.length) {
+        if (cached.offlineMode === true && cached.plan && cached.plan.steps && cached.plan.steps.length) {
           await sendToTargetTab(sourceTabId, {
             type: 'navable:executePlan',
             plan: cached.plan,
@@ -2128,6 +2058,7 @@ async function runPlanner(command, requestedOutputLanguage, preferIntentFallback
           });
         }
         if (
+          assistantResult.offlineMode === true &&
           assistantResult.plan &&
           assistantResult.plan.steps &&
           assistantResult.plan.steps.length
@@ -2392,7 +2323,7 @@ function guessDirectHostUrl(query) {
 function resolveDirectOpenFallbackUrl(query) {
   const directGuess = guessDirectHostUrl(query);
   if (directGuess) return directGuess;
-  return `https://www.google.com/search?btnI=I&q=${encodeURIComponent(`${String(query || '').trim()} official site`)}`;
+  return null;
 }
 
 function tryParseHttpUrl(candidate) {
@@ -2429,10 +2360,7 @@ function resolveOpenQueryToUrl(query) {
   const normalized = normalizeSpokenUrl(raw);
 
   // Explicit search intent: "search for <x>"
-  const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
-  if (searchMatch && searchMatch[3]) {
-    return `https://www.google.com/search?q=${encodeURIComponent(searchMatch[3])}`;
-  }
+  if (extractDefaultSearchQuery(raw)) return null;
 
   // Full URL
   const direct = tryParseHttpUrl(normalized);
@@ -2460,10 +2388,7 @@ function resolveOpenQueryToUrlWithoutGuess(query) {
   if (!raw) return null;
 
   const normalized = normalizeSpokenUrl(raw);
-  const searchMatch = normalized.match(/^(search|google)\s+(for\s+)?(.+)$/);
-  if (searchMatch && searchMatch[3]) {
-    return `https://www.google.com/search?q=${encodeURIComponent(searchMatch[3])}`;
-  }
+  if (extractDefaultSearchQuery(raw)) return null;
 
   const direct = tryParseHttpUrl(normalized);
   if (direct) return direct;
@@ -2478,15 +2403,10 @@ function resolveOpenQueryToUrlWithoutGuess(query) {
   return null;
 }
 
-function friendlyUrlForSpeech(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname || url;
-    const path = u.pathname && u.pathname !== '/' ? u.pathname : '';
-    return (host + path).replace(/^www\./i, '');
-  } catch (_e) {
-    return String(url || '');
-  }
+function extractDefaultSearchQuery(query) {
+  const normalized = normalizeSpokenUrl(query);
+  const match = normalized.match(/^(search|google|look up|find|check)\s+(for\s+)?(.+)$/);
+  return match && match[3] ? String(match[3]).trim() : '';
 }
 
 async function shouldUseAiSiteResolution(options = {}) {
@@ -2513,11 +2433,13 @@ async function resolveOfficialSiteUrlWithAi(query, requestedOutputLanguage) {
 
     const url = tryParseHttpUrl(String(data && data.url ? data.url : ''));
     if (!url) return null;
+    const confidence = Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0;
+    if (confidence < 0.65) return null;
 
     return {
       url,
       name: typeof data.name === 'string' ? data.name.trim() : '',
-      confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0
+      confidence
     };
   } catch (err) {
     console.warn('[Navable] site URL resolution failed', err);
@@ -2525,10 +2447,40 @@ async function resolveOfficialSiteUrlWithAi(query, requestedOutputLanguage) {
   }
 }
 
+function friendlyUrlForSpeech(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname || url;
+    const path = u.pathname && u.pathname !== '/' ? u.pathname : '';
+    return (host + path).replace(/^www\./i, '');
+  } catch (_e) {
+    return String(url || '');
+  }
+}
+
 async function openSiteInBrowser(query, newTab, requestedOutputLanguage, options = {}) {
   const outputLanguage = normalizeOutputLanguage(requestedOutputLanguage);
   const outputMessagesReady = ensureOutputMessages(outputLanguage);
   const sourceTabId = options.sourceTabId || null;
+  const searchQuery = extractDefaultSearchQuery(query);
+  if (searchQuery && chrome?.search?.query) {
+    await outputMessagesReady;
+    const speech = outputMessage('searching_value', outputLanguage, { value: searchQuery });
+    const queryInfo = sourceTabId && newTab === false
+      ? { text: searchQuery, tabId: sourceTabId }
+      : { text: searchQuery, disposition: newTab === false ? 'CURRENT_TAB' : 'NEW_TAB' };
+    await chrome.search.query(queryInfo);
+    return {
+      ok: true,
+      url: '',
+      speech,
+      feedback: buildFeedback('loading', speech, {
+        command: 'search',
+        query: searchQuery,
+        newTab: newTab !== false
+      })
+    };
+  }
   let url = resolveOpenQueryToUrlWithoutGuess(query);
   let resolutionSource = url ? 'local' : '';
 
@@ -2762,22 +2714,12 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
-// Ensure Navable is usable "from the beginning" by redirecting internal new tab pages
-// (where extensions cannot inject content scripts) to Navable's New Tab page.
 try {
-  if (chrome?.tabs?.onCreated?.addListener) {
-    chrome.tabs.onCreated.addListener((tab) => {
-      const url = tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '';
-      if (!tab || !tab.id) return;
-      redirectNewTabToNavable(tab.id, url);
-    });
-  }
   if (chrome?.tabs?.onUpdated?.addListener) {
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       const url =
         (changeInfo && changeInfo.url) ||
         (tab && (tab.pendingUrl || tab.url) ? String(tab.pendingUrl || tab.url) : '');
-      redirectNewTabToNavable(tabId, url);
       if (changeInfo && changeInfo.url) {
         stopOffscreenSpeechForTab(tabId, 'navigation').catch(() => {
           // ignore voice cleanup failures
@@ -2878,6 +2820,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (
         res &&
         res.ok === true &&
+        res.offlineMode === true &&
         msg.autoExecutePlan !== false &&
         (msg.pageContext || res.mode === 'page') &&
         res.plan &&

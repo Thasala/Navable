@@ -685,7 +685,7 @@ test('summary requests use the unified assistant endpoint', async ({ page }) => 
   await expect(page.locator('#navable-output-text')).toHaveValue(/documentation/);
 });
 
-test('summary plan keeps the summary output visible while follow-up steps run', async ({ page }) => {
+test('summary ignores backend plans while keeping the summary output visible', async ({ page }) => {
   await page.setContent(`
     <main>
       <h1>Docs</h1>
@@ -753,8 +753,8 @@ test('summary plan keeps the summary output visible while follow-up steps run', 
   });
 
   expect(result.ok).toBe(true);
-  expect(result.plan?.steps?.length).toBe(1);
-  await page.waitForFunction(() => (window as any).summaryPlanRan === 1);
+  expect(result.plan?.steps?.length).toBe(0);
+  expect(await page.evaluate(() => (window as any).summaryPlanRan || 0)).toBe(0);
   await expect(page.locator('#navable-live-region-assertive')).toContainText(/documentation/);
   await expect(page.locator('#navable-output-text')).toHaveValue(/documentation/);
 });

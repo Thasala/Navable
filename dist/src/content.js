@@ -464,7 +464,7 @@
   var overlayMarkers = [];
   var observer; // mutation observer
   var scanDebounce;
-  var settings = { language: 'en-US', languageMode: 'auto', outputMode: 'screen_reader', overlay: false, autostart: true };
+  var settings = { language: 'en-US', languageMode: 'auto', outputMode: 'screen_reader', overlay: false, autostart: true, aiEnabled: false };
 
   function isHidden(el) {
     if (!el || !el.isConnected) return true;
@@ -4377,7 +4377,9 @@
         sendVoiceBridgeMessage({
           type: 'navable:voiceStart',
           sessionId: sessionId,
-          lang: options.lang || recogLang || 'en-US'
+          lang: options.lang || recogLang || 'en-US',
+          preferBackend: options.preferBackend === true,
+          nativeFallback: options.nativeFallback !== false
         }).then(function (response) {
           if (response && response.ok === true) return;
           starting = false;
@@ -4405,8 +4407,12 @@
   }
 
   function createContentVoiceRecognizer(options) {
-    if (supportsExtensionVoiceRecognizer()) return createExtensionVoiceRecognizer(options);
-    if (speech && typeof speech.createRecognizer === 'function') return speech.createRecognizer(options);
+    var voiceOptions = Object.assign({}, options || {}, {
+      preferBackend: settings && settings.aiEnabled === true,
+      nativeFallback: true
+    });
+    if (supportsExtensionVoiceRecognizer()) return createExtensionVoiceRecognizer(voiceOptions);
+    if (speech && typeof speech.createRecognizer === 'function') return speech.createRecognizer(voiceOptions);
     throw new Error('Speech recognition not supported');
   }
 
@@ -6887,19 +6893,7 @@
         })
       });
       var directData = await directResponse.json().catch(function () { return {}; });
-      if (
-        directResponse.ok &&
-        directData &&
-        directData.action &&
-        directData.action.type === 'open_site' &&
-        directData.action.query
-      ) {
-        return openSiteRequest(directData.action.query, directData.action.newTab !== false);
-      }
       if (directResponse.ok && directData && directData.speech) {
-        if (wantsPageContext && directData.plan && Array.isArray(directData.plan.steps) && directData.plan.steps.length) {
-          await runPlan(directData.plan);
-        }
         var directRememberedPurpose = purpose === 'auto' ? (directData.mode === 'page' ? 'page' : 'answer') : purpose;
         rememberLocalAssistantTurn({
           input: assistantInput,
@@ -7115,7 +7109,8 @@
 	          languageMode: nextLanguageMode,
 	          outputMode: nextOutputMode,
 	          overlay: !!s.overlay,
-	          autostart: autostart
+	          autostart: autostart,
+	          aiEnabled: s.aiEnabled === true
 	        };
 	        var previousOutputMode = configuredOutputMode(settings);
 	        var nextRecogLang = configuredRecognitionLocale(nextSettings);
@@ -7140,7 +7135,8 @@
 	          languageMode: nextLanguageMode2,
 	          outputMode: nextOutputMode2,
 	          overlay: !!s2.overlay,
-	          autostart: autostart2
+	          autostart: autostart2,
+	          aiEnabled: s2.aiEnabled === true
 	        };
 	        var previousOutputMode2 = configuredOutputMode(settings);
 	        var nextRecogLang2 = configuredRecognitionLocale(nextSettings2);

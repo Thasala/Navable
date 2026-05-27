@@ -94,11 +94,15 @@ test('runPlanner resolves page-local follow-up actions from visible controls', a
   expect(result.calls).toHaveLength(2);
 });
 
-test('page-context assistant runtime requests execute plans on the sender tab without re-querying the active tab', async ({ page }) => {
+test('page-context assistant runtime requests ignore backend plans on the sender tab', async ({ page }) => {
   await page.addScriptTag({ path: 'src/background.js' });
 
   const result = await page.evaluate(async () => {
     const calls: Array<{ tabId: number; payload: any }> = [];
+    await new Promise<void>((resolve) => {
+      // @ts-ignore
+      window.chrome.storage.sync.set({ navable_settings: { aiEnabled: true } }, resolve);
+    });
 
     // @ts-ignore
     window.chrome.tabs.query = async () => {
@@ -177,9 +181,8 @@ test('page-context assistant runtime requests execute plans on the sender tab wi
   });
 
   expect(result.response).toMatchObject({ ok: true, speech: 'You are on the docs page.' });
-  expect(result.calls).toHaveLength(1);
-  expect(result.calls[0].tabId).toBe(42);
-  expect(result.calls[0].payload.type).toBe('navable:executePlan');
+  expect(result.response.plan.steps).toEqual([]);
+  expect(result.calls).toHaveLength(0);
 });
 
 test('assistant switches to offline mode when the backend assistant is unreachable', async ({ page }) => {
@@ -215,6 +218,10 @@ test('assistant runtime requests carry session memory into answer follow-ups', a
     const requestBodies: any[] = [];
     let sessionGetCalls = 0;
     let firstStoredSession: any = null;
+    await new Promise<void>((resolve) => {
+      // @ts-ignore
+      window.chrome.storage.sync.set({ navable_settings: { aiEnabled: true } }, resolve);
+    });
 
     const originalSessionGet = window.chrome.storage.session.get.bind(window.chrome.storage.session);
     // @ts-ignore
