@@ -3964,6 +3964,44 @@
     return dispatched;
   }
 
+  function isWorldCupDemoPage() {
+    var path = String((window.location && window.location.pathname) || '').toLowerCase();
+    return path === '/demo/world-cup-updates' || path === '/demo/world-cup-updates.html';
+  }
+
+  function submitWorldCupDemoForm() {
+    if (!isWorldCupDemoPage()) return false;
+    var form = document.getElementById('updates-form');
+    if (!form) return false;
+    var submitter = null;
+    try {
+      submitter = form.querySelector('button[type="submit"],input[type="submit"],button:not([type])');
+    } catch (_err) {
+      submitter = null;
+    }
+    try {
+      if (typeof form.requestSubmit === 'function') {
+        if (submitter) form.requestSubmit(submitter);
+        else form.requestSubmit();
+        return true;
+      }
+    } catch (_err2) {
+      // Fall through to a direct submit event. The demo page prevents default submission.
+    }
+    try {
+      var eventInit = { bubbles: true, cancelable: true };
+      var submitEvent = typeof window.SubmitEvent === 'function'
+        ? new window.SubmitEvent('submit', Object.assign({ submitter: submitter || null }, eventInit))
+        : new Event('submit', eventInit);
+      form.dispatchEvent(submitEvent);
+      return true;
+    } catch (_err3) {
+      // Fall through to button click.
+    }
+    if (submitter) return clickFormActionControl(submitter);
+    return false;
+  }
+
   function submitActiveForm(actionHint, actionLabel) {
     var session = ensureFormSession({ announce: false, speakFailure: true });
     if (!session) {
@@ -3974,6 +4012,11 @@
       return false;
     }
     var currentField = currentFormField(session);
+    if (submitWorldCupDemoForm()) {
+      clearFormSession();
+      speak(translate('form_submit_done'));
+      return true;
+    }
     var submitControl = actionLabel ? findSubmitControlBySpokenLabel(session, actionLabel) : null;
     if (!submitControl) submitControl = findSubmitControlInSession(session, { actionHint: actionHint });
     if (submitControl && clickFormActionControl(submitControl)) {
@@ -5653,7 +5696,12 @@
     if (formModeActive && findSubmitControlBySpokenLabel(getCurrentFormSession(), raw)) {
       return { type: 'form_submit', actionHint: actionCommand, actionLabel: raw };
     }
-    if (/^(submit|send)$/.test(actionCommand) || (formModeActive && FORM_ACTION_COMMAND_WORDS[actionCommand])) {
+    var normalizedActionCommand = actionCommand.replace(/\s+(?:button|form|the form)$/, '').trim();
+    if (
+      /^(submit|send|submission)$/.test(normalizedActionCommand) ||
+      /^(submit|send|submission)\s+(?:button|form|the form)$/.test(actionCommand) ||
+      (formModeActive && FORM_ACTION_COMMAND_WORDS[normalizedActionCommand])
+    ) {
       return { type: 'form_submit', actionHint: actionCommand };
     }
     return null;
