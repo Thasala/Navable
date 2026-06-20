@@ -451,8 +451,10 @@ test('typed form mode can guide fill, select, check, and submit a form', async (
   const confirmTerms = await typed('yes');
   expect(confirmTerms).toMatchObject({ ok: true });
   expect(String((confirmTerms as any).speech || '')).toContain('That was the last field');
+  expect(String((confirmTerms as any).speech || '')).toContain('Say review form or submit');
+  expect(String((confirmTerms as any).speech || '')).not.toContain('next');
 
-  const submit = await typed('submit form');
+  const submit = await typed('submit');
   expect(submit).toMatchObject({ ok: true });
   expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(true);
 });
@@ -497,7 +499,7 @@ test('typed form mode uses search and go buttons as primary actions', async ({ p
   expect(await page.evaluate(() => Boolean((window as any).requestSubmitUsed))).toBe(false);
 });
 
-test('typed form mode treats next on the last field as the page action', async ({ page }) => {
+test('typed form mode keeps next from submitting on the last field', async ({ page }) => {
   await page.setContent(`
     <main>
       <form id="wizard">
@@ -522,7 +524,44 @@ test('typed form mode treats next on the last field as the page action', async (
 
   const next = await typed('next');
   expect(next).toMatchObject({ ok: true });
-  expect(await page.evaluate(() => Boolean((window as any).nextStepOpened))).toBe(true);
+  expect(String((next as any).speech || '')).toContain('Field 1 of 1: Full name');
+  expect(await page.evaluate(() => Boolean((window as any).nextStepOpened))).toBe(false);
+});
+
+test('typed form mode submits by visible action label after the final field', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form id="updates">
+        <label for="full-name">Full Name</label>
+        <input id="full-name" name="full_name" type="text" />
+        <label><input id="reminders" type="checkbox" /> Receive match reminders</label>
+        <button type="submit">Subscribe for Updates</button>
+      </form>
+    </main>
+  `);
+  await page.evaluate(() => {
+    const form = document.getElementById('updates') as HTMLFormElement;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      // @ts-ignore
+      window.submitted = true;
+    });
+  });
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  await typed('form mode');
+  await typed('fill Full Name with Hazem Salameh');
+  await typed('yes');
+  await typed('check Receive match reminders');
+  const confirmReminder = await typed('yes');
+  expect(confirmReminder).toMatchObject({ ok: true });
+  expect(String((confirmReminder as any).speech || '')).toContain('Say review form or submit');
+  expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(false);
+
+  const submit = await typed('Subscribe for updatet button');
+  expect(submit).toMatchObject({ ok: true });
+  expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(true);
 });
 
 test('typed form mode supports explicit case and Arabic letter spelling', async ({ page }) => {
