@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Cup Updates — Navable Demo</title>
+  <meta name="description" content="Controlled demonstration page for Navable voice-guided form filling. Fictitious World Cup updates signup — not affiliated with FIFA." />
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & tokens ──────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:       #0a1628;
+      --navy-mid:   #0d1f3c;
+      --navy-card:  #122040;
+      --navy-border:#1e3155;
+      --accent-red: #c0392b;
+      --accent-gold:#d4a017;
+      --accent-gold-light: #f0c040;
+      --white:      #ffffff;
+      --off-white:  #e8edf5;
+      --muted:      #8fa3c0;
+      --success-bg: #0d2d1a;
+      --success-border: #1e6b3a;
+      --success-text: #6ee7a0;
+      --radius-sm:  6px;
+      --radius-md:  12px;
+      --radius-lg:  20px;
+      --shadow-card: 0 8px 40px rgba(0,0,0,0.45);
+      --transition:  0.2s ease;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background-color: var(--navy);
+      color: var(--white);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0 1rem 3rem;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* ── Animated background mesh ───────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% 10%, rgba(192,57,43,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 90%, rgba(212,160,23,0.10) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 60% at 50% 50%, rgba(13,31,60,0.9) 0%, transparent 100%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout wrapper ─────────────────────────────────────── */
+    .page-wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 680px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .site-header {
+      text-align: center;
+      padding: 3rem 1rem 2rem;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(212,160,23,0.15);
+      border: 1px solid rgba(212,160,23,0.4);
+      color: var(--accent-gold-light);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.35em 0.9em;
+      border-radius: 999px;
+      margin-bottom: 1.4rem;
+    }
+
+    /* Football icon (pure CSS + SVG inline) */
+    .football-icon {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 1.4rem;
+      animation: spin-slow 12s linear infinite;
+      filter: drop-shadow(0 0 18px rgba(212,160,23,0.35));
+    }
+
+    @keyframes spin-slow {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(1.75rem, 5vw, 2.6rem);
+      font-weight: 800;
+      line-height: 1.15;
+      background: linear-gradient(135deg, var(--white) 30%, var(--accent-gold-light) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.6rem;
+    }
+
+    .subtitle {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 400;
+      letter-spacing: 0.03em;
+    }
+
+    /* ── Card ───────────────────────────────────────────────── */
+    .card {
+      background: var(--navy-card);
+      border: 1px solid var(--navy-border);
+      border-radius: var(--radius-lg);
+      padding: 2.2rem 2.4rem;
+      box-shadow: var(--shadow-card);
+      margin-top: 0.5rem;
+      transition: box-shadow var(--transition);
+    }
+
+    .card:hover {
+      box-shadow: 0 12px 60px rgba(0,0,0,0.55);
+    }
+
+    /* ── Form fields ────────────────────────────────────────── */
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--off-white);
+      letter-spacing: 0.04em;
+      margin-bottom: 0.5rem;
+    }
+
+    input[type="text"],
+    select {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: var(--navy-mid);
+      border: 1.5px solid var(--navy-border);
+      border-radius: var(--radius-sm);
+      color: var(--white);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.97rem;
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
+    input[type="text"]::placeholder {
+      color: var(--muted);
+    }
+
+    input[type="text"]:focus,
+    select:focus {
+      border-color: var(--accent-gold);
+      box-shadow: 0 0 0 3px rgba(212,160,23,0.18);
+    }
+
+    /* Custom select arrow */
+    .select-wrapper {
+      position: relative;
+    }
+
+    .select-wrapper::after {
+      content: '';
+      position: absolute;
+      right: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 5px solid transparent;
+      border-top-color: var(--accent-gold);
+      pointer-events: none;
+    }
+
+    select option {
+      background: var(--navy-mid);
+      color: var(--white);
+    }
+
+    /* ── Checkbox ───────────────────────────────────────────── */
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.9rem 1rem;
+      background: var(--navy-mid);
+      border: 1.5px solid var(--navy-border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color var(--transition), background var(--transition);
+      margin-bottom: 1.5rem;
+    }
+
+    .checkbox-group:hover,
+    .checkbox-group:focus-within {
+      border-color: var(--accent-gold);
+      background: rgba(212,160,23,0.05);
+    }
+
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      accent-color: var(--accent-gold);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .checkbox-group label {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--off-white);
+      letter-spacing: 0;
+    }
+
+    /* ── Submit button ──────────────────────────────────────── */
+    .btn-submit {
+      width: 100%;
+      padding: 0.9rem 1.5rem;
+      background: linear-gradient(135deg, #b5261c 0%, #c0392b 50%, #d4522a 100%);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: transform var(--transition), box-shadow var(--transition), filter var(--transition);
+      box-shadow: 0 4px 20px rgba(192,57,43,0.4);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-submit::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.08) 100%);
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(192,57,43,0.55);
+      filter: brightness(1.08);
+    }
+
+    .btn-submit:active {
+      transform: translateY(0);
+    }
+
+    .btn-submit:focus-visible {
+      outline: 3px solid var(--accent-gold);
+      outline-offset: 3px;
+    }
+
+    /* ── Success card ───────────────────────────────────────── */
+    #success-message {
+      background: var(--success-bg);
+      border: 1.5px solid var(--success-border);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      box-shadow: var(--shadow-card);
+      margin-top: 0.5rem;
+      animation: fade-in 0.4s ease;
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .success-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      display: block;
+    }
+
+    .success-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--success-text);
+      margin-bottom: 0.5rem;
+    }
+
+    .success-body {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-bottom: 1.8rem;
+      line-height: 1.6;
+    }
+
+    .btn-reset {
+      display: inline-block;
+      padding: 0.7rem 2rem;
+      background: transparent;
+      border: 1.5px solid var(--success-border);
+      color: var(--success-text);
+      border-radius: var(--radius-sm);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--transition), border-color var(--transition);
+    }
+
+    .btn-reset:hover {
+      background: rgba(30,107,58,0.25);
+      border-color: var(--success-text);
+    }
+
+    .btn-reset:focus-visible {
+      outline: 3px solid var(--accent-gold);
+      outline-offset: 3px;
+    }
+
+    /* ── Divider ────────────────────────────────────────────── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.6rem;
+    }
+
+    .divider-line {
+      flex: 1;
+      height: 1px;
+      background: var(--navy-border);
+    }
+
+    .divider-text {
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────── */
+    .site-footer {
+      text-align: center;
+      margin-top: 2.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .site-footer strong {
+      color: var(--off-white);
+    }
+
+    /* ── Focus ring (global) ────────────────────────────────── */
+    :focus-visible {
+      outline: 3px solid var(--accent-gold);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ── Responsive ─────────────────────────────────────────── */
+    @media (max-width: 500px) {
+      .card { padding: 1.6rem 1.2rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrapper">
+
+    <!-- ── Header ─────────────────────────────────────────── -->
+    <header class="site-header">
+      <!-- Accessible football SVG (no official FIFA branding) -->
+      <svg class="football-icon"
+           role="img"
+           aria-label="Football graphic"
+           viewBox="0 0 100 100"
+           xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="46" fill="#f8f8f8" stroke="#1e3155" stroke-width="2"/>
+        <!-- Central pentagon -->
+        <polygon points="50,28 63,38 58,54 42,54 37,38"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <!-- Surrounding pentagons -->
+        <polygon points="50,28 63,38 72,28 65,16 50,16"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <polygon points="63,38 72,50 84,46 83,32 72,28"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <polygon points="58,54 72,50 74,64 62,72 50,66"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <polygon points="42,54 50,66 38,72 26,64 28,50"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <polygon points="37,38 28,50 16,46 17,32 28,28"
+                 fill="#1a2a4a" stroke="#f8f8f8" stroke-width="1.2"/>
+        <polygon points="50,16 65,16 72,28 63,38 50,28 37,38 28,28 35,16"
+                 fill="none" stroke="#f8f8f8" stroke-width="1.2"/>
+      </svg>
+
+      <div class="badge">Navable Demo · Fictitious Data Only</div>
+      <h1>World Cup Updates</h1>
+      <p class="subtitle">Controlled demonstration — fictitious data only</p>
+    </header>
+
+    <!-- ── Success message (hidden by default) ────────────── -->
+    <div id="success-message"
+         role="status"
+         aria-live="polite"
+         aria-atomic="true"
+         hidden>
+      <span class="success-icon" aria-hidden="true">🏆</span>
+      <p class="success-title">You are subscribed to World Cup Updates.</p>
+      <p class="success-body">Your preferences were saved for this demonstration.</p>
+      <button id="btn-start-again" class="btn-reset" type="button">Start Again</button>
+    </div>
+
+    <!-- ── Signup form ─────────────────────────────────────── -->
+    <main>
+      <div class="card" id="form-card">
+
+        <div class="divider">
+          <span class="divider-line"></span>
+          <span class="divider-text">Sign up for updates</span>
+          <span class="divider-line"></span>
+        </div>
+
+        <form id="signup-form" novalidate autocomplete="off">
+
+          <!-- 1. Full Name -->
+          <div class="form-group">
+            <label for="full-name">Full Name</label>
+            <input
+              type="text"
+              id="full-name"
+              name="full_name"
+              placeholder="Enter your full name"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <!-- 2. Favourite Team -->
+          <div class="form-group">
+            <label for="favourite-team">Favourite Team</label>
+            <div class="select-wrapper">
+              <select id="favourite-team" name="favourite_team">
+                <option value="">— Select a team —</option>
+                <option value="jordan">Jordan</option>
+                <option value="argentina">Argentina</option>
+                <option value="brazil">Brazil</option>
+                <option value="france">France</option>
+                <option value="spain">Spain</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 3. Preferred Language -->
+          <div class="form-group">
+            <label for="preferred-language">Preferred Language</label>
+            <div class="select-wrapper">
+              <select id="preferred-language" name="preferred_language">
+                <option value="">— Select a language —</option>
+                <option value="english">English</option>
+                <option value="arabic">Arabic</option>
+                <option value="french">French</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 4. Checkbox: Receive match reminders -->
+          <div class="checkbox-group">
+            <input
+              type="checkbox"
+              id="match-reminders"
+              name="match_reminders"
+            />
+            <label for="match-reminders">Receive match reminders</label>
+          </div>
+
+          <!-- 5. Submit -->
+          <button class="btn-submit" id="btn-subscribe" type="submit">
+            Subscribe for Updates
+          </button>
+
+        </form>
+      </div>
+    </main>
+
+    <!-- ── Footer ─────────────────────────────────────────── -->
+    <footer class="site-footer">
+      <p>
+        <strong>Navable</strong> · Voice-Guided Web Navigation<br />
+        This page is a controlled demo for a graduation-project presentation.<br />
+        No real data is collected. Not affiliated with FIFA or any official body.
+      </p>
+    </footer>
+
+  </div><!-- /.page-wrapper -->
+
+  <script>
+    (function () {
+      'use strict';
+
+      var form        = document.getElementById('signup-form');
+      var formCard    = document.getElementById('form-card');
+      var successMsg  = document.getElementById('success-message');
+      var btnAgain    = document.getElementById('btn-start-again');
+
+      function showSuccess() {
+        formCard.hidden = true;
+        successMsg.hidden = false;
+        successMsg.focus();
+      }
+
+      function resetDemo() {
+        form.reset();
+        successMsg.hidden = true;
+        formCard.hidden = false;
+        document.getElementById('full-name').focus();
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        showSuccess();
+      });
+
+      btnAgain.addEventListener('click', function () {
+        resetDemo();
+      });
+    })();
+  </script>
+</body>
+</html>

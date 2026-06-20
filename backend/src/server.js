@@ -782,6 +782,22 @@ async function callOpenAiTranscribe(audioBase64, mimeType, settings = DEFAULT_SE
   };
 }
 
+// ── Demo page (graduation presentation only) ─────────────────────────────────
+// Serves a static World Cup sign-up demo page.  Completely isolated from all
+// AI/voice/extension logic — just a plain HTML file on disk.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.get('/demo/world-cup-updates', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'demo', 'world-cup-updates.html'));
+});
+
+// Also allow the .html variant so both paths work.
+app.get('/demo/world-cup-updates.html', (_req, res) => {
+  res.redirect(301, '/demo/world-cup-updates');
+});
+// ── End demo page ─────────────────────────────────────────────────────────────
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
