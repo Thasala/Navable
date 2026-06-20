@@ -1101,6 +1101,27 @@ test('typed broad form help phrases start form mode locally', async ({ page }) =
   expect(messages.find((msg: any) => msg && msg.type === 'navable:assistant')).toBeFalsy();
 });
 
+test('typed fill-form variants start form mode locally', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form>
+        <label for="full-name">Full Name</label>
+        <input id="full-name" type="text" />
+      </form>
+    </main>
+  `);
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  const response = await typed('lets full the form');
+  expect(response).toMatchObject({ ok: true });
+  expect(String((response as any).speech || '')).toContain('Form mode started');
+  expect(String((response as any).speech || '')).toContain('Full Name');
+
+  const messages = await page.evaluate(() => (window as any).__contentMessages || []);
+  expect(messages.find((msg: any) => msg && msg.type === 'navable:assistant')).toBeFalsy();
+});
+
 test('typed current-page summary phrases stay on the current page and recover common describe misspellings', async ({ page }) => {
   await page.setContent(`
     <html>
@@ -1271,6 +1292,27 @@ test('typed form mode recovers near-miss fill verbs and stays locked in form con
 
   const messages = await page.evaluate(() => (window as any).__contentMessages || []);
   expect(messages.find((msg: any) => msg && msg.type === 'navable:assistant')).toBeFalsy();
+});
+
+test('typed form mode defaults Arabic-script dictated names to English', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <form id="signup">
+        <label for="full-name">Full Name</label>
+        <input id="full-name" name="fullName" type="text" />
+      </form>
+    </main>
+  `);
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  await typed('form mode');
+  const fillName = await typed('ليو ميسي');
+  expect(fillName).toMatchObject({ ok: true });
+  expect(await page.$eval('#full-name', (el) => (el as HTMLInputElement).value)).toBe('Leo Messi');
+  expect(String((fillName as any).speech || '')).toContain('Full Name');
+  expect(String((fillName as any).speech || '')).toContain('Leo Messi');
+  expect(String((fillName as any).speech || '')).toContain('Say yes to keep it');
 });
 
 test('typed form mode reviews entered values before submit', async ({ page }) => {

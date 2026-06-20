@@ -274,6 +274,24 @@
     return list;
   }
 
+  function preferEnglishFormModeLanguage() {
+    if (configuredLanguageMode() !== 'auto') return;
+    outputLanguage = 'en';
+    var locales = recognitionLocalesForLanguage('en', settings.language || 'en-US');
+    var nextLocale = recognitionLocaleFor(locales[0] || settings.language || 'en-US');
+    if (normalizeOutputLanguage(nextLocale) !== 'en') nextLocale = 'en-US';
+    if (String(recogLang || '').toLowerCase() !== String(nextLocale || '').toLowerCase()) {
+      recogLang = nextLocale;
+      refreshRecognizer({ restart: true, delayMs: 80 });
+    }
+  }
+
+  function shouldDefaultActiveFormTurnToEnglish(text) {
+    if (!getCurrentFormSession()) return false;
+    if (configuredLanguageMode() !== 'auto') return false;
+    return !hasExplicitArabicFormValueIntent(text);
+  }
+
   function maybeRotateRecognitionLocale() {
     var now = Date.now();
     if (!lastRecognitionResultAt || now - lastRecognitionResultAt > 15000) return false;
@@ -2369,9 +2387,140 @@
     });
   }
 
+  var ARABIC_FORM_VALUE_WORD_OVERRIDES = {
+    'ليو': 'leo',
+    'ميسي': 'messi',
+    'ليونيل': 'lionel',
+    'حازم': 'hazem',
+    'هازم': 'hazem',
+    'سلامة': 'salameh',
+    'سلامه': 'salameh',
+    'عمان': 'amman',
+    'الاردن': 'jordan',
+    'الأردن': 'jordan'
+  };
+  var ARABIC_FORM_VALUE_CHAR_MAP = {
+    'ا': 'a',
+    'أ': 'a',
+    'إ': 'i',
+    'آ': 'a',
+    'ء': '',
+    'ؤ': 'o',
+    'ئ': 'i',
+    'ى': 'a',
+    'ب': 'b',
+    'ت': 't',
+    'ث': 'th',
+    'ج': 'j',
+    'ح': 'h',
+    'خ': 'kh',
+    'د': 'd',
+    'ذ': 'th',
+    'ر': 'r',
+    'ز': 'z',
+    'س': 's',
+    'ش': 'sh',
+    'ص': 's',
+    'ض': 'd',
+    'ط': 't',
+    'ظ': 'z',
+    'ع': 'a',
+    'غ': 'gh',
+    'ف': 'f',
+    'ق': 'q',
+    'ك': 'k',
+    'گ': 'g',
+    'ل': 'l',
+    'م': 'm',
+    'ن': 'n',
+    'ه': 'h',
+    'ة': 'h',
+    'و': 'o',
+    'ي': 'i'
+  };
+
+  function hasArabicScript(text) {
+    return /[\u0600-\u06FF]/.test(String(text || ''));
+  }
+
+  function hasExplicitArabicFormValueIntent(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return false;
+    return /\barabic\b/.test(normalized) || /(?:بالعربي|بالعربية|عربي|العربية|العربي)/.test(normalized);
+  }
+
+  function isArabicFormField(field) {
+    if (!field) return false;
+    var aliasText = fieldAliasListText(field);
+    if (/\barabic\b/.test(aliasText) || /(?:عربي|العربية|العربي)/.test(aliasText)) return true;
+    var elements = Array.isArray(field.elements) ? field.elements : [];
+    return elements.some(function (el) {
+      if (!el || !el.getAttribute) return false;
+      var lang = String(el.getAttribute('lang') || '').toLowerCase();
+      var dir = String(el.getAttribute('dir') || '').toLowerCase();
+      return lang.indexOf('ar') === 0 || dir === 'rtl';
+    });
+  }
+
+  function shouldKeepArabicFormValue(text, field) {
+    if (isArabicFormField(field)) return true;
+    if (configuredLanguageMode() === 'ar') return true;
+    return hasExplicitArabicFormValueIntent(text);
+  }
+
+  function stripArabicMarks(text) {
+    return String(text || '').replace(/[\u064B-\u065F\u0670\u0640]/g, '');
+  }
+
+  function transliterateArabicWordToLatin(word) {
+    var raw = stripArabicMarks(word);
+    if (!raw) return '';
+    if (Object.prototype.hasOwnProperty.call(ARABIC_FORM_VALUE_WORD_OVERRIDES, raw)) {
+      return ARABIC_FORM_VALUE_WORD_OVERRIDES[raw];
+    }
+    var normalized = raw.replace(/[إأآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+    if (Object.prototype.hasOwnProperty.call(ARABIC_FORM_VALUE_WORD_OVERRIDES, normalized)) {
+      return ARABIC_FORM_VALUE_WORD_OVERRIDES[normalized];
+    }
+    var out = '';
+    for (var i = 0; i < raw.length; i++) {
+      var ch = raw.charAt(i);
+      if (Object.prototype.hasOwnProperty.call(ARABIC_FORM_VALUE_CHAR_MAP, ch)) out += ARABIC_FORM_VALUE_CHAR_MAP[ch];
+      else if (/[\u0600-\u06FF]/.test(ch)) out += '';
+      else out += ch;
+    }
+    return out;
+  }
+
+  function transliterateArabicFormValueToLatin(text) {
+    return String(text || '').replace(/[\u0600-\u06FF]+/g, function (word) {
+      return transliterateArabicWordToLatin(word);
+    }).replace(/\s+/g, ' ').trim();
+  }
+
+  function titleCaseLatinWords(text) {
+    return String(text || '').replace(/\b([a-z])([a-z]*)\b/g, function (_match, first, rest) {
+      return String(first || '').toUpperCase() + String(rest || '').toLowerCase();
+    });
+  }
+
+  function shouldTitleCaseFormValue(field) {
+    var aliasText = fieldAliasListText(field);
+    return /\b(full name|name|first name|last name)\b/.test(aliasText);
+  }
+
+  function normalizeFormValueForDefaultLanguage(value, field) {
+    var raw = String(value || '');
+    if (!raw || !hasArabicScript(raw) || shouldKeepArabicFormValue(raw, field)) return raw;
+    var transliterated = transliterateArabicFormValueToLatin(raw);
+    if (!transliterated) return raw;
+    return shouldTitleCaseFormValue(field) ? titleCaseLatinWords(transliterated) : transliterated;
+  }
+
   function normalizeEmailSpeechText(text) {
     var raw = String(text || '').trim().toLowerCase();
     if (!raw) return '';
+    raw = normalizeFormValueForDefaultLanguage(raw, null);
     return raw
       .replace(/\bat sign\b/g, ' @ ')
       .replace(/\bat\b/g, ' @ ')
@@ -2742,6 +2891,7 @@
       cmd.type === 'form_check' ||
       cmd.type === 'form_submit' ||
       cmd.type === 'form_review' ||
+      cmd.type === 'navable_setting' ||
       cmd.type === 'help' ||
       cmd.type === 'repeat' ||
       cmd.type === 'stop'
@@ -3254,7 +3404,9 @@
   }
 
   function startFormMode() {
-    return !!ensureFormSession({ announce: true, speakFailure: true });
+    var session = ensureFormSession({ announce: true, speakFailure: true });
+    if (session) preferEnglishFormModeLanguage();
+    return !!session;
   }
 
   function stopFormMode() {
@@ -3335,15 +3487,15 @@
       speak(translate('form_mode_empty'));
       return false;
     }
-    var rawValue = String(value || '').trim();
-    if (!rawValue) {
+    if (field.kind !== 'text') {
+      if (field.kind === 'select' || field.kind === 'radio') {
+        return selectCurrentFormOption(value, fieldLabel || '', opts);
+      }
       speak(translate('form_fill_missing_value'));
       return false;
     }
-    if (field.kind !== 'text') {
-      if (field.kind === 'select' || field.kind === 'radio') {
-        return selectCurrentFormOption(rawValue, fieldLabel || '', opts);
-      }
+    var rawValue = normalizeFormValueForDefaultLanguage(value, field).trim();
+    if (!rawValue) {
       speak(translate('form_fill_missing_value'));
       return false;
     }
@@ -5452,13 +5604,13 @@
   function isFormModeStartText(text) {
     var normalized = normalizeMatchText(text);
     if (!normalized) return false;
-    if (/^(?:form mode|filling mode|fill mode|start form|start form mode|begin form|begin form mode|open form|open form mode)$/.test(normalized)) {
+    if (/^(?:form mode|filling mode|fill mode|full mode|start form|start form mode|begin form|begin form mode|open form|open form mode|fill form|full form|fill the form|full the form)$/.test(normalized)) {
       return true;
     }
-    if (/^(?:fill(?: out)?|guide me(?: through)?|help me fill(?: out)?|walk me through|walk through|go through|go over|take me through|help me with|let s fill(?: out)?|let s go through|let s walk through)\s+(?:this|the|current)?\s*form$/.test(normalized)) {
+    if (/^(?:fill(?: out)?|full(?: out)?|start filling|start fill(?:ing)?|guide me(?: through)?|help me fill(?: out)?|help me full(?: out)?|walk me through|walk through|go through|go over|take me through|help me with|let s fill(?: out)?|lets fill(?: out)?|let s full(?: out)?|lets full(?: out)?|let s start(?: filling)?|lets start(?: filling)?|let s go through|lets go through|let s walk through|lets walk through)\s+(?:this|the|current)?\s*form$/.test(normalized)) {
       return true;
     }
-    return /\bform\b/.test(normalized) && /\b(help|guide|walk|go|through|fill|start|begin|open|mode|complete)\b/.test(normalized);
+    return /\bform\b/.test(normalized) && /\b(help|guide|walk|go|through|fill|full|start|begin|open|mode|complete)\b/.test(normalized);
   }
 
   function parseFormCommand(text) {
@@ -7106,8 +7258,12 @@
     try {
       lastCommandFeedback = null;
       lastRecognitionResultAt = Date.now();
-      maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
-      setOutputLanguageFromTranscript(text, detectedLanguage);
+      if (shouldDefaultActiveFormTurnToEnglish(text)) {
+        preferEnglishFormModeLanguage();
+      } else {
+        maybeRefreshRecognizerLanguage(text, detectedLanguage, provider);
+        setOutputLanguageFromTranscript(text, detectedLanguage);
+      }
       var languageReady = ensureOutputLanguageReady();
       var cmd = parseCommand(text);
       var pageStructure = buildPageContextSnapshot();
