@@ -564,6 +564,44 @@ test('typed form mode submits by visible action label after the final field', as
   expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(true);
 });
 
+test('typed form mode hard-submits the World Cup demo route', async ({ page }) => {
+  await page.route('**/demo/world-cup-updates', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `
+        <main>
+          <form id="updates-form">
+            <label for="full-name">Full Name</label>
+            <input id="full-name" name="full_name" type="text" />
+            <button id="subscribe" type="button">Subscribe for Updates</button>
+          </form>
+          <section id="success-message" hidden>You are subscribed to World Cup Updates.</section>
+        </main>
+        <script>
+          document.getElementById('updates-form').addEventListener('submit', function (event) {
+            event.preventDefault();
+            window.submitted = true;
+            document.getElementById('success-message').hidden = false;
+          });
+        </script>
+      `
+    });
+  });
+  await page.goto('https://navable.onrender.com/demo/world-cup-updates');
+
+  const typed = await loadContentWithTypedCommands(page);
+
+  await typed('form mode');
+  await typed('fill Full Name with Leo Messi');
+  await typed('yes');
+
+  const submit = await typed('submission button');
+  expect(submit).toMatchObject({ ok: true });
+  expect(await page.evaluate(() => Boolean((window as any).submitted))).toBe(true);
+  await expect(page.locator('#success-message')).toBeVisible();
+});
+
 test('typed form mode supports explicit case and Arabic letter spelling', async ({ page }) => {
   await page.setContent(`
     <main>
