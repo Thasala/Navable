@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Cup Updates &mdash; Navable Demo</title>
+  <meta
+    name="description"
+    content="Controlled fictional World Cup updates signup page for a Navable graduation-project demo."
+  />
+  <meta name="robots" content="noindex, nofollow" />
+  <style>
+    :root {
+      --navy: #071326;
+      --navy-2: #0e2342;
+      --navy-3: #17355f;
+      --white: #ffffff;
+      --ink: #142033;
+      --muted: #5a6b81;
+      --line: #d9e2ee;
+      --gold: #d9a441;
+      --gold-soft: #fff5dd;
+      --red: #b72d2d;
+      --green: #17804d;
+      --focus: #f4c95d;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--white);
+      background:
+        radial-gradient(circle at 18% 10%, rgba(217, 164, 65, 0.2), transparent 28rem),
+        radial-gradient(circle at 86% 12%, rgba(183, 45, 45, 0.18), transparent 24rem),
+        linear-gradient(140deg, var(--navy), var(--navy-2) 55%, #08182d);
+      line-height: 1.5;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 75%);
+    }
+
+    .page {
+      position: relative;
+      width: min(100%, 1080px);
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 92px;
+      gap: 24px;
+      align-items: center;
+      margin: 0 0 28px;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 14px;
+      color: var(--gold);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 34px;
+      height: 3px;
+      background: var(--red);
+      border-radius: 999px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 7vw, 4.2rem);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 14px 0 0;
+      color: #dce7f5;
+      font-size: clamp(1rem, 2.6vw, 1.2rem);
+    }
+
+    .ball {
+      width: 92px;
+      height: 92px;
+      filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.28));
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--white);
+      color: var(--ink);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .form-card {
+      padding: clamp(22px, 5vw, 36px);
+    }
+
+    .panel-title {
+      margin: 0 0 22px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 1.05rem;
+      font-weight: 800;
+    }
+
+    .field {
+      margin: 0 0 20px;
+    }
+
+    label {
+      display: block;
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 0.95rem;
+      font-weight: 750;
+    }
+
+    input[type="text"],
+    select {
+      display: block;
+      width: 100%;
+      min-height: 48px;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: #fbfdff;
+      border: 1px solid #b8c6d8;
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    input[type="text"]::placeholder {
+      color: #8493a7;
+    }
+
+    input[type="text"]:focus,
+    select:focus,
+    input[type="checkbox"]:focus-visible,
+    button:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+      border-color: var(--navy-3);
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 2px 0 24px;
+      padding: 14px;
+      background: var(--gold-soft);
+      border: 1px solid #efd79b;
+      border-radius: 6px;
+    }
+
+    .checkbox-row input {
+      width: 22px;
+      height: 22px;
+      margin: 0;
+      accent-color: var(--gold);
+      flex: 0 0 auto;
+    }
+
+    .checkbox-row label {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    button {
+      min-height: 48px;
+      border: 0;
+      border-radius: 6px;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .submit-button {
+      width: 100%;
+      color: var(--white);
+      background: linear-gradient(135deg, var(--red), #8f2020);
+      box-shadow: 0 10px 20px rgba(183, 45, 45, 0.24);
+    }
+
+    .submit-button:hover {
+      background: linear-gradient(135deg, #c53838, #8f2020);
+    }
+
+    .note-card {
+      padding: 24px;
+      border-top: 5px solid var(--gold);
+    }
+
+    .note-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .note-card strong {
+      display: block;
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 1rem;
+    }
+
+    .success-card {
+      padding: clamp(24px, 5vw, 40px);
+      text-align: center;
+      border-top: 5px solid var(--green);
+    }
+
+    .success-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 56px;
+      height: 56px;
+      margin: 0 0 16px;
+      color: var(--white);
+      background: var(--green);
+      border-radius: 50%;
+      font-size: 1.6rem;
+      font-weight: 900;
+    }
+
+    .success-card p {
+      margin: 0;
+    }
+
+    .success-title {
+      color: var(--ink);
+      font-size: 1.35rem;
+      font-weight: 850;
+    }
+
+    .success-body {
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .start-again {
+      margin-top: 24px;
+      padding: 0 22px;
+      color: var(--white);
+      background: var(--navy-3);
+    }
+
+    .start-again:hover {
+      background: var(--navy-2);
+    }
+
+    footer {
+      margin: 26px 0 0;
+      color: #c8d5e7;
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 28px 16px;
+      }
+
+      .hero,
+      .content {
+        grid-template-columns: 1fr;
+      }
+
+      .ball {
+        width: 74px;
+        height: 74px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="kicker">Navable Demo</p>
+        <h1>World Cup Updates</h1>
+        <p class="subtitle">Controlled demonstration &mdash; fictitious data only</p>
+      </div>
+
+      <svg
+        class="ball"
+        role="img"
+        aria-label="Football graphic"
+        viewBox="0 0 100 100"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#d9a441" stroke-width="4" />
+        <polygon points="50,25 65,36 59,54 41,54 35,36" fill="#142033" />
+        <path d="M50 25V9M65 36l18-7M59 54l12 18M41 54L29 72M35 36L17 29" stroke="#142033" stroke-width="4" stroke-linecap="round" />
+        <path d="M50 9a46 46 0 0 1 33 20M83 29a46 46 0 0 1-12 43M71 72a46 46 0 0 1-42 0M29 72a46 46 0 0 1-12-43M17 29A46 46 0 0 1 50 9" fill="none" stroke="#142033" stroke-width="4" stroke-linecap="round" />
+      </svg>
+    </header>
+
+    <main class="content">
+      <section class="card form-card" id="form-card" aria-labelledby="form-heading">
+        <h2 class="panel-title" id="form-heading">Update preferences</h2>
+
+        <form id="updates-form" autocomplete="off">
+          <div class="field">
+            <label for="full-name">Full Name</label>
+            <input
+              id="full-name"
+              name="full_name"
+              type="text"
+              placeholder="Hazem Salameh"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field">
+            <label for="favourite-team">Favourite Team</label>
+            <select id="favourite-team" name="favourite_team">
+              <option value="Jordan">Jordan</option>
+              <option value="Argentina">Argentina</option>
+              <option value="Brazil">Brazil</option>
+              <option value="France">France</option>
+              <option value="Spain">Spain</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="preferred-language">Preferred Language</label>
+            <select id="preferred-language" name="preferred_language">
+              <option value="English">English</option>
+              <option value="Arabic">Arabic</option>
+              <option value="French">French</option>
+            </select>
+          </div>
+
+          <div class="checkbox-row">
+            <input id="match-reminders" name="match_reminders" type="checkbox" />
+            <label for="match-reminders">Receive match reminders</label>
+          </div>
+
+          <button class="submit-button" type="submit">Subscribe for Updates</button>
+        </form>
+      </section>
+
+      <aside class="card note-card" aria-label="Demo notice">
+        <strong>Fictional demo page</strong>
+        <p>This page is not affiliated with FIFA or any official tournament body. It is only for a controlled Navable presentation.</p>
+      </aside>
+
+      <section
+        class="card success-card"
+        id="success-message"
+        aria-live="polite"
+        aria-atomic="true"
+        tabindex="-1"
+        hidden
+      >
+        <span class="success-mark" aria-hidden="true">✓</span>
+        <p class="success-title">You are subscribed to World Cup Updates.</p>
+        <p class="success-body">Your preferences were saved for this demonstration.</p>
+        <button class="start-again" id="start-again" type="button">Start Again</button>
+      </section>
+    </main>
+
+    <footer>
+      Controlled demonstration page. No real data is collected.
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById('updates-form');
+      var formCard = document.getElementById('form-card');
+      var successMessage = document.getElementById('success-message');
+      var startAgainButton = document.getElementById('start-again');
+      var firstField = document.getElementById('full-name');
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        formCard.hidden = true;
+        successMessage.hidden = false;
+        successMessage.focus();
+      });
+
+      startAgainButton.addEventListener('click', function () {
+        form.reset();
+        successMessage.hidden = true;
+        formCard.hidden = false;
+        firstField.focus();
+      });
+    })();
+  </script>
+</body>
+</html>
