@@ -149,6 +149,7 @@
     }
 
     input[type="text"],
+    input[type="email"],
     select {
       display: block;
       width: 100%;
@@ -161,11 +162,13 @@
       font: inherit;
     }
 
-    input[type="text"]::placeholder {
+    input[type="text"]::placeholder,
+    input[type="email"]::placeholder {
       color: #8493a7;
     }
 
     input[type="text"]:focus,
+    input[type="email"]:focus,
     select:focus,
     input[type="checkbox"]:focus-visible,
     button:focus-visible {
@@ -355,12 +358,16 @@
           </div>
 
           <div class="field">
-            <label for="preferred-language">Preferred Language</label>
-            <select id="preferred-language" name="preferred_language">
-              <option value="English">English</option>
-              <option value="Arabic">Arabic</option>
-              <option value="French">French</option>
-            </select>
+            <label for="email-address">Email Address</label>
+            <input
+              id="email-address"
+              name="email_address"
+              type="email"
+              placeholder="hazem@example.com"
+              autocomplete="email"
+              inputmode="email"
+              spellcheck="false"
+            />
           </div>
 
           <div class="checkbox-row">

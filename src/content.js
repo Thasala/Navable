@@ -807,7 +807,7 @@
   var FORM_PRIMARY_ACTION_WORDS = [
     'submit', 'send', 'continue', 'next', 'go', 'search', 'save', 'finish', 'done', 'apply', 'proceed',
     'confirm', 'create', 'create account', 'sign in', 'signin', 'log in', 'login', 'register', 'join',
-    'verify', 'book', 'checkout', 'place order', 'start', 'get started', 'pay', 'complete'
+    'subscribe', 'subscribe for updates', 'verify', 'book', 'checkout', 'place order', 'start', 'get started', 'pay', 'complete'
   ];
   var FORM_DANGEROUS_ACTION_WORDS = ['cancel', 'clear', 'reset', 'delete', 'remove', 'discard', 'close', 'back', 'previous'];
   var FORM_ACTION_HINT_WORDS = {
@@ -3525,8 +3525,8 @@
     return el.getAttribute && el.getAttribute('aria-disabled') === 'true';
   }
 
-  function getFormActionControlText(el) {
-    if (!el) return '';
+  function getFormActionControlLabels(el) {
+    if (!el) return [];
     var parts = [];
     function add(value) {
       var text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -3544,7 +3544,12 @@
       add(humanizeIdentifier(el.getAttribute('data-test') || ''));
       add(humanizeIdentifier(el.getAttribute('data-action') || ''));
     }
-    return parts.join(' ');
+    return parts;
+  }
+
+  function getFormActionControlText(el) {
+    var labels = getFormActionControlLabels(el);
+    return Array.isArray(labels) ? labels.join(' ') : '';
   }
 
   function collectFormActionCandidates(session) {
@@ -3565,8 +3570,9 @@
         Array.prototype.slice.call(root.querySelectorAll(selectors)).forEach(add);
       } catch (_err2) { }
     }
-    collect(session && session.container);
     var formEl = getSessionFormElement(session);
+    collect(session && session.container);
+    if (formEl) collect(formEl);
     if (formEl && formEl.id) {
       var formSelector = 'button[form="' + escapeAttributeValue(formEl.id) + '"],input[form="' + escapeAttributeValue(formEl.id) + '"]';
       try {
@@ -3656,6 +3662,122 @@
     return ranked.length ? ranked[0].element : null;
   }
 
+  function normalizeFormActionLabelText(text) {
+    var normalized = normalizeMatchText(text);
+    if (!normalized) return '';
+    var previous = '';
+    while (previous !== normalized) {
+      previous = normalized;
+      normalized = normalized
+        .replace(/^(please|kindly)\s+/, '')
+        .replace(/^(click|press|activate|tap|hit|choose|select|open)\s+(the\s+)?/, '')
+        .replace(/^(the|a|an)\s+/, '')
+        .replace(/\s+(submit\s+button|button|form)$/, '')
+        .trim();
+    }
+    return normalized;
+  }
+
+  function areCloseActionTokens(a, b) {
+    a = String(a || '');
+    b = String(b || '');
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length < 4 || b.length < 4) return false;
+    if (Math.abs(a.length - b.length) > 1) return false;
+    if (a.length === b.length) {
+      var diff = 0;
+      for (var i = 0; i < a.length; i++) {
+        if (a.charAt(i) !== b.charAt(i)) diff += 1;
+        if (diff > 1) return false;
+      }
+      return diff <= 1;
+    }
+    var shorter = a.length < b.length ? a : b;
+    var longer = a.length < b.length ? b : a;
+    var skipped = 0;
+    var si = 0;
+    var li = 0;
+    while (si < shorter.length && li < longer.length) {
+      if (shorter.charAt(si) === longer.charAt(li)) {
+        si += 1;
+        li += 1;
+      } else {
+        skipped += 1;
+        if (skipped > 1) return false;
+        li += 1;
+      }
+    }
+    return true;
+  }
+
+  function countCloseMatchingTokens(queryTokens, candidateTokens) {
+    if (!queryTokens.length || !candidateTokens.length) return 0;
+    var used = {};
+    var count = 0;
+    for (var i = 0; i < queryTokens.length; i++) {
+      var queryToken = queryTokens[i];
+      var matchedIndex = -1;
+      for (var j = 0; j < candidateTokens.length; j++) {
+        if (used[j]) continue;
+        if (queryToken === candidateTokens[j]) {
+          matchedIndex = j;
+          break;
+        }
+      }
+      if (matchedIndex < 0) {
+        for (var k = 0; k < candidateTokens.length; k++) {
+          if (used[k]) continue;
+          if (areCloseActionTokens(queryToken, candidateTokens[k])) {
+            matchedIndex = k;
+            break;
+          }
+        }
+      }
+      if (matchedIndex >= 0) {
+        used[matchedIndex] = true;
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function formActionControlMatchesUtterance(el, rawText) {
+    var utterance = normalizeFormActionLabelText(rawText);
+    if (!utterance || utterance === 'button' || utterance === 'form') return false;
+    var queryTokens = utterance.split(' ').filter(Boolean);
+    if (!queryTokens.length) return false;
+    if (queryTokens.length === 1 && utterance.length < 4) return false;
+    var labels = getFormActionControlLabels(el);
+    for (var i = 0; i < labels.length; i++) {
+      var label = normalizeFormActionLabelText(labels[i]);
+      if (!label) continue;
+      if (utterance === label) return true;
+      if (utterance.length >= 4 && label.indexOf(utterance) >= 0) return true;
+      if (label.length >= 4 && utterance.indexOf(label) >= 0) return true;
+      var labelTokens = label.split(' ').filter(Boolean);
+      var closeMatches = countCloseMatchingTokens(queryTokens, labelTokens);
+      if (closeMatches === queryTokens.length) return true;
+    }
+    return false;
+  }
+
+  function findSubmitControlBySpokenLabel(session, rawText) {
+    if (!session || !session.container) return null;
+    var ranked = collectFormActionCandidates(session).map(function (el, index) {
+      if (!formActionControlMatchesUtterance(el, rawText)) return null;
+      var scored = scoreFormActionControl(el, session, {});
+      if (!scored) return null;
+      scored.score += 300;
+      scored.index = index;
+      return scored;
+    }).filter(Boolean).sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    });
+    return ranked.length ? ranked[0].element : null;
+  }
+
   function clickFormActionControl(control) {
     if (!control) return false;
     try { control.focus(); } catch (_err) { }
@@ -3690,7 +3812,7 @@
     return dispatched;
   }
 
-  function submitActiveForm(actionHint) {
+  function submitActiveForm(actionHint, actionLabel) {
     var session = ensureFormSession({ announce: false, speakFailure: true });
     if (!session) {
       return false;
@@ -3700,7 +3822,8 @@
       return false;
     }
     var currentField = currentFormField(session);
-    var submitControl = findSubmitControlInSession(session, { actionHint: actionHint });
+    var submitControl = actionLabel ? findSubmitControlBySpokenLabel(session, actionLabel) : null;
+    if (!submitControl) submitControl = findSubmitControlInSession(session, { actionHint: actionHint });
     if (submitControl && clickFormActionControl(submitControl)) {
       clearFormSession();
       speak(translate('form_submit_done'));
@@ -5350,12 +5473,7 @@
       return { type: 'form_mode', action: 'stop' };
     }
     if (/^(next field|next input|next form field|next question)$/.test(t)) return { type: 'form_move', dir: 'next' };
-    if (formModeActive && /^(next|continue|skip)$/.test(t)) {
-      var activeSession = getCurrentFormSession();
-      var isLastField = activeSession && Number(activeSession.currentIndex || 0) >= activeSession.fields.length - 1;
-      if (isLastField && /^(next|continue)$/.test(t)) return { type: 'form_submit', actionHint: t };
-      return { type: 'form_move', dir: 'next' };
-    }
+    if (formModeActive && /^(next|continue|skip)$/.test(t)) return { type: 'form_move', dir: 'next' };
     if (/^(previous field|prev field|previous input|prev input|back field)$/.test(t) || (formModeActive && /^(previous|prev|back|go back)$/.test(t))) return { type: 'form_move', dir: 'prev' };
     if (/^(current field|repeat field|what field am i on|where am i in this form|read current field|where am i)$/.test(t)) return { type: 'form_current' };
 
@@ -5380,6 +5498,9 @@
 
     if (/^(review( form)?|finish( form)?|done with form|what did you fill|what did you enter|review what you filled)$/.test(t) || (formModeActive && /^(review|finish|done)$/.test(t))) return { type: 'form_review' };
     var actionCommand = t.replace(/^(please\s+)?/, '').replace(/\s+(?:this|the)?\s*form$/, '').trim();
+    if (formModeActive && findSubmitControlBySpokenLabel(getCurrentFormSession(), raw)) {
+      return { type: 'form_submit', actionHint: actionCommand, actionLabel: raw };
+    }
     if (/^(submit|send)$/.test(actionCommand) || (formModeActive && FORM_ACTION_COMMAND_WORDS[actionCommand])) {
       return { type: 'form_submit', actionHint: actionCommand };
     }
@@ -6317,7 +6438,11 @@
       return currentFormFeedback(true, { command: 'form_review' });
     }
     if (cmd.type === 'form_submit') {
-      return currentFormFeedback(submitActiveForm(cmd.actionHint || ''), { command: 'form_submit', actionHint: cmd.actionHint || '' });
+      return currentFormFeedback(submitActiveForm(cmd.actionHint || '', cmd.actionLabel || ''), {
+        command: 'form_submit',
+        actionHint: cmd.actionHint || '',
+        actionLabel: cmd.actionLabel || ''
+      });
     }
     if (cmd.type === 'read' && cmd.what === 'title') {
       var h1 = document.querySelector('h1');
